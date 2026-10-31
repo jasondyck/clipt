@@ -324,7 +324,9 @@ impl Editor {
                     Some(b)
                 } else {
                     let e = 1.0 - (1.0 - t).powi(3);
-                    let l = |x: f32, y: f32| x + (y - x) * e;
+                    // Whole pixels: a fractional edge antialiases differently
+                    // in a partial repaint than in a full one, leaving seams.
+                    let l = |x: f32, y: f32| (x + (y - x) * e).round();
                     Rect::from_ltrb(l(a.left(), b.left()), l(a.top(), b.top()), l(a.right(), b.right()), l(a.bottom(), b.bottom()))
                         .or(Some(b))
                 }
