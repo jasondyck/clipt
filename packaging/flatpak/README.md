@@ -30,9 +30,20 @@ capture, and the overlay falls back to fullscreen xdg-shell windows, one per
 monitor. The portal backend wasn't probed (no portal backend in the headless
 containers).
 
-KWin answered ScreenShot2 even for the native binary with no matching
-desktop file, so its permission check may not be enforced in a `--virtual`
-session; confirm on a real Plasma session.
+Checked on a real Plasma 6.8.2 session (2026-10-31): the Flatpak is the same
+as native there too (backends kwin + portal, ScreenShot2 capture,
+layer-shell). KWin also served ScreenShot2 to a renamed copy of the binary
+with no desktop entry. That is not a `--virtual` quirk: Plasma 6.8 dropped
+the `X-KDE-DBUS-Restricted-Interfaces` check (kwin commit 0ea31ae7, "the
+best available option at the moment are sandbox environments like
+flatpak"), so any client that can reach `org.kde.KWin` may capture.
+
+Plasma 6.0–6.7 still check, by matching the caller's executable against the
+first word of `Exec=` in installed desktop files. The Flatpak's executable is
+`…/files/bin/clipt` while its exported desktop entry runs `flatpak`, so
+there KWin refuses it and clipt falls back to the portal (inferred from the
+kwin 6.7 source, not run). Native installs still need `data/clipt.desktop`
+on those versions.
 
 ## clipt-launch: full parity on wlroots and niri
 
@@ -77,7 +88,9 @@ compositors (their configuration, not ours).
 - The portal path on wlroots (xdg-desktop-portal-wlr) hasn't been run.
 - Flathub review: `--talk-name=org.kde.KWin` (and `.ScreenShot2`) and
   `--filesystem=xdg-run/hypr` need justifying; Sway's IPC socket has a
-  per-session name and can't be granted statically at all.
+  per-session name and can't be granted statically at all. Since Plasma 6.8,
+  `--talk-name=org.kde.KWin` amounts to silent screen capture, so expect
+  reviewers to treat it that way.
 - Autostart is requested on every tray start; quitting from the menu doesn't
   withdraw it (the desktop's app settings do).
 - Not yet checked by hand: the tray icon, notifications, `xdg-open` of the
