@@ -113,6 +113,8 @@ jobs:
           - { image: gnome, layout: dual }
           - { image: x11, layout: single }
           - { image: x11, layout: multi }
+          - { image: compositors, layout: labwc }
+          - { image: compositors, layout: niri }
     name: e2e (${{ matrix.suite.image }} ${{ matrix.suite.layout }})
     steps:
       - uses: actions/checkout@v4

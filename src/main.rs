@@ -1,4 +1,4 @@
-//! clipt — a lightweight Wayland screenshot tool.
+//! clipt — a lightweight screenshot tool for Wayland and X11.
 
 mod capture;
 mod clipboard;
@@ -20,7 +20,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 const HELP: &str = "\
-clipt — screenshot tool for Wayland
+clipt — screenshot tool for Wayland and X11
 
 USAGE:
     clipt [gui]           Select a region and annotate it (default)
@@ -33,7 +33,7 @@ OPTIONS:
     -c, --clipboard       Copy to the clipboard (full/screen)
     -g, --geometry GEOM   Crop to \"X,Y WxH\" in logical pixels (slurp format)
     -d, --delay SECS      Wait before capturing
-    -b, --backend NAME    Force a backend: ext, wlr, kwin, portal
+    -b, --backend NAME    Force a backend: ext, wlr, kwin, portal, x11
         --cursor          Include the pointer
     -h, --help            Show this help
     -V, --version         Show the version

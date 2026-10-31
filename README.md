@@ -7,23 +7,27 @@ Qt/GTK, CPU-rendered with tiny-skia.
 ![clipt's editor: a selection with its size label, a rectangle, an arrow,
 numbered counters, a highlighter, text and the toolbar](docs/screenshot.png)
 
-## Compositor support
+## Desktop support
 
-Capture backend is picked automatically (override with `-b` or `backend =`):
+| Desktop | Capture | Overlay | Tested in CI |
+|---|---|---|---|
+| KDE Plasma | KWin ScreenShot2 | layer-shell | by hand (no headless KWin) |
+| GNOME | xdg-desktop-portal | fullscreen window | GNOME Shell 51, 1 and 2 monitors |
+| Sway | ext-image-copy-capture / wlr-screencopy | layer-shell | Sway 1.12, 4 layouts incl. mixed DPI, rotation |
+| niri | wlr-screencopy | layer-shell | yes |
+| labwc | ext-image-copy-capture / wlr-screencopy | layer-shell | yes |
+| Hyprland, river, Wayfire, COSMIC | ext-image-copy-capture / wlr-screencopy | layer-shell | same protocols as above; no headless CI run |
+| X11: Xfce, Cinnamon, MATE, LXQt, i3, Openbox, … | GetImage (RandR/Xinerama monitors) | override-redirect windows, MIT-SHM | Xvfb + headless Xorg under Openbox, 1 and 3 monitors |
 
-| Backend  | Used on                                                      |
-|----------|--------------------------------------------------------------|
-| `ext`    | ext-image-copy-capture-v1: Sway 1.11+, niri, COSMIC, Hyprland |
-| `wlr`    | wlr-screencopy: Sway, Hyprland, river, labwc, Wayfire        |
-| `kwin`   | KDE Plasma (org.kde.KWin.ScreenShot2, HDR is tonemapped by KWin) |
-| `portal` | GNOME, or anything with xdg-desktop-portal                   |
-| `x11`    | X11 sessions: Xfce, Cinnamon, MATE, LXQt, i3, Openbox, …     |
+The capture backend is picked automatically (override with `-b ext|wlr|kwin|portal|x11`
+or `backend =` in the config). On X11 the clipboard supports INCR, so large
+PNGs paste correctly into any application, and compositor users can exclude
+the overlay by its `WM_CLASS`, `clipt`.
 
-The editor overlay uses wlr-layer-shell where available (KDE, wlroots,
-Hyprland, niri, COSMIC) and falls back to a fullscreen window on GNOME. On
-X11 it uses override-redirect windows with MIT-SHM drawing; the clipboard
-supports INCR, so large PNGs paste correctly into any X application. Compositor
-users can exclude the overlay by its `WM_CLASS`, `clipt`.
+Builds and packages: x86_64 and aarch64 release tarballs, `.deb` and `.rpm`,
+AUR (`clipt`, `clipt-bin`), a Nix flake and crates.io; it also compiles for
+musl, armv7, riscv64 and FreeBSD.
+
 ### Multiple monitors
 
 There is no "pick a monitor" step: every monitor gets its own overlay at the
@@ -32,10 +36,6 @@ selection on any of them, or across two. Mixed resolutions, fractional scaling
 (1.25×, 1.5×), offset layouts and rotated portrait monitors are all covered by
 the end-to-end tests, and saved images keep the native pixel size of the
 monitor they came from.
-
-Tested on KDE Plasma 6.8 (by hand), and end-to-end in containers on Sway 1.12,
-GNOME Shell 51 and X11 (Xvfb and headless Xorg, under Openbox) across single,
-fractional-scale, mixed-DPI and three-monitor (offset + rotated) layouts.
 
 ## Usage
 
