@@ -9,7 +9,7 @@ readme = "README.md"
 keywords = ["screenshot", "wayland", "annotation", "flameshot", "capture"]
 categories = ["command-line-utilities", "multimedia::images"]
 rust-version = "1.89"
-exclude = ["/tests", "/.github"]
+exclude = ["/tests", "/.github", "/docs", "/packaging", "/flake.nix", "/flake.lock"]
 
 [dependencies]
 anyhow = "1"

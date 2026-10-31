@@ -76,6 +76,14 @@ jobs:
         env:
           PKG_CONFIG_ALLOW_CROSS: "1"
 
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix build -L .#clipt
+      - run: ./result/bin/clipt --version
+
   deny:
     runs-on: ubuntu-latest
     steps:
