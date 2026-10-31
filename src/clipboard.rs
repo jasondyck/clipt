@@ -1,5 +1,5 @@
 //! Headless clipboard via data-control (ext-data-control-v1 or
-//! wlr-data-control-unstable-v1): lets `glint full -c` copy without showing a
+//! wlr-data-control-unstable-v1): lets `clipt full -c` copy without showing a
 //! window. KDE and wlroots compositors have one of these; GNOME has neither.
 //! The interactive editor doesn't need this: it copies through its own focused
 //! surface (see overlay.rs).

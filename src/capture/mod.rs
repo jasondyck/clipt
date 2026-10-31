@@ -125,8 +125,8 @@ impl Capturer {
             };
             match r {
                 Ok(shots) => {
-                    if std::env::var_os("GLINT_DEBUG").is_some() {
-                        eprintln!("glint: captured with {b:?}");
+                    if std::env::var_os("CLIPT_DEBUG").is_some() {
+                        eprintln!("clipt: captured with {b:?}");
                     }
                     return Ok((b, shots));
                 }

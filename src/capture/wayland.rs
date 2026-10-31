@@ -245,7 +245,7 @@ struct ShmBuffer {
 impl ShmBuffer {
     fn new(shm: &wl_shm::WlShm, qh: &QueueHandle<State>, w: u32, h: u32, stride: u32, format: wl_shm::Format) -> Result<Self> {
         let size = stride as usize * h as usize;
-        let fd: OwnedFd = rustix::fs::memfd_create("glint-capture", rustix::fs::MemfdFlags::CLOEXEC)?;
+        let fd: OwnedFd = rustix::fs::memfd_create("clipt-capture", rustix::fs::MemfdFlags::CLOEXEC)?;
         rustix::fs::ftruncate(&fd, size as u64)?;
         let map = unsafe { memmap2::MmapMut::map_mut(&fd)? };
         let pool = shm.create_pool(fd.as_fd(), size as i32, qh, ());

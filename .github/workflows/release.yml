@@ -26,15 +26,15 @@ jobs:
       - run: cargo build --release --locked
       - name: pack
         run: |
-          name="glint-${GITHUB_REF_NAME}-${{ matrix.arch }}-linux"
+          name="clipt-${GITHUB_REF_NAME}-${{ matrix.arch }}-linux"
           mkdir -p "$name"
-          cp target/release/glint data/glint.desktop install.sh README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "$name/"
+          cp target/release/clipt data/clipt.desktop install.sh README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "$name/"
           tar czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.arch }}
-          path: glint-*.tar.gz*
+          path: clipt-*.tar.gz*
 
   release:
     needs: build
@@ -52,4 +52,4 @@ jobs:
         with:
           draft: true
           body_path: notes.md
-          files: glint-*.tar.gz*
+          files: clipt-*.tar.gz*

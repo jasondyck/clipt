@@ -1,10 +1,10 @@
 [package]
-name = "glint"
+name = "clipt"
 version = "0.1.0"
 edition = "2024"
 description = "Fast, lightweight Wayland screenshot tool with region select and annotation"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/jasondyck/glint"
+repository = "https://github.com/jasondyck/clipt"
 readme = "README.md"
 keywords = ["screenshot", "wayland", "annotation", "flameshot", "capture"]
 categories = ["command-line-utilities", "multimedia::images"]

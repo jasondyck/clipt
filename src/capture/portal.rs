@@ -13,12 +13,12 @@ const DEST: &str = "org.freedesktop.portal.Desktop";
 const PATH: &str = "/org/freedesktop/portal/desktop";
 
 /// Unsandboxed apps have no app ID unless they register one, and GNOME then
-/// re-asks screenshot permission every time; registering as "glint" lets
+/// re-asks screenshot permission every time; registering as "clipt" lets
 /// "Allow" stick. Must precede any other portal call on this connection and
 /// needs xdg-desktop-portal 1.19+, so failure is ignored.
 pub fn register(conn: &crate::dbus::Connection) {
     let _ = crate::dbus::Proxy::new(conn, DEST, PATH, "org.freedesktop.host.portal.Registry")
-        .and_then(|p| p.call::<_, ()>("Register", &("glint", HashMap::<&str, Value>::new())));
+        .and_then(|p| p.call::<_, ()>("Register", &("clipt", HashMap::<&str, Value>::new())));
 }
 
 pub fn available(conn: &crate::dbus::Connection) -> bool {
@@ -28,7 +28,7 @@ pub fn available(conn: &crate::dbus::Connection) -> bool {
 /// `all` is every output (the portal image covers the whole desktop);
 /// `targets` are the ones to return.
 pub fn capture(conn: &crate::dbus::Connection, all: &[Output], targets: &[Output]) -> Result<Vec<Shot>> {
-    let token = format!("glint{}", std::process::id());
+    let token = format!("clipt{}", std::process::id());
     let sender = conn.unique_name().context("no unique bus name")?.trim_start_matches(':').replace('.', "_");
     let req_path = format!("{PATH}/request/{sender}/{token}");
 

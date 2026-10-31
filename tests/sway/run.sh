@@ -1,6 +1,6 @@
 #!/bin/bash
-# End-to-end tests for glint under headless Sway. Runs inside the glint-sway
-# container with the binary mounted at /glint. Usage: run.sh <layout>
+# End-to-end tests for clipt under headless Sway. Runs inside the clipt-sway
+# container with the binary mounted at /clipt. Usage: run.sh <layout>
 #   single   one 1280x720 output, scale 1
 #   frac     one 1920x1080 output, scale 1.5
 #   dual     1280x720@1 + 1920x1080@2 side by side (mixed DPI)
@@ -37,37 +37,37 @@ export SWAYSOCK=$(ls $XDG_RUNTIME_DIR/sway-ipc.* | head -1)
 [ "$LAYOUT" = triple ] && swaymsg create_output >/dev/null && swaymsg create_output >/dev/null && swaymsg reload >/dev/null
 sleep 1
 echo "== layout $LAYOUT"
-/glint list | sed 's/^/  /'
+/clipt list | sed 's/^/  /'
 
 echo "-- headless capture vs grim"
 for b in ext wlr; do
-  /glint full -b $b -o /tmp/full-$b.png 2>/tmp/err || { bad "full -b $b: $(cat /tmp/err)"; continue; }
+  /clipt full -b $b -o /tmp/full-$b.png 2>/tmp/err || { bad "full -b $b: $(cat /tmp/err)"; continue; }
   grim /tmp/grim.png
   check "full -b $b size matches grim ($(size /tmp/grim.png))" '[ "$(size /tmp/full-$b.png)" = "$(size /tmp/grim.png)" ]'
   # Mixed-DPI stitching upscales the 1x output: filters differ slightly, and
   # grim leaves semi-transparent edge pixels there, so compare colour only.
   d=$(magick compare -fuzz 8% -metric AE <(magick /tmp/full-$b.png -alpha off png:-) <(magick /tmp/grim.png -alpha off png:-) null: 2>&1 | cut -d" " -f1)
   check "full -b $b pixels match grim (AE=$d at 8% fuzz)" '[ "${d%.*}" -lt 100 ]'
-  [ -d /out ] && cp /tmp/full-$b.png /out/glint-$b.png && cp /tmp/grim.png /out/grim.png
-  GLINT_DEBUG=1 /glint full -b $b -o /dev/null 2>&1 | grep -q "captured with ${b^}" && ok "-b $b really used $b" || bad "-b $b used another protocol"
+  [ -d /out ] && cp /tmp/full-$b.png /out/clipt-$b.png && cp /tmp/grim.png /out/grim.png
+  CLIPT_DEBUG=1 /clipt full -b $b -o /dev/null 2>&1 | grep -q "captured with ${b^}" && ok "-b $b really used $b" || bad "-b $b used another protocol"
 done
-/glint screen HEADLESS-1 -o /tmp/screen.png
+/clipt screen HEADLESS-1 -o /tmp/screen.png
 check "screen HEADLESS-1 is one output" '[ -s /tmp/screen.png ]'
 grim -g "100,50 300x200" /tmp/grim-g.png
-/glint full -g "100,50 300x200" -o /tmp/g.png
+/clipt full -g "100,50 300x200" -o /tmp/g.png
 check "geometry crop size matches grim ($(size /tmp/grim-g.png))" '[ "$(size /tmp/g.png)" = "$(size /tmp/grim-g.png)" ]'
 d=$(magick compare -metric AE /tmp/g.png /tmp/grim-g.png null: 2>&1 | cut -d" " -f1)
 check "geometry crop pixels match grim (AE=$d)" '[ "${d%.*}" -lt 100 ]'
 
 echo "-- headless clipboard (data-control)"
-/glint full -c
+/clipt full -c
 sleep 0.5
 wl-paste -t image/png > /tmp/paste.png 2>/tmp/err
 check "wl-paste returns the capture" '[ "$(size /tmp/paste.png)" = "$(size /tmp/full-ext.png)" ]'
-pid=$(pgrep -f "^/glint full -c" | head -1)
+pid=$(pgrep -f "^/clipt full -c" | head -1)
 [ -n "$pid" ] && echo "  clipboard daemon RSS: $(grep VmRSS /proc/$pid/status | awk "{print \$2}") kB"
 echo hello | wl-copy; sleep 0.5
-check "daemon exits once something else is copied" '! pgrep -f "^/glint full -c" >/dev/null'
+check "daemon exits once something else is copied" '! pgrep -f "^/clipt full -c" >/dev/null'
 
 # Persistent virtual pointer + keyboard (headless Sway has no input devices).
 xkbcli compile-keymap --layout us > /tmp/keymap
@@ -76,11 +76,11 @@ mkfifo /tmp/vin
 /vinput /tmp/keymap $LW $LH < /tmp/vin 2>/tmp/vinput.err &
 exec 3>/tmp/vin
 act() { for a in "$@"; do echo "$a" >&3; done; }
-gui() { ${DEBUG:+env GLINT_DEBUG=1} /glint gui 2>/tmp/gui.err & sleep 0.8; }
+gui() { ${DEBUG:+env CLIPT_DEBUG=1} /clipt gui 2>/tmp/gui.err & sleep 0.8; }
 drag() { act "move $1 $2" down "move $(( ($1+$3)/2 )) $(( ($2+$4)/2 ))" "move $3 $4" up; sleep 0.3; }
 scale=$(swaymsg -t get_outputs | jq '.[] | select(.name=="HEADLESS-1") | .scale')
 logical() { awk "BEGIN{printf \"%dx%d\", $1*$scale+0.5, $2*$scale+0.5}"; }
-gerr() { grep -v "notification failed" /tmp/gui.err | grep -v "^glint: \(drew\|HDMI\|HEADLESS\|key\|pointer\|keyboard\|seat\)" | sed 's/^/  stderr: /'; }
+gerr() { grep -v "notification failed" /tmp/gui.err | grep -v "^clipt: \(drew\|HDMI\|HEADLESS\|key\|pointer\|keyboard\|seat\)" | sed 's/^/  stderr: /'; }
 sleep 0.5
 
 echo "-- interactive: drag + Enter copies"
@@ -91,7 +91,7 @@ wl-paste -t image/png > /tmp/sel.png 2>/dev/null
 check "selection copied at native size (want $(logical 300 200), got $(size /tmp/sel.png))" '[ "$(size /tmp/sel.png)" = "$(logical 300 200)" ]'
 d=$(magick compare -metric AE /tmp/sel.png <(grim -g "100,100 300x200" -) null: 2>&1 | cut -d" " -f1)
 check "copied pixels match grim of the same region (AE=$d)" '[ "${d%.*}" -lt 100 ]'
-pid=$(pgrep -f "^/glint gui" | head -1)
+pid=$(pgrep -f "^/clipt gui" | head -1)
 [ -n "$pid" ] && echo "  gui clipboard daemon RSS: $(grep VmRSS /proc/$pid/status | awk '{print $2}') kB"
 gerr
 
@@ -116,7 +116,7 @@ echo marker | wl-copy; sleep 0.3
 gui
 drag 10 10 200 200
 act "key Escape"; sleep 0.5
-check "glint exited on Esc" '! pgrep -f "^/glint gui" >/dev/null'
+check "clipt exited on Esc" '! pgrep -f "^/clipt gui" >/dev/null'
 check "clipboard still holds the old text" '[ "$(wl-paste -n 2>/dev/null)" = marker ]'
 
 echo "-- interactive: click selects whole output"
@@ -164,8 +164,8 @@ fi
 if [ "$LAYOUT" = triple ]; then
   echo "-- triple: per-output captures (rotation, fractional scale)"
   for o in HEADLESS-1 HEADLESS-2 HEADLESS-3; do
-    /glint screen $o -o /tmp/s-$o.png; grim -o $o /tmp/g-$o.png 2>/tmp/grim.err || echo "  (grim -o $o: $(cat /tmp/grim.err))"
-    [ -d /out ] && cp /tmp/s-$o.png /out/glint-$o.png && cp /tmp/g-$o.png /out/grim-$o.png 2>/dev/null
+    /clipt screen $o -o /tmp/s-$o.png; grim -o $o /tmp/g-$o.png 2>/tmp/grim.err || echo "  (grim -o $o: $(cat /tmp/grim.err))"
+    [ -d /out ] && cp /tmp/s-$o.png /out/clipt-$o.png && cp /tmp/g-$o.png /out/grim-$o.png 2>/dev/null
     d=$(magick compare -metric AE /tmp/s-$o.png /tmp/g-$o.png null: 2>&1 | cut -d" " -f1)
     check "screen $o $(size /tmp/s-$o.png) matches grim $(size /tmp/g-$o.png) (AE=$d)" '[ "$(size /tmp/s-$o.png)" = "$(size /tmp/g-$o.png)" ] && [ "${d%.*}" -lt 100 ]'
   done
@@ -175,7 +175,7 @@ if [ "$LAYOUT" = triple ]; then
     swaymsg -q output HEADLESS-3 transform $t; sleep 0.3
     grim -o HEADLESS-3 /tmp/gt.png
     for b in ext wlr; do
-      /glint screen HEADLESS-3 -b $b -o /tmp/st.png
+      /clipt screen HEADLESS-3 -b $b -o /tmp/st.png
       d=$(magick compare -metric AE /tmp/st.png /tmp/gt.png null: 2>&1 | cut -d" " -f1)
       check "transform $t via $b: $(size /tmp/st.png) (AE=$d)" '[ "$(size /tmp/st.png)" = "$(size /tmp/gt.png)" ] && [ "${d%.*}" -lt 100 ]'
     done
@@ -212,5 +212,5 @@ if [ "$LAYOUT" = triple ]; then
 fi
 exec 3>&-
 [ -d /out ] && cp /tmp/sway.log /out/sway.log
-pkill glint; echo "== $LAYOUT: $pass passed, $fail failed"
+pkill clipt; echo "== $LAYOUT: $pass passed, $fail failed"
 [ $fail -eq 0 ]

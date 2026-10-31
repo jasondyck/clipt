@@ -1,4 +1,4 @@
-//! glint — a lightweight Wayland screenshot tool.
+//! clipt — a lightweight Wayland screenshot tool.
 
 mod capture;
 mod clipboard;
@@ -18,13 +18,13 @@ use std::io::Write;
 use std::path::PathBuf;
 
 const HELP: &str = "\
-glint — screenshot tool for Wayland
+clipt — screenshot tool for Wayland
 
 USAGE:
-    glint [gui]           Select a region and annotate it (default)
-    glint full            Capture the whole desktop
-    glint screen [NAME]   Capture one output (default: the first)
-    glint list            Show outputs and available capture backends
+    clipt [gui]           Select a region and annotate it (default)
+    clipt full            Capture the whole desktop
+    clipt screen [NAME]   Capture one output (default: the first)
+    clipt list            Show outputs and available capture backends
 
 OPTIONS:
     -o, --output PATH     Write the PNG to PATH ('-' for stdout) instead of the save dir
@@ -45,7 +45,7 @@ EDITOR KEYS:
     Enter, Ctrl+C, dbl-click  copy        Ctrl+S         save
     Ctrl+Z / Ctrl+Shift+Z undo / redo     Esc / right-click  cancel / back
 
-Config: ~/.config/glint/config.toml (save_dir, filename, color, width,
+Config: ~/.config/clipt/config.toml (save_dir, filename, color, width,
 copy_on_save, notify, backend, cursor, font).
 ";
 
@@ -79,7 +79,7 @@ fn parse_args() -> Result<Args> {
                 std::process::exit(0);
             }
             Short('V') | Long("version") => {
-                println!("glint {}", env!("CARGO_PKG_VERSION"));
+                println!("clipt {}", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
             }
             Value(v) if positional == 0 => {
@@ -98,20 +98,20 @@ fn parse_args() -> Result<Args> {
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("glint: {e:#}");
+        eprintln!("clipt: {e:#}");
         std::process::exit(1);
     }
 }
 
-/// Process start, for GLINT_DEBUG timings.
+/// Process start, for CLIPT_DEBUG timings.
 pub static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
 fn run() -> Result<()> {
     let t0 = *START.get_or_init(std::time::Instant::now);
-    let dbg = std::env::var_os("GLINT_DEBUG").is_some();
+    let dbg = std::env::var_os("CLIPT_DEBUG").is_some();
     let lap = |what: &str| {
         if dbg {
-            eprintln!("glint: {:>7.1} ms  {what}", t0.elapsed().as_secs_f64() * 1e3)
+            eprintln!("clipt: {:>7.1} ms  {what}", t0.elapsed().as_secs_f64() * 1e3)
         }
     };
     let args = parse_args()?;
@@ -196,7 +196,7 @@ fn run() -> Result<()> {
             let mut pm = tiny_skia::Pixmap::new(s.bg.width(), s.bg.height()).unwrap();
             editor::ui::render(&ed, 0, &mut pm.as_mut(), (0, 0));
             let img = image::Image { width: pm.width(), height: pm.height(), data: pm.take() };
-            std::fs::write(args.output.as_deref().unwrap_or("/tmp/glint-ui.png"), img.encode_png()?)?;
+            std::fs::write(args.output.as_deref().unwrap_or("/tmp/clipt-ui.png"), img.encode_png()?)?;
             Ok(())
         }
         other => bail!("unknown command '{other}' (try --help)"),
@@ -218,7 +218,7 @@ fn gui(cfg: &Config, args: &Args, shots: Vec<Shot>, fonts: text::Fonts, lap: &dy
     // away, and only then encode: the encode can take ~100 ms and the screen
     // shouldn't stay frozen for it. Early paste requests wait for the PNG.
     let want_copy = outcome == Outcome::Copy || cfg.copy_on_save;
-    let clip = if want_copy { session.claim_clipboard().map_err(|e| eprintln!("glint: {e:#}")).ok() } else { None };
+    let clip = if want_copy { session.claim_clipboard().map_err(|e| eprintln!("clipt: {e:#}")).ok() } else { None };
     session.hide()?;
     let png = img.encode_png()?;
     if let Some(c) = &clip {

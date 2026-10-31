@@ -55,7 +55,7 @@ fn resolve() -> [Option<String>; 2] {
     let cache = std::env::var_os("XDG_CACHE_HOME")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| crate::config::home().join(".cache"))
-        .join("glint/fonts");
+        .join("clipt/fonts");
     if let Ok(s) = std::fs::read_to_string(&cache) {
         let mut lines = s.lines().map(|l| Some(l.to_string()).filter(|l| !l.is_empty()));
         let got = [lines.next().flatten(), lines.next().flatten()];

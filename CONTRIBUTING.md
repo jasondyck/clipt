@@ -1,6 +1,6 @@
 # Contributing
 
-Bug reports with the output of `glint list` and `GLINT_DEBUG=1 glint …` help
+Bug reports with the output of `clipt list` and `CLIPT_DEBUG=1 clipt …` help
 the most: they show the monitor layout, scales and the capture backend in use.
 
 ## Checks
@@ -30,7 +30,7 @@ frame with a full redraw.
 
 ```
 cargo test --release bench_4k -- --ignored --nocapture
-GLINT_BENCH_PNGS=a.png,b.png cargo test --release bench_png -- --ignored --nocapture
+CLIPT_BENCH_PNGS=a.png,b.png cargo test --release bench_png -- --ignored --nocapture
 cargo build --profile profiling   # release speed with symbols, for perf
 ```
 

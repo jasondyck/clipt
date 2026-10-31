@@ -227,11 +227,11 @@ mod bench {
         assert_eq!(Image::decode_png(&img.encode_png().unwrap()).unwrap().data, img.data);
     }
 
-    /// `GLINT_BENCH_PNGS=a.png,b.png cargo test --release bench_png -- --ignored --nocapture`
+    /// `CLIPT_BENCH_PNGS=a.png,b.png cargo test --release bench_png -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn bench_png() {
-        let files = std::env::var("GLINT_BENCH_PNGS").unwrap_or_default();
+        let files = std::env::var("CLIPT_BENCH_PNGS").unwrap_or_default();
         for f in files.split(',').filter(|f| !f.is_empty()) {
             let img = Image::decode_png(&std::fs::read(f).unwrap()).unwrap();
             let rgb: Vec<u8> = img.data.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
@@ -244,7 +244,7 @@ mod bench {
                 t.elapsed().as_secs_f64() * 1e3,
                 chosen.len() as f64 / 1024.0
             );
-            if std::env::var_os("GLINT_BENCH_ALL").is_none() {
+            if std::env::var_os("CLIPT_BENCH_ALL").is_none() {
                 continue;
             }
             for (cname, c) in [

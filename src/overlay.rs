@@ -251,7 +251,7 @@ impl Session {
             let surface = ov.compositor.create_surface(&qh);
             let viewport = ov.viewporter.as_ref().map(|vp| vp.get_viewport(&surface, &qh, ()));
             let role = if let Some(ls) = &layer_shell {
-                let l = ls.create_layer_surface(&qh, surface, Layer::Overlay, Some("glint"), wl_out.as_ref());
+                let l = ls.create_layer_surface(&qh, surface, Layer::Overlay, Some("clipt"), wl_out.as_ref());
                 l.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
                 l.set_exclusive_zone(-1);
                 l.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
@@ -259,8 +259,8 @@ impl Session {
                 Role::Layer(l)
             } else {
                 let w = xdg.as_ref().unwrap().create_window(surface, WindowDecorations::None, &qh);
-                w.set_title("glint");
-                w.set_app_id("glint");
+                w.set_title("clipt");
+                w.set_app_id("clipt");
                 w.set_fullscreen(wl_out.as_ref());
                 w.commit();
                 Role::Window(w)
@@ -449,7 +449,7 @@ impl Overlay {
         if debug() {
             let since = crate::START.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1e3);
             eprintln!(
-                "glint: {since:7.1} ms  {} buf{idx} painted {:.1}% in {render_ms:.2} ms",
+                "clipt: {since:7.1} ms  {} buf{idx} painted {:.1}% in {render_ms:.2} ms",
                 out.name,
                 painted as f64 * 100.0 / full_area as f64
             );
@@ -491,7 +491,7 @@ impl Overlay {
 }
 
 fn debug() -> bool {
-    std::env::var_os("GLINT_DEBUG").is_some()
+    std::env::var_os("CLIPT_DEBUG").is_some()
 }
 
 fn map_key(ev: &KeyEvent, ctrl: bool) -> Option<Key> {
@@ -572,7 +572,7 @@ impl SeatHandler for Overlay {
             self.data_device = self.data_mgr.as_ref().map(|m| m.get_data_device(qh, &seat));
         }
         if debug() {
-            eprintln!("glint: seat capability {cap:?}");
+            eprintln!("clipt: seat capability {cap:?}");
         }
         if cap == Capability::Keyboard && self.keyboard.is_none() {
             self.keyboard = self.seats.get_keyboard(qh, &seat, None).ok();
@@ -608,14 +608,14 @@ impl KeyboardHandler for Overlay {
     ) {
         self.serial = serial;
         if debug() {
-            eprintln!("glint: keyboard focus");
+            eprintln!("clipt: keyboard focus");
         }
     }
     fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32) {}
     fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, serial: u32, ev: KeyEvent) {
         self.serial = serial;
         if debug() {
-            eprintln!("glint: key {:?} utf8 {:?} mods {:?}", ev.keysym, ev.utf8, self.mods);
+            eprintln!("clipt: key {:?} utf8 {:?} mods {:?}", ev.keysym, ev.utf8, self.mods);
         }
         if let Some(k) = map_key(&ev, self.mods.ctrl)
             && self.editor.key(k, self.mods)
@@ -646,7 +646,7 @@ impl PointerHandler for Overlay {
         let mut dirty = false;
         for ev in events {
             if debug() && !matches!(ev.kind, PointerEventKind::Motion { .. }) {
-                eprintln!("glint: pointer {:?} at {:?}", ev.kind, ev.position);
+                eprintln!("clipt: pointer {:?} at {:?}", ev.kind, ev.position);
             }
             let Some(p) = self.global(&ev.surface, ev.position) else { continue };
             dirty |= match ev.kind {

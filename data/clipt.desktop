@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=glint
+Name=clipt
 GenericName=Screenshot Tool
 Comment=Select, annotate and copy a screenshot
-Exec=glint gui
+Exec=clipt gui
 Icon=applets-screenshooter
 Terminal=false
 Categories=Utility;Graphics;
@@ -15,4 +15,4 @@ Actions=Full;
 
 [Desktop Action Full]
 Name=Capture full desktop
-Exec=glint full
+Exec=clipt full

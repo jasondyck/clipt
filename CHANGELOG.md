@@ -15,7 +15,7 @@ First public release.
   click-to-select-a-monitor; selections can span monitors.
 - Annotation: rectangle, ellipse, arrow, line, pen, highlighter, text,
   pixelate and numbered counters; 8 colours, adjustable width, undo/redo.
-- Copy (glint stays in the background to serve the clipboard, ~5 MB), save,
+- Copy (clipt stays in the background to serve the clipboard, ~5 MB), save,
   desktop notifications.
 - Capture backends picked automatically: ext-image-copy-capture,
   wlr-screencopy, KWin ScreenShot2 and xdg-desktop-portal.

@@ -16,16 +16,16 @@ body:
   - type: textarea
     id: list
     attributes:
-      label: Output of `glint list`
-      description: Monitors, their layout and scale, and the capture backends glint sees.
+      label: Output of `clipt list`
+      description: Monitors, their layout and scale, and the capture backends clipt sees.
       render: text
     validations: { required: true }
   - type: textarea
     id: debug
     attributes:
-      label: Output of the failing command with `GLINT_DEBUG=1`
+      label: Output of the failing command with `CLIPT_DEBUG=1`
       render: text
   - type: input
     id: version
     attributes:
-      label: glint version (`glint --version`)
+      label: clipt version (`clipt --version`)

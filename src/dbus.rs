@@ -1,4 +1,4 @@
-//! A small blocking facade over zbus 6, which is async-only. glint makes a
+//! A small blocking facade over zbus 6, which is async-only. clipt makes a
 //! handful of sequential D-Bus calls, so each one is simply driven to
 //! completion on the calling thread.
 

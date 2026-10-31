@@ -1,4 +1,4 @@
-//! ~/.config/glint/config.toml — every key optional.
+//! ~/.config/clipt/config.toml — every key optional.
 
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -45,7 +45,7 @@ impl Default for Config {
 impl Config {
     pub fn path() -> PathBuf {
         let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".config"));
-        base.join("glint/config.toml")
+        base.join("clipt/config.toml")
     }
 
     pub fn load() -> anyhow::Result<Self> {

@@ -1,5 +1,5 @@
 #!/bin/bash
-# End-to-end tests for glint under headless GNOME Shell (portal capture,
+# End-to-end tests for clipt under headless GNOME Shell (portal capture,
 # fullscreen xdg_toplevel overlay, wl_data_device clipboard).
 # Started via gstart.sh (system bus + mocked logind + session bus).
 set -u
@@ -14,8 +14,8 @@ size() { magick identify -format '%wx%h' "$1" 2>/dev/null; }
 pastesize() { wl-paste -t image/png 2>/dev/null | magick identify -format %wx%h - 2>/dev/null; }
 
 # GLib only accepts the desktop entry if Exec resolves; the portal needs the
-# entry to register the "glint" app ID.
-ln -sf /glint /usr/local/bin/glint; cp /glint.desktop /usr/share/applications/
+# entry to register the "clipt" app ID.
+ln -sf /clipt /usr/local/bin/clipt; cp /clipt.desktop /usr/share/applications/
 MON="--virtual-monitor 1280x720"
 [ "$LAYOUT" = dual ] && MON="$MON --virtual-monitor 1920x1080"
 gnome-shell --headless --wayland --no-x11 $MON >/tmp/gs.log 2>&1 &
@@ -24,15 +24,15 @@ sleep 4
 export WAYLAND_DISPLAY=wayland-0
 [ "$LAYOUT" = dual ] && python3 /t/set_scale.py 2 | sed 's/^/  /' && sleep 2
 echo "== GNOME $(gnome-shell --version | awk '{print $3}') ($LAYOUT)"
-glint list | sed 's/^/  /'
+clipt list | sed 's/^/  /'
 
 echo "-- portal permission"
-out=$(timeout 10 glint full -o /tmp/f0.png 2>&1); rc=$?
+out=$(timeout 10 clipt full -o /tmp/f0.png 2>&1); rc=$?
 check "without permission: fails fast instead of hanging (rc=$rc)" '[ $rc -ne 124 ]'
 echo "  message: $(echo "$out" | tail -1 | sed 's/^ *//')"
 gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore --object-path /org/freedesktop/impl/portal/PermissionStore \
-  --method org.freedesktop.impl.portal.PermissionStore.SetPermission screenshot true screenshot glint "['yes']" >/dev/null
-s=$(date +%s%N); glint full -o /tmp/f.png; ms=$(( ($(date +%s%N)-s)/1000000 ))
+  --method org.freedesktop.impl.portal.PermissionStore.SetPermission screenshot true screenshot clipt "['yes']" >/dev/null
+s=$(date +%s%N); clipt full -o /tmp/f.png; ms=$(( ($(date +%s%N)-s)/1000000 ))
 want=1280x720; [ "$LAYOUT" = dual ] && want=4480x1440
 check "with permission: captured $(size /tmp/f.png) in ${ms} ms" '[ "$(size /tmp/f.png)" = "$want" ]'
 check "portal file cleaned up from ~/Pictures" '[ -z "$(ls $HOME/Pictures 2>/dev/null)" ]'
@@ -40,14 +40,14 @@ check "portal file cleaned up from ~/Pictures" '[ -z "$(ls $HOME/Pictures 2>/dev
 mkfifo /tmp/rin; python3 /rdinput.py < /tmp/rin 2>/tmp/rd.err & exec 3>/tmp/rin
 act() { for a in "$@"; do echo "$a" >&3; done; }
 drag() { act "move $1 $2" down "move $(( ($1+$3)/2 )) $(( ($2+$4)/2 ))" "move $3 $4" up; sleep 0.5; }
-gui() { GLINT_DEBUG=1 glint gui 2>/tmp/gui.err & sleep 1.5; }
+gui() { CLIPT_DEBUG=1 clipt gui 2>/tmp/gui.err & sleep 1.5; }
 sleep 0.5
 
 if [ "$LAYOUT" = dual ]; then
   echo "-- dual: portal image sliced per monitor at native resolution"
-  glint full -o /tmp/df.png
+  clipt full -o /tmp/df.png
   check "full desktop at the highest scale (4480x1440, got $(size /tmp/df.png))" '[ "$(size /tmp/df.png)" = 4480x1440 ]'
-  glint screen Meta-0 -o /tmp/d0.png; glint screen Meta-1 -o /tmp/d1.png
+  clipt screen Meta-0 -o /tmp/d0.png; clipt screen Meta-1 -o /tmp/d1.png
   check "1x monitor at its native 1280x720 (got $(size /tmp/d0.png))" '[ "$(size /tmp/d0.png)" = 1280x720 ]'
   check "2x monitor at its native 1920x1080 (got $(size /tmp/d1.png))" '[ "$(size /tmp/d1.png)" = 1920x1080 ]'
   d=$(magick compare -metric AE <(magick /tmp/df.png -crop 1920x1080+2560+0 png:-) /tmp/d1.png null: 2>&1 | cut -d" " -f1)
@@ -58,9 +58,9 @@ echo "-- overlay (xdg_toplevel fullscreen fallback)"
 gui
 check "overlay mapped and painted" 'grep -q "painted 100" /tmp/gui.err'
 act "key Escape"; sleep 0.6
-pgrep -f "glint gui" >/dev/null && echo "  (first Esc after login went to the shell; closing via right-click/Esc)" && act "key Escape" && sleep 0.6
+pgrep -f "clipt gui" >/dev/null && echo "  (first Esc after login went to the shell; closing via right-click/Esc)" && act "key Escape" && sleep 0.6
 grep "key " /tmp/gui.err | sed 's/^/  /'
-pkill -f "glint gui"
+pkill -f "clipt gui"
 
 echo "-- drag + Enter copies"
 gui
@@ -101,11 +101,11 @@ echo marker | wl-copy; sleep 0.3
 gui
 drag 10 10 200 200
 act "key Escape"; sleep 0.8
-check "Esc closes it" '! pgrep -f "glint gui" >/dev/null'
+check "Esc closes it" '! pgrep -f "clipt gui" >/dev/null'
 grep "key " /tmp/gui.err | sed 's/^/  /'
 check "clipboard untouched" '[ "$(wl-paste -n 2>/dev/null)" = marker ]'
 
 exec 3>&-
-pkill -f "glint gui"
+pkill -f "clipt gui"
 echo "== gnome $LAYOUT: $pass passed, $fail failed"
 [ $fail -eq 0 ]

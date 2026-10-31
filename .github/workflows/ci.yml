@@ -81,12 +81,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
-      - run: cargo build --release --locked --bin glint --example vinput
+      - run: cargo build --release --locked --bin clipt --example vinput
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
           context: tests/${{ matrix.suite.image }}
-          tags: glint-${{ matrix.suite.image }}
+          tags: clipt-${{ matrix.suite.image }}
           load: true
           cache-from: type=gha,scope=${{ matrix.suite.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.suite.image }}

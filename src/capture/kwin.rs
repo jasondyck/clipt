@@ -54,7 +54,7 @@ fn capture_screen(proxy: &crate::dbus::Proxy, name: &str, cursor: bool) -> Resul
         }
     }
     let (w, h, stride, format) = (get("width")?, get("height")?, get("stride")? as usize, get("format")?);
-    if std::env::var_os("GLINT_DEBUG").is_some() {
+    if std::env::var_os("CLIPT_DEBUG").is_some() {
         eprintln!("kwin: {w}x{h} stride {stride} format {format} reply {reply:?}");
     }
     decode_qimage(w, h, stride, format, data)

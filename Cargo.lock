@@ -116,6 +116,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "clipt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-core",
+ "lexopt",
+ "libc",
+ "memmap2",
+ "png",
+ "rustix",
+ "serde",
+ "skrifa",
+ "smithay-client-toolkit",
+ "tiny-skia",
+ "toml",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-misc",
+ "wayland-protocols-wlr",
+ "zbus",
+]
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -259,29 +282,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi",
-]
-
-[[package]]
-name = "glint"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures-core",
- "lexopt",
- "libc",
- "memmap2",
- "png",
- "rustix",
- "serde",
- "skrifa",
- "smithay-client-toolkit",
- "tiny-skia",
- "toml",
- "wayland-client",
- "wayland-protocols",
- "wayland-protocols-misc",
- "wayland-protocols-wlr",
- "zbus",
 ]
 
 [[package]]

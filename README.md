@@ -1,10 +1,10 @@
-# glint
+# clipt
 
 A lightweight screenshot tool for Wayland, in the spirit of Flameshot: freeze
 the screen, drag a region, annotate it, copy or save. One small Rust binary, no
 Qt/GTK, CPU-rendered with tiny-skia.
 
-![glint's editor: a selection with its size label, a rectangle, an arrow,
+![clipt's editor: a selection with its size label, a rectangle, an arrow,
 numbered counters, a highlighter, text and the toolbar](docs/screenshot.png)
 
 ## Compositor support
@@ -36,11 +36,11 @@ three-monitor (offset + rotated) layouts.
 ## Usage
 
 ```
-glint               # interactive (same as `glint gui`)
-glint full -c       # whole desktop to the clipboard
-glint screen DP-1   # one output, saved to the save dir
-glint full -g "$(slurp)" -o -   # slurp region to stdout
-glint list          # outputs and available backends
+clipt               # interactive (same as `clipt gui`)
+clipt full -c       # whole desktop to the clipboard
+clipt screen DP-1   # one output, saved to the save dir
+clipt full -g "$(slurp)" -o -   # slurp region to stdout
+clipt list          # outputs and available backends
 ```
 
 Editor: drag to select (click = whole screen), drag handles to resize, drag
@@ -51,12 +51,12 @@ for squares and 45° lines. **Enter**/**Ctrl+C**/double-click copies, **Ctrl+S**
 saves, **Ctrl+Z**/**Ctrl+Shift+Z** undo/redo, **Esc** cancels, right-click
 backs out a step.
 
-After copying, glint forks into the background to serve the clipboard until
+After copying, clipt forks into the background to serve the clipboard until
 something else is copied (Wayland clipboards are owned by a live client).
 
 ## Config
 
-`~/.config/glint/config.toml`, every key optional:
+`~/.config/clipt/config.toml`, every key optional:
 
 ```toml
 save_dir = "~/Pictures/Screenshots"
@@ -74,7 +74,7 @@ cursor = false
 
 Measured on a 4K KDE Plasma 6.8 desktop:
 
-|                          | glint  | Spectacle 6.8 | Flameshot 14 |
+|                          | clipt  | Spectacle 6.8 | Flameshot 14 |
 |--------------------------|--------|---------------|--------------|
 | Full-screen capture to PNG | ~100 ms | 388 ms      | 593 ms       |
 | Region overlay memory    | 71 MB  | 337 MB        | 126 MB       |
@@ -88,15 +88,15 @@ changed pixels (0.5-5 ms per frame at 4K).
 From a release tarball or a checkout:
 
 ```
-./install.sh        # builds if needed; ~/.local/bin/glint + desktop entry
+./install.sh        # builds if needed; ~/.local/bin/clipt + desktop entry
 ```
 
 On KDE the desktop entry carries `X-KDE-DBUS-Restricted-Interfaces` so KWin
-lets glint capture silently. Bind `glint` to Print in System Settings →
+lets clipt capture silently. Bind `clipt` to Print in System Settings →
 Shortcuts.
 
 **GNOME:** captures go through the screenshot portal, which needs the desktop
-entry (glint registers its app ID from it, and GLib ignores entries whose
+entry (clipt registers its app ID from it, and GLib ignores entries whose
 `Exec` doesn't resolve) plus a one-time permission. If you aren't prompted,
 grant it directly:
 
@@ -104,7 +104,7 @@ grant it directly:
 gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore \
   --object-path /org/freedesktop/impl/portal/PermissionStore \
   --method org.freedesktop.impl.portal.PermissionStore.SetPermission \
-  screenshot true screenshot glint "['yes']"
+  screenshot true screenshot clipt "['yes']"
 ```
 
 ## Development
