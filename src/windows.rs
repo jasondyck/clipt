@@ -82,7 +82,7 @@ fn kwin() -> Result<Vec<Window>> {
     }
 
     let (tx, rx) = mpsc::channel();
-    let conn = zbus::block_on(zbus::connection::Builder::session().serve_at("/clipt/Windows", Sink(Mutex::new(Some(tx)))).build())?;
+    let conn = zbus::block_on(crate::dbus::builder().serve_at("/clipt/Windows", Sink(Mutex::new(Some(tx)))).build())?;
     let me = conn.unique_name().context("no unique bus name")?.to_string();
 
     // Named after the bus connection: in a Flatpak every clipt is PID 2.
