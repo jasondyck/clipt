@@ -29,8 +29,9 @@ PNGs paste correctly into any application, and compositor users can exclude
 the overlay by its `WM_CLASS`, `clipt`.
 
 Builds and packages: x86_64 and aarch64 release tarballs, `.deb` and `.rpm`,
-AUR (`clipt`, `clipt-bin`), a Nix flake and crates.io; it also compiles for
-musl, armv7, riscv64 and FreeBSD.
+a Nix flake and crates.io; it also compiles for musl, armv7, riscv64 and
+FreeBSD. Arch packages (`clipt`, `clipt-bin`) aren't on the AUR yet; until
+they are, build one from `packaging/aur/` with `makepkg -si`.
 
 ### Multiple monitors
 

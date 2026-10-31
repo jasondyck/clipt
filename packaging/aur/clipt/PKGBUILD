@@ -1,6 +1,6 @@
 # Maintainer: The clipt contributors
 pkgname=clipt
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc="Fast, lightweight screenshot tool for Wayland and X11 with region select and annotation"
 arch=('x86_64' 'aarch64')
@@ -13,7 +13,7 @@ makedepends=('cargo')
 optdepends=('xdg-desktop-portal: capture on GNOME'
             'noto-fonts: default UI font')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('cc603c85137b582909a15435597ed7b8ca05afb28e1c8ef2dc415c78b48e2e0e')
 
 prepare() {
   cd "$pkgname-$pkgver"
