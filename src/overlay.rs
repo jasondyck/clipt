@@ -216,12 +216,15 @@ impl Session {
     /// Build surfaces for every screen in `editor`. The editor's byte order is
     /// switched here to match the shm formats the compositor offers.
     pub fn new(editor: Editor) -> Result<Self> {
-        let conn = Connection::connect_to_env()?;
+        let conn = crate::capture::wayland::connection()?;
         let (globals, mut queue) = registry_queue_init::<Overlay>(&conn)?;
         let qh = queue.handle();
         let compositor = CompositorState::bind(&globals, &qh).context("wl_compositor missing")?;
         let shm = Shm::bind(&globals, &qh).context("wl_shm missing")?;
         let layer_shell = LayerShell::bind(&globals, &qh).ok();
+        if debug() {
+            eprintln!("clipt: overlay via {}", if layer_shell.is_some() { "layer-shell" } else { "xdg-shell" });
+        }
         let xdg = if layer_shell.is_none() {
             Some(XdgShell::bind(&globals, &qh).context("neither layer-shell nor xdg-shell available")?)
         } else {

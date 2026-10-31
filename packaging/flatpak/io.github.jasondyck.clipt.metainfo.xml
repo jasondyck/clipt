@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.jasondyck.clipt</id>
+  <name>clipt</name>
+  <summary>Select, annotate and copy a screenshot</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <developer id="io.github.jasondyck">
+    <name>The clipt contributors</name>
+  </developer>
+  <description>
+    <p>
+      clipt freezes the screen, lets you select a region, window or monitor,
+      annotate it and copy or save it. It works on Wayland and X11 desktops,
+      across mixed-resolution and fractionally scaled monitors.
+    </p>
+    <ul>
+      <li>Region selection with resize handles and a magnifier</li>
+      <li>Window and monitor selection</li>
+      <li>Arrows, shapes, pen, highlighter, text, pixelate and numbered counters</li>
+      <li>Copy to the clipboard or save as PNG</li>
+      <li>Optional system tray icon</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.jasondyck.clipt.desktop</launchable>
+  <url type="homepage">https://github.com/jasondyck/clipt</url>
+  <url type="bugtracker">https://github.com/jasondyck/clipt/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/jasondyck/clipt/v0.1.0/docs/screenshot.png</image>
+      <caption>Annotating a selected region</caption>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1"/>
+  <provides>
+    <binary>clipt</binary>
+  </provides>
+  <releases>
+    <release version="0.1.0" date="2026-10-31"/>
+  </releases>
+</component>

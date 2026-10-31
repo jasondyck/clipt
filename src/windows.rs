@@ -85,8 +85,14 @@ fn kwin() -> Result<Vec<Window>> {
     let conn = zbus::block_on(zbus::connection::Builder::session().serve_at("/clipt/Windows", Sink(Mutex::new(Some(tx)))).build())?;
     let me = conn.unique_name().context("no unique bus name")?.to_string();
 
-    let plugin = format!("clipt-windows-{}", std::process::id());
-    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    // Named after the bus connection: in a Flatpak every clipt is PID 2.
+    let plugin = format!("clipt-windows-{}", me.trim_start_matches(':').replace('.', "_"));
+    let mut dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    // KWin reads the file from outside the sandbox; of the runtime dir, a
+    // Flatpak only shares app/<id>/ with the host, at the same path.
+    if let (true, Some(id)) = (crate::update::flatpak(), std::env::var_os("FLATPAK_ID")) {
+        dir = dir.join("app").join(id);
+    }
     let path = dir.join(format!("{plugin}.js"));
     std::fs::write(&path, KWIN_SCRIPT.replace("@DEST@", &me))?;
 

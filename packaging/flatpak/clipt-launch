@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Run a command with a Wayland connection it can't open itself.
+
+Flatpak hands sandboxed apps a filtered Wayland connection, so on wlroots
+compositors and niri the clipt Flatpak can't use screencopy or layer-shell.
+This connects to the compositor from outside the sandbox and passes the
+connection in as WAYLAND_SOCKET, which the Flatpak accepts because its
+manifest has --socket=inherit-wayland-socket. Use it in your hotkey:
+
+    bindsym Print exec clipt-launch flatpak run io.github.jasondyck.clipt gui
+
+Only for launching apps you trust: the connection is unfiltered.
+"""
+
+import os
+import socket
+import sys
+
+if len(sys.argv) < 2:
+    sys.exit("usage: clipt-launch COMMAND [ARGS...]")
+display = os.environ.get("WAYLAND_DISPLAY", "wayland-0")
+if not os.path.isabs(display):
+    display = os.path.join(os.environ["XDG_RUNTIME_DIR"], display)
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+try:
+    s.connect(display)
+except OSError as e:
+    sys.exit(f"clipt-launch: can't connect to {display}: {e}")
+fd = s.detach()
+os.set_inheritable(fd, True)
+os.environ["WAYLAND_SOCKET"] = str(fd)
+try:
+    os.execvp(sys.argv[1], sys.argv[1:])
+except OSError as e:
+    sys.exit(f"clipt-launch: {sys.argv[1]}: {e}")
