@@ -6,6 +6,10 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-31
+
+First public release.
+
 ### Added
 - `clipt tray`: system tray icon (StatusNotifierItem + dbusmenu). Click for a
   region, middle-click for the full desktop, menu for delayed capture, the
@@ -22,18 +26,6 @@ All notable changes are listed here. The format follows
   packaged installs at their package manager. Opt-in daily check with
   `check_updates = true`.
 - Release workflow: one click bumps, tags and publishes packages.
-
-### Fixed
-- Redraws while moving the pointer repainted the whole screen: the crosshair's
-  two lines were merged into one screen-sized damage box. Now ~4 ms median on
-  4K instead of 7-12 ms.
-- The tray kept launching the old binary path after an upgrade replaced it.
-
-## [0.1.0] - unreleased
-
-First public release.
-
-### Added
 - Frozen-screen region selection with resize handles, magnifier and
   click-to-select-a-monitor; selections can span monitors.
 - Annotation: rectangle, ellipse, arrow, line, pen, highlighter, text,
@@ -50,3 +42,9 @@ First public release.
 - Builds on glibc and musl Linux (x86_64, aarch64, armv7, riscv64) and FreeBSD.
 - `full`, `screen` and slurp-compatible `-g` modes; stdout output.
 - End-to-end test suites on headless Sway, GNOME Shell and X11.
+
+### Fixed
+- Redraws while moving the pointer repainted the whole screen: the crosshair's
+  two lines were merged into one screen-sized damage box. Now ~4 ms median on
+  4K instead of 7-12 ms.
+- The tray kept launching the old binary path after an upgrade replaced it.
