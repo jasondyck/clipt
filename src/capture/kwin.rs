@@ -8,17 +8,17 @@ use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 use std::io::Read;
 use std::os::fd::OwnedFd;
-use zbus::zvariant::{Fd, OwnedValue, Value};
+use zbus::{Fd, OwnedVariant as OwnedValue, Variant as Value};
 
 const DEST: &str = "org.kde.KWin.ScreenShot2";
 const PATH: &str = "/org/kde/KWin/ScreenShot2";
 
-pub fn available(conn: &zbus::blocking::Connection) -> bool {
-    zbus::blocking::fdo::DBusProxy::new(conn).ok().and_then(|p| p.name_has_owner(DEST.try_into().unwrap()).ok()).unwrap_or(false)
+pub fn available(conn: &crate::dbus::Connection) -> bool {
+    crate::dbus::name_has_owner(conn, DEST)
 }
 
-pub fn capture(conn: &zbus::blocking::Connection, outputs: &[Output], cursor: bool) -> Result<Vec<Shot>> {
-    let proxy = zbus::blocking::Proxy::new(conn, DEST, PATH, DEST)?;
+pub fn capture(conn: &crate::dbus::Connection, outputs: &[Output], cursor: bool) -> Result<Vec<Shot>> {
+    let proxy = crate::dbus::Proxy::new(conn, DEST, PATH, DEST)?;
     let mut shots = Vec::new();
     for o in outputs {
         let image = capture_screen(&proxy, &o.name, cursor).with_context(|| format!("KWin CaptureScreen({})", o.name))?;
@@ -27,7 +27,7 @@ pub fn capture(conn: &zbus::blocking::Connection, outputs: &[Output], cursor: bo
     Ok(shots)
 }
 
-fn capture_screen(proxy: &zbus::blocking::Proxy, name: &str, cursor: bool) -> Result<Image> {
+fn capture_screen(proxy: &crate::dbus::Proxy, name: &str, cursor: bool) -> Result<Image> {
     let (rx, tx): (OwnedFd, OwnedFd) = rustix::pipe::pipe_with(rustix::pipe::PipeFlags::CLOEXEC)?;
     let reader = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
         let mut f = std::fs::File::from(rx);

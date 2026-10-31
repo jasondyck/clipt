@@ -282,14 +282,16 @@ fn pixelate(pm: &mut PixmapMut, src: PixmapRef, off: (i32, i32), r: Rect, block:
                     n += 1;
                 }
             }
-            if n > 0 {
-                let px = [(acc[0] / n) as u8, (acc[1] / n) as u8, (acc[2] / n) as u8, (acc[3] / n) as u8];
-                for y in (by - off.1).max(0)..(ey - off.1).min(th) {
-                    let row = y as usize * dstride;
-                    for x in (bx - off.0).max(0)..(ex - off.0).min(tw) {
-                        let i = row + x as usize * 4;
-                        dd[i..i + 4].copy_from_slice(&px);
-                    }
+            if n == 0 {
+                bx = ex;
+                continue;
+            }
+            let px = [(acc[0] / n) as u8, (acc[1] / n) as u8, (acc[2] / n) as u8, (acc[3] / n) as u8];
+            for y in (by - off.1).max(0)..(ey - off.1).min(th) {
+                let row = y as usize * dstride;
+                for x in (bx - off.0).max(0)..(ex - off.0).min(tw) {
+                    let i = row + x as usize * 4;
+                    dd[i..i + 4].copy_from_slice(&px);
                 }
             }
             bx = ex;

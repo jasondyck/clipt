@@ -597,11 +597,11 @@ impl Editor {
     }
 
     fn commit_text(&mut self) {
-        if let Some(te) = self.text.take() {
-            if !te.text.trim().is_empty() {
-                let size = self.text_size();
-                self.push_shape(Shape::Text { pos: te.pos, text: te.text, color: self.current_color(), size });
-            }
+        if let Some(te) = self.text.take()
+            && !te.text.trim().is_empty()
+        {
+            let size = self.text_size();
+            self.push_shape(Shape::Text { pos: te.pos, text: te.text, color: self.current_color(), size });
         }
     }
 

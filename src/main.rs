@@ -3,6 +3,7 @@
 mod capture;
 mod clipboard;
 mod config;
+mod dbus;
 mod editor;
 mod image;
 mod notify;
@@ -249,10 +250,10 @@ fn deliver(cfg: &Config, args: &Args, img: image::Image) -> Result<()> {
     let (iw, ih) = (img.width, img.height);
     drop(img);
     let path = if args.output.is_some() || !args.clipboard { write_png(cfg, args.output.as_deref(), &png)? } else { None };
-    if let Some(p) = &path {
-        if args.output.is_none() {
-            println!("{}", p.display());
-        }
+    if let Some(p) = &path
+        && args.output.is_none()
+    {
+        println!("{}", p.display());
     }
     if args.clipboard {
         if cfg.notify {

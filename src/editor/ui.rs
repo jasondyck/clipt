@@ -187,12 +187,10 @@ pub fn dynamic_layers(ed: &Editor, frame: u64) -> Vec<Layer> {
     let p = ed.pointer;
     let visible = ed.is_selecting() && ed.pointer_in;
     let mut rects = Vec::new();
-    if visible {
-        if let Some(b) = ed.screens.iter().map(|s| s.bounds()).find(|b| b.contains(p.0, p.1)) {
-            rects.push(Rect::from_xywh(b.left(), p.1 - 2.0, b.width(), 4.0));
-            rects.push(Rect::from_xywh(p.0 - 2.0, b.top(), 4.0, b.height()));
-            rects.push(loupe_rect(b, p));
-        }
+    if visible && let Some(b) = ed.screens.iter().map(|s| s.bounds()).find(|b| b.contains(p.0, p.1)) {
+        rects.push(Rect::from_xywh(b.left(), p.1 - 2.0, b.width(), 4.0));
+        rects.push(Rect::from_xywh(p.0 - 2.0, b.top(), 4.0, b.height()));
+        rects.push(loupe_rect(b, p));
     }
     layers.push(Layer { key: if visible { key(&[p.0, p.1]) } else { 0 }, rects: grow(rects) });
 
@@ -321,10 +319,10 @@ pub fn render(ed: &Editor, idx: usize, pm: &mut PixmapMut, origin: (i32, i32)) {
         label(ed, pm, &view, (r.left() + 14.0, r.top() + 8.0), fs, hint, ICON(), false);
     }
 
-    if let Some((panel, btns)) = toolbar_layout(ed) {
-        if panel.intersect(&bounds).is_some() {
-            draw_toolbar(ed, pm, &view, panel, &btns);
-        }
+    if let Some((panel, btns)) = toolbar_layout(ed)
+        && panel.intersect(&bounds).is_some()
+    {
+        draw_toolbar(ed, pm, &view, panel, &btns);
     }
 
     if ed.width_hint && bounds.contains(ed.pointer.0, ed.pointer.1) {
@@ -344,7 +342,7 @@ fn draw_selection(ed: &Editor, pm: &mut PixmapMut, view: &View, sel: Rect) {
         let st = Stroke { width: (1.5 * s).max(1.0), ..Default::default() };
         pm.stroke_path(&PathBuilder::from_rect(r), &view.paint(ACCENT()), &st, id, None);
     }
-    if ed.tool == super::Tool::Select && !matches!(ed.text, Some(_)) {
+    if ed.tool == super::Tool::Select && ed.text.is_none() {
         let hs = 8.0;
         let (cx, cy) = (sel.left() + sel.width() / 2.0, sel.top() + sel.height() / 2.0);
         for (x, y) in [
@@ -497,18 +495,18 @@ fn draw_toolbar(ed: &Editor, pm: &mut PixmapMut, view: &View, panel: Rect, btns:
     }
 
     // Tooltip for the hovered button.
-    if let Some(b) = hover {
-        if let Some((r, _)) = btns.iter().find(|(_, x)| *x == b) {
-            let t = tooltip(b);
-            let fs = 12.0;
-            let w = text::measure(&ed.fonts.regular, fs * view.scale, &t) / view.scale + 16.0;
-            let above = panel.top() - 30.0;
-            let y = if above > ed.desktop().top() { above } else { panel.bottom() + 6.0 };
-            let x = r.left() + r.width() / 2.0 - w / 2.0;
-            let tr = Rect::from_xywh(x, y, w, 24.0).unwrap();
-            pill(pm, view, tr, 6.0);
-            label(ed, pm, view, (tr.left() + 8.0, tr.top() + 4.5), fs, &t, ICON(), false);
-        }
+    if let Some(b) = hover
+        && let Some((r, _)) = btns.iter().find(|(_, x)| *x == b)
+    {
+        let t = tooltip(b);
+        let fs = 12.0;
+        let w = text::measure(&ed.fonts.regular, fs * view.scale, &t) / view.scale + 16.0;
+        let above = panel.top() - 30.0;
+        let y = if above > ed.desktop().top() { above } else { panel.bottom() + 6.0 };
+        let x = r.left() + r.width() / 2.0 - w / 2.0;
+        let tr = Rect::from_xywh(x, y, w, 24.0).unwrap();
+        pill(pm, view, tr, 6.0);
+        label(ed, pm, view, (tr.left() + 8.0, tr.top() + 4.5), fs, &t, ICON(), false);
     }
 }
 
@@ -664,8 +662,8 @@ fn dim_copy(dst: &mut [u8], src: &[u8]) {
     let (d, s) = (as_u32_mut(dst), as_u32(src));
     for (d, &p) in d.iter_mut().zip(s) {
         let p = u32::from_le(p);
-        let rb = ((p & 0x00ff_00ff) * 141 >> 8) & 0x00ff_00ff;
-        let g = ((p & 0x0000_ff00) * 141 >> 8) & 0x0000_ff00;
+        let rb = (((p & 0x00ff_00ff) * 141) >> 8) & 0x00ff_00ff;
+        let g = (((p & 0x0000_ff00) * 141) >> 8) & 0x0000_ff00;
         *d = (rb | g | (p & 0xff00_0000)).to_le();
     }
 }
@@ -744,6 +742,7 @@ fn circle(pm: &mut PixmapMut, view: &View, c: Pt, r: f32, fill: Option<Color>, s
     }
 }
 
+#[allow(clippy::too_many_arguments)] // plain drawing call; a params struct would only add noise
 fn label(ed: &Editor, pm: &mut PixmapMut, view: &View, pos: Pt, size: f32, t: &str, c: Color, bold: bool) {
     let p = view.px(pos);
     let font = if bold { ed.fonts.bold() } else { &ed.fonts.regular };

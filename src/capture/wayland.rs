@@ -188,7 +188,7 @@ impl Wayland {
         self.dispatch_until(|f| f.ready)?;
         frame.destroy();
         mgr.destroy();
-        buf.to_image()
+        buf.into_image()
     }
 
     fn capture_ext(&mut self, qh: &QueueHandle<State>, shm: &wl_shm::WlShm, out: &wl_output::WlOutput, cursor: bool) -> Result<Image> {
@@ -212,7 +212,7 @@ impl Wayland {
         source.destroy();
         mgr.destroy();
         src_mgr.destroy();
-        buf.to_image()
+        buf.into_image()
     }
 
     #[allow(dead_code)]
@@ -253,7 +253,7 @@ impl ShmBuffer {
         Ok(Self { buffer, map, width: w, height: h, stride, format })
     }
 
-    fn to_image(self) -> Result<Image> {
+    fn into_image(self) -> Result<Image> {
         use wl_shm::Format::*;
         let (w, h, s) = (self.width, self.height, self.stride as usize);
         let img = match self.format {
@@ -268,18 +268,18 @@ impl ShmBuffer {
 }
 
 fn apply_transform(img: Image, t: wl_output::Transform) -> Image {
-    use wl_output::Transform::*;
+    use wl_output::Transform as T;
     // The buffer is in the output's native orientation; rotate it into the
     // orientation the user sees.
     match t {
-        Normal => img,
-        _90 => img.rotate(270),
-        _180 => img.rotate(180),
-        _270 => img.rotate(90),
-        Flipped => img.flip_horizontal(),
-        Flipped90 => img.flip_horizontal().rotate(270),
-        Flipped180 => img.flip_horizontal().rotate(180),
-        Flipped270 => img.flip_horizontal().rotate(90),
+        T::Normal => img,
+        T::_90 => img.rotate(270),
+        T::_180 => img.rotate(180),
+        T::_270 => img.rotate(90),
+        T::Flipped => img.flip_horizontal(),
+        T::Flipped90 => img.flip_horizontal().rotate(270),
+        T::Flipped180 => img.flip_horizontal().rotate(180),
+        T::Flipped270 => img.flip_horizontal().rotate(90),
         _ => img,
     }
 }
@@ -309,10 +309,10 @@ impl Dispatch<wl_output::WlOutput, ()> for State {
                 }
             }
             wl_output::Event::Mode { flags, width, height, .. } => {
-                if let WEnum::Value(f) = flags {
-                    if f.contains(wl_output::Mode::Current) {
-                        info.mode = (width, height);
-                    }
+                if let WEnum::Value(f) = flags
+                    && f.contains(wl_output::Mode::Current)
+                {
+                    info.mode = (width, height);
                 }
             }
             wl_output::Event::Scale { factor } => info.scale = factor,

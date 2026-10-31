@@ -395,8 +395,8 @@ impl Overlay {
             }
             None => return, // all busy; a release event will wake us
         };
-        let stale = std::mem::replace(&mut surf.bufs[idx].stale, Some(Vec::new()));
-        let damage = std::mem::replace(&mut surf.damage, Some(Vec::new()));
+        let stale = surf.bufs[idx].stale.replace(Vec::new());
+        let damage = surf.damage.replace(Vec::new());
         let canvas = surf.bufs[idx].buffer.canvas(&mut self.pool).unwrap();
 
         // Repaint only what this buffer is missing; fall back to a full frame
@@ -583,10 +583,10 @@ impl SeatHandler for Overlay {
         }
     }
     fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, cap: Capability) {
-        if cap == Capability::Keyboard {
-            if let Some(k) = self.keyboard.take() {
-                k.release();
-            }
+        if cap == Capability::Keyboard
+            && let Some(k) = self.keyboard.take()
+        {
+            k.release();
         }
         if cap == Capability::Pointer {
             self.pointer = None;
@@ -617,10 +617,10 @@ impl KeyboardHandler for Overlay {
         if debug() {
             eprintln!("glint: key {:?} utf8 {:?} mods {:?}", ev.keysym, ev.utf8, self.mods);
         }
-        if let Some(k) = map_key(&ev, self.mods.ctrl) {
-            if self.editor.key(k, self.mods) {
-                self.mark_all();
-            }
+        if let Some(k) = map_key(&ev, self.mods.ctrl)
+            && self.editor.key(k, self.mods)
+        {
+            self.mark_all();
         }
     }
     fn repeat_key(&mut self, c: &Connection, qh: &QueueHandle<Self>, k: &wl_keyboard::WlKeyboard, serial: u32, ev: KeyEvent) {

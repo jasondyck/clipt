@@ -1,30 +1,49 @@
-//! Minimal text rendering: one sans-serif face via ab_glyph, drawn straight into
-//! tiny-skia pixmaps. Found through fontconfig's `fc-match`, with fallbacks.
+//! Minimal text rendering: one sans-serif face parsed with skrifa, glyph
+//! outlines filled as tiny-skia paths. Found through fontconfig's `fc-match`
+//! (cached), with fallbacks.
 
-use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
-use tiny_skia::{Color, PixmapMut};
+use skrifa::instance::{LocationRef, Size};
+use skrifa::outline::{DrawSettings, OutlinePen};
+use skrifa::{FontRef, MetadataProvider};
+use tiny_skia::{Color, FillRule, Paint, PathBuilder, PixmapMut, Transform};
+
+/// A loaded font file. Parsing the table directory is cheap, so a `FontRef`
+/// is built per call instead of keeping a self-referential struct.
+pub struct Face {
+    data: Vec<u8>,
+}
+
+impl Face {
+    fn from_bytes(data: Vec<u8>) -> Option<Self> {
+        // .ttc collections: take the first face
+        (FontRef::new(&data).is_ok() || FontRef::from_index(&data, 0).is_ok()).then_some(Self { data })
+    }
+    fn font(&self) -> FontRef<'_> {
+        FontRef::new(&self.data).or_else(|_| FontRef::from_index(&self.data, 0)).expect("validated in from_bytes")
+    }
+}
 
 pub struct Fonts {
-    pub regular: FontVec,
-    pub bold: Option<FontVec>,
+    pub regular: Face,
+    pub bold: Option<Face>,
 }
 
 impl Fonts {
     pub fn load(custom: Option<&str>) -> anyhow::Result<Self> {
         let [reg_path, bold_path] = resolve();
-        let read = |p: &Option<String>| -> Option<FontVec> {
+        let read = |p: &Option<String>| -> Option<Face> {
             let candidates = p.iter().cloned().chain(FALLBACKS.iter().map(|s| s.to_string()));
-            candidates.filter_map(|p| std::fs::read(p).ok()).find_map(|b| FontVec::try_from_vec(b).ok())
+            candidates.filter_map(|p| std::fs::read(p).ok()).find_map(Face::from_bytes)
         };
         let regular = match custom {
-            Some(p) => FontVec::try_from_vec(std::fs::read(p)?)?,
+            Some(p) => Face::from_bytes(std::fs::read(p)?).ok_or_else(|| anyhow::anyhow!("{p}: not a usable TTF/OTF font"))?,
             None => read(&reg_path).ok_or_else(|| anyhow::anyhow!("no usable font found (install any TTF/OTF sans)"))?,
         };
         let bold = bold_path.as_ref().and_then(|_| read(&bold_path));
         Ok(Self { regular, bold })
     }
 
-    pub fn bold(&self) -> &FontVec {
+    pub fn bold(&self) -> &Face {
         self.bold.as_ref().unwrap_or(&self.regular)
     }
 }
@@ -75,67 +94,67 @@ const FALLBACKS: &[&str] = &[
 ];
 
 /// Width of a single line in pixels.
-pub fn measure(font: &FontVec, size: f32, text: &str) -> f32 {
-    let f = font.as_scaled(PxScale::from(size));
-    let mut w = 0.0;
-    let mut prev = None;
-    for c in text.chars() {
-        let id = f.glyph_id(c);
-        if let Some(p) = prev {
-            w += f.kern(p, id);
-        }
-        w += f.h_advance(id);
-        prev = Some(id);
-    }
-    w
+pub fn measure(face: &Face, size: f32, text: &str) -> f32 {
+    let font = face.font();
+    let (cmap, gm) = (font.charmap(), font.glyph_metrics(Size::new(size), LocationRef::default()));
+    text.chars().map(|c| gm.advance_width(cmap.map(c).unwrap_or_default()).unwrap_or(0.0)).sum()
 }
 
-pub fn line_height(font: &FontVec, size: f32) -> f32 {
-    let f = font.as_scaled(PxScale::from(size));
-    f.ascent() - f.descent() + f.line_gap()
+pub fn line_height(face: &Face, size: f32) -> f32 {
+    let m = face.font().metrics(Size::new(size), LocationRef::default());
+    m.ascent - m.descent + m.leading
+}
+
+/// Collects glyph outlines into one path, flipping font y-up to pixel y-down.
+struct Pen<'a> {
+    pb: &'a mut PathBuilder,
+    x: f32,
+    y: f32,
+}
+
+impl OutlinePen for Pen<'_> {
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.pb.move_to(self.x + x, self.y - y);
+    }
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.pb.line_to(self.x + x, self.y - y);
+    }
+    fn quad_to(&mut self, cx: f32, cy: f32, x: f32, y: f32) {
+        self.pb.quad_to(self.x + cx, self.y - cy, self.x + x, self.y - y);
+    }
+    fn curve_to(&mut self, c0x: f32, c0y: f32, c1x: f32, c1y: f32, x: f32, y: f32) {
+        self.pb.cubic_to(self.x + c0x, self.y - c0y, self.x + c1x, self.y - c1y, self.x + x, self.y - y);
+    }
+    fn close(&mut self) {
+        self.pb.close();
+    }
 }
 
 /// Draw `text` with its top-left at (x, y). Newlines start new lines.
 /// `swap_rb` flips red/blue for BGRA targets.
-pub fn draw(pm: &mut PixmapMut, font: &FontVec, size: f32, x: f32, y: f32, text: &str, color: Color, swap_rb: bool) {
-    let f = font.as_scaled(PxScale::from(size));
-    let (w, h) = (pm.width() as i32, pm.height() as i32);
-    let c = color.premultiply().to_color_u8();
-    let (mut cr, cg, mut cb, ca) = (c.red() as f32, c.green() as f32, c.blue() as f32, c.alpha() as f32);
-    if swap_rb {
-        std::mem::swap(&mut cr, &mut cb);
-    }
-    let data = pm.data_mut();
-    let lh = f.ascent() - f.descent() + f.line_gap();
+#[allow(clippy::too_many_arguments)] // plain drawing call; a params struct would only add noise
+pub fn draw(pm: &mut PixmapMut, face: &Face, size: f32, x: f32, y: f32, text: &str, color: Color, swap_rb: bool) {
+    let font = face.font();
+    let sz = Size::new(size);
+    let (cmap, gm, outlines) = (font.charmap(), font.glyph_metrics(sz, LocationRef::default()), font.outline_glyphs());
+    let m = font.metrics(sz, LocationRef::default());
+    let lh = m.ascent - m.descent + m.leading;
+    let mut pb = PathBuilder::new();
     for (li, line) in text.split('\n').enumerate() {
+        let baseline = y + m.ascent + li as f32 * lh;
         let mut caret = x;
-        let base = y + f.ascent() + li as f32 * lh;
-        let mut prev = None;
         for ch in line.chars() {
-            let id = f.glyph_id(ch);
-            if let Some(p) = prev {
-                caret += f.kern(p, id);
+            let gid = cmap.map(ch).unwrap_or_default();
+            if let Some(g) = outlines.get(gid) {
+                let _ = g.draw(DrawSettings::unhinted(sz, LocationRef::default()), &mut Pen { pb: &mut pb, x: caret, y: baseline });
             }
-            let glyph = id.with_scale_and_position(PxScale::from(size), ab_glyph::point(caret, base));
-            caret += f.h_advance(id);
-            prev = Some(id);
-            let Some(outlined) = font.outline_glyph(glyph) else { continue };
-            let b = outlined.px_bounds();
-            outlined.draw(|gx, gy, cov| {
-                let px = b.min.x as i32 + gx as i32;
-                let py = b.min.y as i32 + gy as i32;
-                if px < 0 || py < 0 || px >= w || py >= h || cov <= 0.0 {
-                    return;
-                }
-                let i = (py * w + px) as usize * 4;
-                let a = cov.min(1.0);
-                let inv = 1.0 - a * ca / 255.0;
-                let blend = |d: u8, s: f32| (s * a + d as f32 * inv).round().clamp(0.0, 255.0) as u8;
-                data[i] = blend(data[i], cr);
-                data[i + 1] = blend(data[i + 1], cg);
-                data[i + 2] = blend(data[i + 2], cb);
-                data[i + 3] = blend(data[i + 3], ca);
-            });
+            caret += gm.advance_width(gid).unwrap_or(0.0);
         }
     }
+    let Some(path) = pb.finish() else { return };
+    let c = if swap_rb { Color::from_rgba(color.blue(), color.green(), color.red(), color.alpha()).unwrap() } else { color };
+    let mut paint = Paint::default();
+    paint.set_color(c);
+    paint.anti_alias = true;
+    pm.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
 }

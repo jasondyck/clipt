@@ -6,21 +6,22 @@ description = "Lightweight Wayland screenshot tool with region select and annota
 license = "MIT"
 
 [dependencies]
-ab_glyph = "0.2"
 anyhow = "1"
+futures-core = { version = "0.3", default-features = false }
 lexopt = "0.3"
 libc = "0.2.191"
 memmap2 = "0.9"
 png = "0.18"
 rustix = { version = "1", features = ["fs", "pipe", "process", "shm", "time"] }
 serde = { version = "1", features = ["derive"] }
+skrifa = "0.49"
 smithay-client-toolkit = { version = "0.21", default-features = false, features = ["calloop", "xkbcommon"] }
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 toml = { version = "0.9", default-features = false, features = ["parse", "serde", "std"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
+zbus = { version = "6", default-features = false, features = ["default-rt", "proxy"] }
 
 [profile.release]
 lto = true

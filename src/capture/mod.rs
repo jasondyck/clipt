@@ -62,12 +62,12 @@ impl Backend {
 
 pub struct Capturer {
     wl: wayland::Wayland,
-    bus: Option<zbus::blocking::Connection>,
+    bus: Option<crate::dbus::Connection>,
 }
 
 impl Capturer {
     pub fn new() -> Result<Self> {
-        let bus = zbus::blocking::Connection::session().ok();
+        let bus = crate::dbus::session().ok();
         if let Some(b) = &bus {
             portal::register(b);
         }

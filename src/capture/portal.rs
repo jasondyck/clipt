@@ -7,7 +7,7 @@ use super::{Output, Shot};
 use crate::image::Image;
 use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::{OwnedVariant as OwnedValue, Variant as Value};
 
 const DEST: &str = "org.freedesktop.portal.Desktop";
 const PATH: &str = "/org/freedesktop/portal/desktop";
@@ -16,30 +16,30 @@ const PATH: &str = "/org/freedesktop/portal/desktop";
 /// re-asks screenshot permission every time; registering as "glint" lets
 /// "Allow" stick. Must precede any other portal call on this connection and
 /// needs xdg-desktop-portal 1.19+, so failure is ignored.
-pub fn register(conn: &zbus::blocking::Connection) {
-    let _ = zbus::blocking::Proxy::new(conn, DEST, PATH, "org.freedesktop.host.portal.Registry")
-        .and_then(|p| p.call::<_, _, ()>("Register", &("glint", HashMap::<&str, Value>::new())));
+pub fn register(conn: &crate::dbus::Connection) {
+    let _ = crate::dbus::Proxy::new(conn, DEST, PATH, "org.freedesktop.host.portal.Registry")
+        .and_then(|p| p.call::<_, ()>("Register", &("glint", HashMap::<&str, Value>::new())));
 }
 
-pub fn available(conn: &zbus::blocking::Connection) -> bool {
-    zbus::blocking::Proxy::new(conn, DEST, PATH, "org.freedesktop.portal.Screenshot").and_then(|p| p.get_property::<u32>("version")).is_ok()
+pub fn available(conn: &crate::dbus::Connection) -> bool {
+    crate::dbus::Proxy::new(conn, DEST, PATH, "org.freedesktop.portal.Screenshot").and_then(|p| p.get_property::<u32>("version")).is_ok()
 }
 
-pub fn capture(conn: &zbus::blocking::Connection, outputs: &[Output]) -> Result<Vec<Shot>> {
+pub fn capture(conn: &crate::dbus::Connection, outputs: &[Output]) -> Result<Vec<Shot>> {
     let token = format!("glint{}", std::process::id());
     let sender = conn.unique_name().context("no unique bus name")?.trim_start_matches(':').replace('.', "_");
     let req_path = format!("{PATH}/request/{sender}/{token}");
 
     // Subscribe before calling, or a fast backend can answer before we listen.
-    let req = zbus::blocking::Proxy::new(conn, DEST, req_path.as_str(), "org.freedesktop.portal.Request")?;
+    let req = crate::dbus::Proxy::new(conn, DEST, req_path.as_str(), "org.freedesktop.portal.Request")?;
     let mut responses = req.receive_signal("Response")?;
 
-    let shot = zbus::blocking::Proxy::new(conn, DEST, PATH, "org.freedesktop.portal.Screenshot")?;
+    let shot = crate::dbus::Proxy::new(conn, DEST, PATH, "org.freedesktop.portal.Screenshot")?;
     let mut opts: HashMap<&str, Value> = HashMap::new();
     opts.insert("handle_token", Value::from(token.as_str()));
     opts.insert("interactive", Value::from(false));
     opts.insert("modal", Value::from(false));
-    let _handle: zbus::zvariant::OwnedObjectPath = shot.call("Screenshot", &("", opts))?;
+    let _handle: zbus::OwnedObjectPath = shot.call("Screenshot", &("", opts))?;
 
     let msg = responses.next().context("portal closed without answering")?;
     let (code, results): (u32, HashMap<String, OwnedValue>) = msg.body().deserialize()?;
@@ -82,12 +82,13 @@ fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(v);
-                i += 3;
-                continue;
-            }
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16)
+        {
+            out.push(v);
+            i += 3;
+            continue;
         }
         out.push(b[i]);
         i += 1;
