@@ -1,0 +1,15 @@
+# Packaging
+
+| Channel | Where | Notes |
+|---|---|---|
+| GitHub releases | `.github/workflows/release.yml` | x86_64 + aarch64 tarballs, `.deb`, `.rpm`, checksums |
+| crates.io | same workflow | needs a `CARGO_REGISTRY_TOKEN` repository secret |
+| AUR | `aur/clipt`, `aur/clipt-bin` | push each directory to its AUR git repo; update `pkgver` and `sha256sums` (`updpkgsums`) per release, regenerate `.SRCINFO` with `makepkg --printsrcinfo` |
+| Nix | `/flake.nix` | `nix run github:jasondyck/clipt` |
+
+Distribution packagers: `cargo build --release --locked`, then install
+`target/release/clipt` to `bin/` and `data/clipt.desktop` to
+`share/applications/`. The desktop entry matters: KDE only lets binaries
+listed in one capture through KWin silently, and GNOME's portal needs it to
+remember the screenshot permission. Runtime needs: libxkbcommon, fontconfig
+(`fc-match`) and any sans-serif font.

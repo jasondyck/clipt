@@ -1,0 +1,24 @@
+# Maintainer: The clipt contributors
+pkgname=clipt-bin
+_pkgname=clipt
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Fast, lightweight screenshot tool for Wayland and X11 (prebuilt binary)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/jasondyck/clipt"
+license=('MIT OR Apache-2.0')
+depends=('glibc' 'gcc-libs' 'libxkbcommon' 'fontconfig')
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+source_x86_64=("$url/releases/download/v$pkgver/$_pkgname-v$pkgver-x86_64-linux.tar.gz")
+source_aarch64=("$url/releases/download/v$pkgver/$_pkgname-v$pkgver-aarch64-linux.tar.gz")
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+  cd "$_pkgname-v$pkgver-$CARCH-linux"
+  install -Dm755 clipt -t "$pkgdir/usr/bin/"
+  install -Dm644 clipt.desktop -t "$pkgdir/usr/share/applications/"
+  install -Dm644 README.md CHANGELOG.md -t "$pkgdir/usr/share/doc/$_pkgname/"
+  install -Dm644 LICENSE-MIT LICENSE-APACHE -t "$pkgdir/usr/share/licenses/$_pkgname/"
+}

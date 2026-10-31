@@ -2,7 +2,7 @@
 name = "clipt"
 version = "0.1.0"
 edition = "2024"
-description = "Fast, lightweight Wayland screenshot tool with region select and annotation"
+description = "Fast, lightweight screenshot tool for Wayland and X11 with region select and annotation"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jasondyck/clipt"
 readme = "README.md"
@@ -46,3 +46,33 @@ wayland-protocols-misc = { version = "0.3", features = ["client"] }
 inherits = "release"
 strip = false
 debug = "line-tables-only"
+
+[package.metadata.deb]
+maintainer = "The clipt contributors"
+section = "graphics"
+extended-description = """\
+Freeze the screen, drag a region, annotate it (arrows, boxes, text, \
+pixelate, counters), then copy or save. Works on KDE, GNOME, wlroots \
+compositors (Sway, Hyprland, niri, ...) and X11, with correct handling of \
+multiple monitors at different resolutions and scales."""
+# Explicit so a missing dpkg-shlibdeps can never produce an empty list.
+depends = "libc6 (>= 2.35), libxkbcommon0"
+assets = [
+    ["target/release/clipt", "usr/bin/", "755"],
+    ["data/clipt.desktop", "usr/share/applications/", "644"],
+    ["README.md", "usr/share/doc/clipt/", "644"],
+    ["CHANGELOG.md", "usr/share/doc/clipt/", "644"],
+    ["LICENSE-MIT", "usr/share/doc/clipt/", "644"],
+    ["LICENSE-APACHE", "usr/share/doc/clipt/", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/clipt", dest = "/usr/bin/clipt", mode = "755" },
+    { source = "data/clipt.desktop", dest = "/usr/share/applications/clipt.desktop", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/clipt/README.md", mode = "644", doc = true },
+    { source = "LICENSE-MIT", dest = "/usr/share/licenses/clipt/LICENSE-MIT", mode = "644", doc = true },
+    { source = "LICENSE-APACHE", dest = "/usr/share/licenses/clipt/LICENSE-APACHE", mode = "644", doc = true },
+]
+[package.metadata.generate-rpm.requires]
+libxkbcommon = "*"
