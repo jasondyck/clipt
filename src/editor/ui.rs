@@ -183,6 +183,27 @@ pub fn dynamic_layers(ed: &Editor, frame: u64) -> Vec<Layer> {
     let sk = rect_key(ed.sel);
     layers.push(Layer { key: key(&[sk[0], sk[1], sk[2], sk[3], handles as u8 as f32]), rects: grow(rects) });
 
+    // hover target (window or monitor): outline, glow and card
+    let (hk, rects) = match ed.hover_drawn() {
+        Some(h) => {
+            let r = h.rect;
+            let w = GLOW + 2.0;
+            let mut parts = rect_key(Some(r)).to_vec();
+            parts.extend(h.name.chars().map(|c| c as u32 as f32));
+            parts.push(h.is_window as u8 as f32);
+            let rects = vec![
+                Rect::from_ltrb(r.left() - w, r.top() - w, r.right() + w, r.top() + w),
+                Rect::from_ltrb(r.left() - w, r.bottom() - w, r.right() + w, r.bottom() + w),
+                Rect::from_ltrb(r.left() - w, r.top() - w, r.left() + w, r.bottom() + w),
+                Rect::from_ltrb(r.right() - w, r.top() - w, r.right() + w, r.bottom() + w),
+                hover_card(ed, &h).and_then(|c| inflate(c, CARD_SHADOW)),
+            ];
+            (key(&parts), rects)
+        }
+        None => (0, Vec::new()),
+    };
+    layers.push(Layer { key: hk, rects: grow(rects) });
+
     // crosshair + loupe
     let p = ed.pointer;
     let visible = ed.is_selecting() && ed.pointer_in;
@@ -197,17 +218,11 @@ pub fn dynamic_layers(ed: &Editor, frame: u64) -> Vec<Layer> {
     // hint pill
     let hint = ed.sel.is_none() && !ed.is_adjusting();
     let rects = if hint {
-        ed.screens
-            .iter()
-            .map(|s| {
-                let b = s.bounds();
-                Rect::from_xywh(b.left(), b.top() + 20.0, b.width(), 50.0)
-            })
-            .collect()
+        ed.screens.iter().map(|s| hint_rect(ed, s.bounds()).and_then(|r| inflate(r, CARD_SHADOW))).collect()
     } else {
         Vec::new()
     };
-    layers.push(Layer { key: hint as u64, rects: grow(rects) });
+    layers.push(Layer { key: hint as u64 + 2 * !ed.windows.is_empty() as u64, rects: grow(rects) });
 
     // toolbar + tooltip
     let tb = toolbar_layout(ed).map(|(panel, _)| panel);
@@ -260,7 +275,7 @@ pub fn render(ed: &Editor, idx: usize, pm: &mut PixmapMut, origin: (i32, i32)) {
         let (bw, bh) = (scr.bg.width() as usize, scr.bg.height() as usize);
         let (ox, oy) = (origin.0.max(0) as usize, origin.1.max(0) as usize);
         let cols = pw.min(bw.saturating_sub(ox));
-        let sel_px = ed.sel.and_then(|r| r.intersect(&bounds)).map(|sel| {
+        let sel_px = ed.lit().and_then(|r| r.intersect(&bounds)).map(|sel| {
             let (x0, y0) = sv.px((sel.left(), sel.top()));
             let (x1, y1) = sv.px((sel.right(), sel.bottom()));
             (x0.round().max(0.0) as usize, y0.round().max(0.0) as usize, x1.round().max(0.0) as usize, y1.round().max(0.0) as usize)
@@ -304,6 +319,9 @@ pub fn render(ed: &Editor, idx: usize, pm: &mut PixmapMut, origin: (i32, i32)) {
     if let Some(sel) = ed.sel {
         draw_selection(ed, pm, &view, sel);
     }
+    if let Some(h) = ed.hover_drawn() {
+        draw_hover(ed, pm, &view, &h);
+    }
 
     if ed.is_selecting() && ed.pointer_in && bounds.contains(ed.pointer.0, ed.pointer.1) {
         draw_crosshair(pm, &view, bounds, ed.pointer);
@@ -311,12 +329,7 @@ pub fn render(ed: &Editor, idx: usize, pm: &mut PixmapMut, origin: (i32, i32)) {
     }
 
     if ed.sel.is_none() && !ed.is_adjusting() {
-        let hint = "Drag to select   ·   Click for full screen   ·   Esc to cancel";
-        let fs = 14.0;
-        let w = text::measure(&ed.fonts.regular, fs * s, hint) / s + 28.0;
-        let r = Rect::from_xywh(bounds.left() + (bounds.width() - w) / 2.0, bounds.top() + 28.0, w, 34.0).unwrap();
-        pill(pm, &view, r, 17.0);
-        label(ed, pm, &view, (r.left() + 14.0, r.top() + 8.0), fs, hint, ICON(), false);
+        draw_hint(ed, pm, &view, bounds);
     }
 
     if let Some((panel, btns)) = toolbar_layout(ed)
@@ -366,6 +379,163 @@ fn draw_selection(ed: &Editor, pm: &mut PixmapMut, view: &View, sel: Rect) {
     let Some(r) = r else { return };
     pill(pm, view, r, 6.0);
     label(ed, pm, view, (r.left() + 8.0, r.top() + 4.5), 12.5, &size_label(ed, sel), ICON(), false);
+}
+
+// ---- hover target + hint: HUD-style cards ---------------------------------
+
+/// How far the hover glow reaches outside the target.
+const GLOW: f32 = 7.0;
+/// How far a card's shadow reaches.
+const CARD_SHADOW: f32 = 14.0;
+
+#[allow(non_snake_case)]
+fn MATERIAL() -> Color {
+    Color::from_rgba8(0x1c, 0x1c, 0x1e, 222)
+}
+#[allow(non_snake_case)]
+fn SECONDARY() -> Color {
+    Color::from_rgba8(255, 255, 255, 150)
+}
+
+/// A dark translucent card with a hairline edge and a soft shadow: the
+/// look of a system HUD.
+fn card(pm: &mut PixmapMut, view: &View, r: Rect, rad: f32) {
+    let id = Transform::identity();
+    for i in 0..6 {
+        let g = 2.0 + i as f32 * 2.2;
+        if let Some(rr) = Rect::from_xywh(r.left() - g / 2.0, r.top() - g / 2.0 + 3.0, r.width() + g, r.height() + g) {
+            pm.fill_path(&rounded(view, rr, rad + g / 2.0), &view.paint(Color::from_rgba8(0, 0, 0, 14)), FillRule::Winding, id, None);
+        }
+    }
+    let path = rounded(view, r, rad);
+    pm.fill_path(&path, &view.paint(MATERIAL()), FillRule::Winding, id, None);
+    let st = Stroke { width: view.scale.max(1.0), ..Default::default() };
+    pm.stroke_path(&path, &view.paint(Color::from_rgba8(255, 255, 255, 26)), &st, id, None);
+}
+
+/// "firefox" → "Firefox", "org.kde.dolphin" → "Dolphin", "claude-code" →
+/// "Claude Code".
+fn app_title(name: &str) -> String {
+    let last = name.rsplit('.').next().unwrap_or(name);
+    last.split(['-', '_', ' '])
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut c = w.chars();
+            c.next().map(|f| f.to_uppercase().chain(c).collect::<String>()).unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn hover_lines(ed: &Editor, h: &super::Hover) -> (String, String) {
+    let size = size_label(ed, h.rect);
+    if h.is_window { (app_title(&h.name), size) } else { ("Entire Screen".into(), format!("{}  ·  {}", h.name, size)) }
+}
+
+const CARD_TITLE: f32 = 16.0;
+const CARD_SUB: f32 = 12.5;
+
+/// The label card: centred in the target, or just below it (above near the
+/// bottom of the screen) when the target is too small to hold it.
+fn hover_card(ed: &Editor, h: &super::Hover) -> Option<Rect> {
+    let (title, sub) = hover_lines(ed, h);
+    let w = text::measure(ed.fonts.bold(), CARD_TITLE, &title).max(text::measure(&ed.fonts.regular, CARD_SUB, &sub)) + 40.0;
+    let hgt = 62.0;
+    let r = h.rect;
+    let (cx, cy) = (r.left() + r.width() / 2.0, r.top() + r.height() / 2.0);
+    let (x, y) = if r.width() >= w + 24.0 && r.height() >= hgt + 24.0 {
+        (cx - w / 2.0, cy - hgt / 2.0)
+    } else if r.bottom() + hgt + 16.0 <= ed.desktop().bottom() {
+        (cx - w / 2.0, r.bottom() + 12.0)
+    } else {
+        (cx - w / 2.0, r.top() - hgt - 12.0)
+    };
+    Rect::from_xywh(x, y, w, hgt)
+}
+
+fn draw_hover(ed: &Editor, pm: &mut PixmapMut, view: &View, h: &super::Hover) {
+    let s = view.scale;
+    let id = Transform::identity();
+    let rad = if h.is_window { 8.0 } else { 0.0 };
+    // A whole screen's outline sits just inside its edges so all of it shows.
+    let inset = if h.is_window { 0.0 } else { 1.5 };
+    let Some(r) = Rect::from_ltrb(h.rect.left() + inset, h.rect.top() + inset, h.rect.right() - inset, h.rect.bottom() - inset) else {
+        return;
+    };
+    let path = rounded(view, r, rad);
+    let a = ACCENT();
+    // Soft glow, then the crisp edge.
+    for (w, alpha) in [(GLOW * 2.0, 0.10), (GLOW * 1.2, 0.18), (5.0, 0.30)] {
+        let st = Stroke { width: w * s, line_join: tiny_skia::LineJoin::Round, ..Default::default() };
+        pm.stroke_path(&path, &view.paint(Color::from_rgba(a.red(), a.green(), a.blue(), alpha).unwrap()), &st, id, None);
+    }
+    let st = Stroke { width: (2.0 * s).max(1.5), line_join: tiny_skia::LineJoin::Round, ..Default::default() };
+    pm.stroke_path(&path, &view.paint(a), &st, id, None);
+
+    let Some(c) = hover_card(ed, h) else { return };
+    card(pm, view, c, 12.0);
+    let (title, sub) = hover_lines(ed, h);
+    let tw = text::measure(ed.fonts.bold(), CARD_TITLE * s, &title) / s;
+    let sw = text::measure(&ed.fonts.regular, CARD_SUB * s, &sub) / s;
+    let mid = c.left() + c.width() / 2.0;
+    label(ed, pm, view, (mid - tw / 2.0, c.top() + 11.0), CARD_TITLE, &title, Color::WHITE, true);
+    label(ed, pm, view, (mid - sw / 2.0, c.top() + 36.0), CARD_SUB, &sub, SECONDARY(), false);
+}
+
+/// (key cap, what it does) for the hint bar.
+fn hint_items(ed: &Editor) -> Vec<(&'static str, &'static str)> {
+    if ed.windows.is_empty() {
+        vec![("Drag", "Select area"), ("Click", "Screen"), ("Esc", "Cancel")]
+    } else {
+        vec![("Drag", "Select area"), ("Click", "Window"), ("Tab", "Screen"), ("Esc", "Cancel")]
+    }
+}
+
+const HINT_FS: f32 = 13.0;
+const CAP_FS: f32 = 11.5;
+const HINT_H: f32 = 40.0;
+
+fn hint_width(ed: &Editor) -> f32 {
+    let items = hint_items(ed);
+    let mut w = 16.0;
+    for (i, (k, t)) in items.iter().enumerate() {
+        w += text::measure(&ed.fonts.regular, CAP_FS, k) + 14.0 + 8.0 + text::measure(&ed.fonts.regular, HINT_FS, t);
+        if i + 1 < items.len() {
+            w += 22.0;
+        }
+    }
+    w + 16.0
+}
+
+fn hint_rect(ed: &Editor, b: Rect) -> Option<Rect> {
+    let w = hint_width(ed);
+    Rect::from_xywh(b.left() + (b.width() - w) / 2.0, b.top() + 24.0, w, HINT_H)
+}
+
+fn draw_hint(ed: &Editor, pm: &mut PixmapMut, view: &View, b: Rect) {
+    let Some(r) = hint_rect(ed, b) else { return };
+    let s = view.scale;
+    card(pm, view, r, HINT_H / 2.0);
+    let id = Transform::identity();
+    let mut x = r.left() + 16.0;
+    let items = hint_items(ed);
+    for (i, (k, t)) in items.iter().enumerate() {
+        let kw = text::measure(&ed.fonts.regular, CAP_FS * s, k) / s + 14.0;
+        if let Some(cap) = Rect::from_xywh(x, r.top() + 9.0, kw, 22.0) {
+            let path = rounded(view, cap, 6.0);
+            pm.fill_path(&path, &view.paint(Color::from_rgba8(255, 255, 255, 22)), FillRule::Winding, id, None);
+            let st = Stroke { width: s.max(1.0), ..Default::default() };
+            pm.stroke_path(&path, &view.paint(Color::from_rgba8(255, 255, 255, 46)), &st, id, None);
+            label(ed, pm, view, (x + 7.0, cap.top() + 4.0), CAP_FS, k, Color::from_rgba8(255, 255, 255, 230), false);
+        }
+        x += kw + 8.0;
+        label(ed, pm, view, (x, r.top() + 11.5), HINT_FS, t, SECONDARY(), false);
+        x += text::measure(&ed.fonts.regular, HINT_FS * s, t) / s;
+        if i + 1 < items.len() {
+            circle(pm, view, (x + 11.0, r.top() + HINT_H / 2.0), 1.5, Some(Color::from_rgba8(255, 255, 255, 70)), None);
+            x += 22.0;
+        }
+    }
 }
 
 /// Size in physical pixels: that's what the saved file will be.

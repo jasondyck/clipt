@@ -280,8 +280,19 @@ impl UiSession for Session {
             }
             self.update_cursor()?;
             self.x.conn.flush()?;
-            let ev = self.x.conn.wait_for_event()?;
-            self.handle(ev)?;
+            if self.editor.animating() {
+                // No frame callbacks on X11: tick at ~120 Hz until it settles.
+                match self.x.conn.poll_for_event()? {
+                    Some(ev) => self.handle(ev)?,
+                    None => {
+                        std::thread::sleep(std::time::Duration::from_millis(8));
+                        self.dirty = true;
+                    }
+                }
+            } else {
+                let ev = self.x.conn.wait_for_event()?;
+                self.handle(ev)?;
+            }
             while let Some(ev) = self.x.conn.poll_for_event()? {
                 self.handle(ev)?;
             }
@@ -428,6 +439,7 @@ impl Keymap {
             0xff52 => Key::Up,
             0xff53 => Key::Right,
             0xff54 => Key::Down,
+            0xff09 | 0xfe20 => Key::Tab,
             s => {
                 let c = xkeysym::Keysym::new(s).key_char()?;
                 if c.is_control() {

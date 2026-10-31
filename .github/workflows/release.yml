@@ -1,17 +1,78 @@
 name: release
 
-# Push a tag like v0.2.0: builds x86_64 and aarch64 tarballs, .deb and .rpm
-# packages, drafts a GitHub release whose notes are that version's CHANGELOG
-# section, and publishes to crates.io if a token is configured.
+# Two ways to release:
+#   * Actions → release → Run workflow, enter a version (or
+#     `gh workflow run release -f version=0.2.0`): tests, bumps Cargo.toml,
+#     dates the CHANGELOG, commits, tags and releases.
+#   * Push a tag like v0.2.0 yourself, after bumping by hand.
+# Either way: x86_64 and aarch64 tarballs, .deb and .rpm, a published GitHub
+# release (prerelease for tags like v0.2.0-rc1) with that version's CHANGELOG
+# section as notes, and crates.io when a CARGO_REGISTRY_TOKEN is configured.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.2.0 or 0.2.0-rc1"
+        required: true
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
+      - name: bump (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::tag v$VERSION already exists"; exit 1
+          fi
+          python3 .github/scripts/prepare-release.py "$VERSION"
+          cargo update --workspace
+      - name: verify version matches tag
+        run: |
+          v="${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}"
+          python3 .github/scripts/prepare-release.py --verify "${v#v}"
+      # The gate: nothing is tagged or published unless this passes.
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+      - name: commit and tag (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Release v$VERSION"
+          git tag -a "v$VERSION" -m "clipt $VERSION"
+          git push origin "HEAD:${{ github.ref_name }}" "v$VERSION"
+      - id: tag
+        run: |
+          v="${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}"
+          echo "tag=v${v#v}" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prepare
     strategy:
       matrix:
         include:
@@ -20,6 +81,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
       # Built on the oldest supported Ubuntu so the glibc requirement stays low.
       - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
@@ -32,8 +95,10 @@ jobs:
           cargo deb --no-build -o .
           cargo generate-rpm -o .
       - name: pack
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          name="clipt-${GITHUB_REF_NAME}-${{ matrix.arch }}-linux"
+          name="clipt-${TAG}-${{ matrix.arch }}-linux"
           mkdir -p "$name"
           cp target/release/clipt data/clipt.desktop data/clipt-tray.desktop data/clipt.svg install.sh README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "$name/"
           tar czf "$name.tar.gz" "$name"
@@ -47,32 +112,43 @@ jobs:
             clipt*.rpm
 
   release:
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-      - name: notes from CHANGELOG
+      - name: notes and checksums
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          v=${GITHUB_REF_NAME#v}
+          v=${TAG#v}
           awk -v v="$v" '/^## \[/{p = index($0, "[" v "]") > 0; next} p' CHANGELOG.md > notes.md
+          sha256sum clipt-*.tar.gz clipt*.deb clipt*.rpm > SHA256SUMS
+          case "$TAG" in *-*) echo "PRERELEASE=true" >> "$GITHUB_ENV" ;; *) echo "PRERELEASE=false" >> "$GITHUB_ENV" ;; esac
       - uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: clipt ${{ needs.prepare.outputs.tag }}
           body_path: notes.md
+          prerelease: ${{ env.PRERELEASE }}
           files: |
             clipt-*.tar.gz*
             clipt*.deb
             clipt*.rpm
+            SHA256SUMS
 
   # Publishes to crates.io when a CARGO_REGISTRY_TOKEN secret is configured.
   crates-io:
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
       - name: publish

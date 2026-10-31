@@ -39,3 +39,17 @@ cargo build --profile profiling   # release speed with symbols, for perf
 
 By contributing you agree that your work is dual-licensed under MIT or
 Apache-2.0, like the rest of the project.
+
+## Releasing
+
+Run the **release** workflow from the Actions tab (or
+`gh workflow run release -f version=0.2.0`). It runs clippy and the tests,
+sets the version in `Cargo.toml`, turns the CHANGELOG's `[Unreleased]`
+section into `[0.2.0] - <date>`, commits, tags `v0.2.0` and publishes a
+GitHub release with tarballs, `.deb`, `.rpm` and `SHA256SUMS`. A version with
+a suffix (`0.2.0-rc1`) is marked as a prerelease, which `clipt update`
+ignores. Keep `[Unreleased]` up to date as you go; it becomes the release
+notes.
+
+Pushing a `v*` tag by hand also works, as long as `Cargo.toml` and the
+CHANGELOG already say that version.

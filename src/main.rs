@@ -12,6 +12,8 @@ mod overlay;
 mod session;
 mod text;
 mod tray;
+mod update;
+mod windows;
 mod x11;
 
 use anyhow::{Context, Result, bail};
@@ -30,6 +32,7 @@ USAGE:
     clipt screen [NAME]   Capture one output (default: the first)
     clipt list            Show outputs and available capture backends
     clipt tray            Sit in the system tray (click: region, right-click: menu)
+    clipt update          Update to the latest release (--check: only check)
 
 OPTIONS:
     -o, --output PATH     Write the PNG to PATH ('-' for stdout) instead of the save dir
@@ -64,6 +67,7 @@ struct Args {
     delay: f64,
     backend: Option<String>,
     cursor: bool,
+    check: bool,
 }
 
 fn parse_args() -> Result<Args> {
@@ -79,6 +83,7 @@ fn parse_args() -> Result<Args> {
             Short('d') | Long("delay") => a.delay = p.value()?.parse()?,
             Short('b') | Long("backend") => a.backend = Some(p.value()?.string()?),
             Long("cursor") => a.cursor = true,
+            Long("check") => a.check = true,
             Short('h') | Long("help") => {
                 print!("{HELP}");
                 std::process::exit(0);
@@ -131,7 +136,10 @@ fn run() -> Result<()> {
         return Ok(());
     }
     if args.cmd == "tray" {
-        return tray::run(config::expand(&cfg.save_dir).display().to_string());
+        return tray::run(config::expand(&cfg.save_dir).display().to_string(), cfg.check_updates);
+    }
+    if args.cmd == "update" {
+        return update::cli(args.check);
     }
     let cursor = args.cursor || cfg.cursor;
     if args.delay > 0.0 {
@@ -195,18 +203,32 @@ fn run() -> Result<()> {
         }
         "gui" => {
             lap("connected");
+            // Window positions are fetched while the screen is captured.
+            let x11 = cap.kind() == capture::DisplayKind::X11;
+            let wins = std::thread::spawn(move || windows::list(x11));
             let (_, shots) = cap.capture(&outputs, cursor, backend)?;
             lap("captured");
             let fonts = fonts.join().map_err(|_| anyhow::anyhow!("font loader panicked"))??;
             lap("fonts");
             let kind = cap.kind();
             drop(cap);
-            gui(&cfg, &args, shots, fonts, kind, &lap)
+            let wins = wins.join().unwrap_or_default();
+            lap("windows");
+            gui(&cfg, &args, shots, fonts, wins, kind, &lap)
         }
         "debug-render" => {
             let (_, shots) = cap.capture(&outputs, cursor, backend)?;
             let fonts = fonts.join().map_err(|_| anyhow::anyhow!("font loader panicked"))??;
-            let ed = Editor::new(shots, fonts, false, cfg.color.saturating_sub(1), cfg.width);
+            let mut ed = Editor::new(shots, fonts, false, cfg.color.saturating_sub(1), cfg.width);
+            ed.windows = windows::list(cap.kind() == capture::DisplayKind::X11);
+            // CLIPT_POINTER=x,y renders the hover state at that point.
+            if let Some((x, y)) = std::env::var("CLIPT_POINTER").ok().and_then(|v| {
+                let (x, y) = v.split_once(',')?;
+                Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+            }) {
+                ed.pointer_motion((x, y), Default::default());
+            }
+            let _ = ed.take_damage();
             let s = &ed.screens[0];
             let mut pm = tiny_skia::Pixmap::new(s.bg.width(), s.bg.height()).unwrap();
             editor::ui::render(&ed, 0, &mut pm.as_mut(), (0, 0));
@@ -218,8 +240,17 @@ fn run() -> Result<()> {
     }
 }
 
-fn gui(cfg: &Config, args: &Args, shots: Vec<Shot>, fonts: text::Fonts, kind: capture::DisplayKind, lap: &dyn Fn(&str)) -> Result<()> {
-    let ed = Editor::new(shots, fonts, true, cfg.color.saturating_sub(1), cfg.width);
+fn gui(
+    cfg: &Config,
+    args: &Args,
+    shots: Vec<Shot>,
+    fonts: text::Fonts,
+    wins: Vec<windows::Window>,
+    kind: capture::DisplayKind,
+    lap: &dyn Fn(&str),
+) -> Result<()> {
+    let mut ed = Editor::new(shots, fonts, true, cfg.color.saturating_sub(1), cfg.width);
+    ed.windows = wins;
     lap("editor");
     let mut session = session::open(ed, kind)?;
     lap("surfaces");

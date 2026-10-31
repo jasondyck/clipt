@@ -59,6 +59,7 @@ pub enum Key {
     Right,
     Up,
     Down,
+    Tab,
     Char(char),
 }
 
@@ -113,6 +114,15 @@ enum Drag {
     Drawing(Shape),
 }
 
+/// What a click would select right now, shown before anything is selected.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hover {
+    pub rect: Rect,
+    /// "firefox" or "HDMI-A-1".
+    pub name: String,
+    pub is_window: bool,
+}
+
 pub struct TextEdit {
     pub pos: Pt,
     pub text: String,
@@ -132,6 +142,16 @@ pub struct Editor {
     pub pointer_in: bool,
     drag: Drag,
     pub text: Option<TextEdit>,
+    /// Visible windows, topmost first (see `crate::windows`).
+    pub windows: Vec<crate::windows::Window>,
+    /// Tab flips hover from the window under the pointer to its monitor.
+    pub hover_screen: bool,
+    /// The highlight eases between targets: where it started, where it's
+    /// going, when, and where it is on the frame being drawn.
+    hover_from: Option<Rect>,
+    hover_to: Option<Rect>,
+    hover_t0: std::time::Instant,
+    hover_shown: Option<Rect>,
     pub outcome: Option<Outcome>,
     last_click: Option<(std::time::Instant, Pt)>,
     /// Show the size/width hint pill until the next pointer move.
@@ -170,6 +190,12 @@ impl Editor {
             pointer_in: false,
             drag: Drag::None,
             text: None,
+            windows: Vec::new(),
+            hover_screen: false,
+            hover_from: None,
+            hover_to: None,
+            hover_t0: std::time::Instant::now(),
+            hover_shown: None,
             outcome: None,
             last_click: None,
             width_hint: false,
@@ -184,6 +210,7 @@ impl Editor {
     /// Regions to repaint since the previous call: everything the last frame's
     /// chrome covered plus everything this frame's will.
     pub fn take_damage(&mut self) -> Damage {
+        self.advance_hover();
         self.frame += 1;
         let layers = ui::dynamic_layers(self, self.frame);
         let full = self.drawn_revision != Some(self.revision) || self.drawn_layers.len() != layers.len();
@@ -196,17 +223,18 @@ impl Editor {
             }
         }
         self.drawn_layers = layers;
-        if self.drawn_sel != self.sel {
+        let lit = self.lit();
+        if self.drawn_sel != lit {
             // Only the area that switched between clean and dimmed changed:
             // the symmetric difference of the old and new selections.
-            match (self.drawn_sel, self.sel) {
+            match (self.drawn_sel, lit) {
                 (Some(a), Some(b)) => {
                     out.extend(rect_sub(a, b));
                     out.extend(rect_sub(b, a));
                 }
                 (a, b) => out.extend(a.or(b)),
             }
-            self.drawn_sel = self.sel;
+            self.drawn_sel = lit;
         }
         self.drawn_revision = Some(self.revision);
         if full { Damage::Full } else { Damage::Rects(out) }
@@ -236,6 +264,73 @@ impl Editor {
 
     pub fn is_selecting(&self) -> bool {
         matches!(self.drag, Drag::Creating { .. } | Drag::Pending { .. }) || self.sel.is_none()
+    }
+
+    /// The window or monitor a click would select, while nothing is selected
+    /// yet and the select tool is idle.
+    pub fn hover(&self) -> Option<Hover> {
+        if self.sel.is_some() || !self.pointer_in || self.text.is_some() || self.tool != Tool::Select {
+            return None;
+        }
+        if !matches!(self.drag, Drag::None | Drag::Pending { .. }) {
+            return None;
+        }
+        let p = self.pointer;
+        let scr = self.screens.iter().find(|s| s.bounds().contains(p.0, p.1))?;
+        if !self.hover_screen {
+            let desk = self.desktop();
+            let hit = self.windows.iter().find(|w| Rect::from_xywh(w.x, w.y, w.width, w.height).is_some_and(|r| r.contains(p.0, p.1)));
+            if let Some(w) = hit
+                && let Some(r) = Rect::from_xywh(w.x, w.y, w.width, w.height).and_then(|r| r.intersect(&desk))
+            {
+                return Some(Hover { rect: r, name: w.name().to_string(), is_window: true });
+            }
+        }
+        Some(Hover { rect: scr.bounds(), name: scr.output.name.clone(), is_window: false })
+    }
+
+    /// The area drawn undimmed: the selection, or else the hover highlight.
+    pub fn lit(&self) -> Option<Rect> {
+        self.sel.or(self.hover_shown)
+    }
+
+    /// The hover target as it should be drawn this frame (mid-animation rect).
+    pub fn hover_drawn(&self) -> Option<Hover> {
+        let mut h = self.hover()?;
+        h.rect = self.hover_shown.unwrap_or(h.rect);
+        Some(h)
+    }
+
+    /// True while the highlight is still moving; the overlay keeps drawing.
+    pub fn animating(&self) -> bool {
+        self.hover_shown != self.hover_to
+    }
+
+    const HOVER_ANIM: std::time::Duration = std::time::Duration::from_millis(140);
+
+    fn advance_hover(&mut self) {
+        let target = self.hover().map(|h| h.rect);
+        let now = std::time::Instant::now();
+        if target != self.hover_to {
+            // Appearing or disappearing snaps; moving between targets glides.
+            self.hover_from = if target.is_some() { self.hover_shown } else { None };
+            self.hover_to = target;
+            self.hover_t0 = now;
+        }
+        self.hover_shown = match (self.hover_from, self.hover_to) {
+            (Some(a), Some(b)) => {
+                let t = (now.duration_since(self.hover_t0).as_secs_f32() / Self::HOVER_ANIM.as_secs_f32()).min(1.0);
+                if t >= 1.0 {
+                    Some(b)
+                } else {
+                    let e = 1.0 - (1.0 - t).powi(3);
+                    let l = |x: f32, y: f32| x + (y - x) * e;
+                    Rect::from_ltrb(l(a.left(), b.left()), l(a.top(), b.top()), l(a.right(), b.right()), l(a.bottom(), b.bottom()))
+                        .or(Some(b))
+                }
+            }
+            (_, b) => b,
+        };
     }
 
     pub fn is_adjusting(&self) -> bool {
@@ -475,8 +570,12 @@ impl Editor {
         self.pointer = p;
         match std::mem::replace(&mut self.drag, Drag::None) {
             Drag::Pending { .. } => {
-                // A click without a drag picks the whole screen under the pointer.
-                if let Some(i) = self.screen_at(p) {
+                // A click without a drag picks what's highlighted: the window
+                // under the pointer, or its whole screen.
+                self.pointer = p;
+                if let Some(h) = self.hover() {
+                    self.sel = Some(h.rect);
+                } else if let Some(i) = self.screen_at(p) {
                     self.sel = Some(self.screens[i].bounds());
                 }
             }
@@ -550,6 +649,7 @@ impl Editor {
                 }
             }
             Key::Enter => self.outcome = Some(Outcome::Copy),
+            Key::Tab if self.sel.is_none() && !self.windows.is_empty() => self.hover_screen = !self.hover_screen,
             Key::Left | Key::Right | Key::Up | Key::Down => {
                 let Some(r) = self.sel else { return false };
                 let d = if mods.alt { 10.0 } else { 1.0 };
@@ -574,6 +674,7 @@ impl Editor {
                 self.tool = t;
             }
             Key::Backspace => self.undo(),
+            Key::Tab => return false,
         }
         true
     }
@@ -748,6 +849,38 @@ mod tests {
     }
 
     #[test]
+    fn click_selects_topmost_window_and_tab_picks_screen() {
+        let win =
+            |x: f32, y: f32, w: f32, h: f32| crate::windows::Window { x, y, width: w, height: h, app: "a".into(), title: String::new() };
+        let mut ed = editor(vec![shot("A", 0, 400, 300, 1, [0, 0, 0])], false);
+        // Topmost first; the second window partly hangs off the screen.
+        ed.windows = vec![win(100.0, 100.0, 50.0, 50.0), win(50.0, 50.0, 400.0, 100.0)];
+        let click = |ed: &mut Editor, p: Pt| {
+            ed.pointer_motion(p, Mods::default());
+            ed.button_press(p, true, Mods::default());
+            ed.button_release(p, true);
+        };
+        click(&mut ed, (120.0, 120.0));
+        let r = ed.sel.unwrap();
+        assert_eq!((r.left(), r.top(), r.width(), r.height()), (100.0, 100.0, 50.0, 50.0));
+
+        ed.sel = None;
+        click(&mut ed, (60.0, 60.0));
+        let r = ed.sel.unwrap();
+        assert_eq!((r.left(), r.top(), r.right(), r.bottom()), (50.0, 50.0, 400.0, 150.0), "clipped to the desktop");
+
+        ed.sel = None;
+        ed.key(Key::Tab, Mods::default());
+        click(&mut ed, (120.0, 120.0));
+        assert_eq!(ed.sel.unwrap().width(), 400.0, "Tab switches to the whole screen");
+
+        ed.sel = None;
+        ed.key(Key::Tab, Mods::default());
+        click(&mut ed, (10.0, 290.0));
+        assert_eq!(ed.sel.unwrap().width(), 400.0, "bare desktop selects the screen");
+    }
+
+    #[test]
     fn move_and_resize_selection() {
         let mut ed = editor(vec![shot("A", 0, 400, 300, 1, [0, 0, 0])], false);
         drag(&mut ed, (100.0, 100.0), (200.0, 200.0));
@@ -869,6 +1002,39 @@ mod tests {
             );
         };
 
+        // Hover highlight: window, overlapping window, mid-glide frames,
+        // bare desktop (the screen), Tab to the screen and back.
+        let win = |x: f32, y: f32, w: f32, h: f32, app: &str| crate::windows::Window {
+            x,
+            y,
+            width: w,
+            height: h,
+            app: app.into(),
+            title: String::new(),
+        };
+        ed.windows = vec![win(300.0, 120.0, 220.0, 160.0, "front"), win(60.0, 40.0, 320.0, 240.0, "back")];
+        step(&mut ed, &|e| {
+            e.pointer_motion((100.0, 100.0), m);
+        });
+        step(&mut ed, &|e| {
+            e.pointer_motion((400.0, 200.0), m);
+        });
+        for _ in 0..3 {
+            step(&mut ed, &|_| std::thread::sleep(std::time::Duration::from_millis(30)));
+        }
+        step(&mut ed, &|e| {
+            e.pointer_motion((600.0, 380.0), m);
+        });
+        step(&mut ed, &|_| std::thread::sleep(std::time::Duration::from_millis(200)));
+        step(&mut ed, &|e| {
+            e.pointer_motion((100.0, 100.0), m);
+            e.key(Key::Tab, m);
+        });
+        step(&mut ed, &|e| {
+            e.key(Key::Tab, m);
+        });
+        step(&mut ed, &|_| std::thread::sleep(std::time::Duration::from_millis(200)));
+        ed.windows.clear();
         step(&mut ed, &|e| {
             e.pointer_motion((100.0, 100.0), m);
         });

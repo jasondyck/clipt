@@ -78,21 +78,28 @@ impl IRect {
         let (x, y) = (self.x.min(o.x), self.y.min(o.y));
         IRect { x, y, w: self.right().max(o.right()) - x, h: self.bottom().max(o.bottom()) - y }
     }
-    fn touches(&self, o: &IRect) -> bool {
-        self.x <= o.right() && o.x <= self.right() && self.y <= o.bottom() && o.y <= self.bottom()
+    fn area(&self) -> i64 {
+        self.w as i64 * self.h as i64
     }
 }
 
-/// Merge overlapping rectangles until none touch.
+/// Merge rectangles where one box costs little more than the two separately,
+/// so nearby fragments become one repaint but a horizontal and a vertical
+/// line (the crosshair) don't turn into the whole screen. Overlap is fine:
+/// repainting a pixel twice gives the same result.
 pub(crate) fn merge(mut v: Vec<IRect>) -> Vec<IRect> {
+    // Slack for small fragments: a 64x64 block is cheaper to merge than to
+    // issue separately.
+    const SLACK: i64 = 64 * 64;
     let mut i = 0;
     while i < v.len() {
         let mut j = i + 1;
         let mut merged = false;
         while j < v.len() {
-            if v[i].touches(&v[j]) {
-                let r = v.swap_remove(j);
-                v[i] = v[i].union(&r);
+            let u = v[i].union(&v[j]);
+            if u.area() * 4 <= (v[i].area() + v[j].area()) * 5 + SLACK {
+                v.swap_remove(j);
+                v[i] = u;
                 merged = true;
             } else {
                 j += 1;
@@ -103,6 +110,27 @@ pub(crate) fn merge(mut v: Vec<IRect>) -> Vec<IRect> {
         }
     }
     v
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::{IRect, merge};
+
+    #[test]
+    fn crosshair_stays_two_strips() {
+        let h = IRect { x: 0, y: 1000, w: 3840, h: 28 };
+        let v = IRect { x: 1900, y: 0, w: 28, h: 2160 };
+        let out = merge(vec![h, v]);
+        assert_eq!(out.len(), 2);
+        assert!(out.iter().map(|r| r.area()).sum::<i64>() < 3840 * 2160 / 20);
+    }
+
+    #[test]
+    fn neighbours_and_overlaps_merge() {
+        let out =
+            merge(vec![IRect { x: 0, y: 0, w: 100, h: 100 }, IRect { x: 50, y: 50, w: 100, h: 100 }, IRect { x: 152, y: 0, w: 10, h: 10 }]);
+        assert_eq!(out.len(), 1);
+    }
 }
 
 /// Logical damage rectangles -> pixel rectangles inside one screen's buffer.
@@ -501,6 +529,7 @@ fn map_key(ev: &KeyEvent, ctrl: bool) -> Option<Key> {
         Keysym::Right => Key::Right,
         Keysym::Up => Key::Up,
         Keysym::Down => Key::Down,
+        Keysym::Tab | Keysym::ISO_Left_Tab => Key::Tab,
         k => {
             // With Ctrl held, utf8 is a control character; use the keysym.
             let c = if ctrl { k.key_char() } else { ev.utf8.as_deref().and_then(|s| s.chars().next()).or_else(|| k.key_char()) }?;
@@ -520,6 +549,10 @@ impl CompositorHandler for Overlay {
     fn frame(&mut self, _: &Connection, qh: &QueueHandle<Self>, surface: &wl_surface::WlSurface, _: u32) {
         if let Some(i) = self.surfs.iter().position(|s| s.role.surface() == surface) {
             self.surfs[i].frame_pending = false;
+            // Keep drawing at the display's pace while the highlight glides.
+            if self.editor.animating() {
+                self.mark_all();
+            }
             if self.surfs[i].dirty() {
                 self.draw(qh, i);
             }

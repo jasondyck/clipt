@@ -24,6 +24,8 @@ pub struct Config {
     pub cursor: bool,
     /// Path to a TTF/OTF file; default asks fontconfig for sans-serif.
     pub font: Option<String>,
+    /// `clipt tray` checks GitHub for a new release daily (off by default).
+    pub check_updates: bool,
 }
 
 impl Default for Config {
@@ -38,6 +40,7 @@ impl Default for Config {
             backend: "auto".into(),
             cursor: false,
             font: None,
+            check_updates: false,
         }
     }
 }

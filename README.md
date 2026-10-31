@@ -50,9 +50,16 @@ clipt screen DP-1   # one output, saved to the save dir
 clipt full -g "$(slurp)" -o -   # slurp region to stdout
 clipt list          # outputs and available backends
 clipt tray          # tray icon: click = region, right-click = menu
+clipt update        # update to the latest release (--check: just check)
 ```
 
-Editor: drag to select (click = whole screen), drag handles to resize, drag
+Before you select anything, clipt highlights what a click would take: the
+window under the pointer (KDE, Sway, Hyprland and X11), or the whole screen
+over bare desktop. **Tab** switches between the window and its screen. On
+GNOME, which doesn't let other apps see window positions, the highlight is
+always the screen.
+
+Editor: drag to select (click = the highlighted window or screen), drag handles to resize, drag
 inside to move. Tools: **V** select, **R** rectangle, **E** ellipse, **A**
 arrow, **L** line, **P** pen, **M** highlighter, **T** text, **X** pixelate,
 **N** numbered counter. **1–8** colour, scroll or **[ ]** stroke width, Shift
@@ -65,6 +72,13 @@ GNOME with the AppIndicator extension, Xfce, …). Left-click captures a region,
 middle-click copies the whole desktop, and the right-click menu adds a 3-second
 delay, the screenshots folder and Quit. Each capture runs as a fresh `clipt`
 process, so the tray itself stays idle.
+
+**Updates:** `clipt update` (or *Check for updates…* in the tray menu)
+asks GitHub for the latest release. When clipt was installed with
+`install.sh`, it downloads the tarball for your architecture, checks its
+SHA-256 and replaces itself; packaged installs are pointed at their package
+manager. It only goes online when you ask, or daily from the tray if you set
+`check_updates = true`. Needs `curl`.
 
 After copying, clipt forks into the background to serve the clipboard until
 something else is copied (Wayland clipboards are owned by a live client).
@@ -83,6 +97,7 @@ notify = true
 backend = "auto"     # ext, wlr, kwin, portal
 cursor = false
 # font = "/usr/share/fonts/TTF/Inter-Regular.ttf"
+check_updates = false   # `clipt tray` checks GitHub daily for a new release
 ```
 
 ## Performance
