@@ -1,1 +1,5 @@
 /target
+/packaging/flatpak/build/
+/packaging/flatpak/repo/
+/packaging/flatpak/.flatpak-builder/
+/packaging/flatpak/clipt.flatpak

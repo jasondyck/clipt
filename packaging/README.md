@@ -6,6 +6,7 @@
 | crates.io | same workflow | needs a `CARGO_REGISTRY_TOKEN` repository secret |
 | AUR | `aur/clipt`, `aur/clipt-bin` | push each directory to its AUR git repo; update `pkgver` and `sha256sums` (`updpkgsums`) per release, regenerate `.SRCINFO` with `makepkg --printsrcinfo` |
 | Nix | `/flake.nix` | `nix run github:jasondyck/clipt` |
+| Flatpak (prototype) | `flatpak/` | not published; for KDE and GNOME; on wlroots and niri it needs `clipt-launch`, see `flatpak/README.md` |
 
 Distribution packagers: `cargo build --release --locked`, then install
 `target/release/clipt` to `bin/` and `data/clipt.desktop` to

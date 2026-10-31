@@ -18,6 +18,14 @@ const WATCHER: &str = "org.kde.StatusNotifierWatcher";
 /// Held for the lifetime of the tray so a second `clipt tray` exits.
 const LOCK_NAME: &str = "org.clipt.Tray";
 
+/// A Flatpak sandbox may only own bus names under its app ID.
+fn lock_name() -> String {
+    match std::env::var("FLATPAK_ID") {
+        Ok(id) if crate::update::flatpak() => format!("{id}.Tray"),
+        _ => LOCK_NAME.into(),
+    }
+}
+
 /// SNI pixmaps: (width, height, ARGB32 bytes).
 type Pixmaps = Vec<(i32, i32, Vec<u8>)>;
 
@@ -45,6 +53,13 @@ const MENU: &[(i32, Option<(&str, Action)>)] = &[
     (7, Some(("Check for updates…", Action::CheckUpdates))),
     (8, Some(("Quit", Action::Quit))),
 ];
+
+/// The menu as shown. Flatpak updates clipt itself, and the sandbox has no
+/// network access to check, so the update entry (and its separator) go.
+fn menu() -> impl Iterator<Item = &'static (i32, Option<(&'static str, Action)>)> {
+    let flatpak = crate::update::flatpak();
+    MENU.iter().filter(move |(id, _)| !(flatpak && matches!(id, 6 | 7)))
+}
 
 fn run_action(a: Action, save_dir: &str) {
     let exe = crate::update::current_exe();
@@ -306,20 +321,19 @@ impl Menu {
     #[zbus(out_args("revision", "layout"))]
     fn get_layout(&self, parent_id: i32, _recursion_depth: i32, _property_names: Vec<String>) -> (u32, (i32, Props, Vec<OwnedVariant>)) {
         if parent_id != 0 {
-            let props = MENU.iter().find(|(id, _)| *id == parent_id).map(|(_, e)| item_props(*e)).unwrap_or_default();
+            let props = menu().find(|(id, _)| *id == parent_id).map(|(_, e)| item_props(*e)).unwrap_or_default();
             return (1, (parent_id, props, Vec::new()));
         }
-        let children = MENU.iter().map(|(id, e)| child_layout(*id, item_props(*e))).collect();
+        let children = menu().map(|(id, e)| child_layout(*id, item_props(*e))).collect();
         (1, (0, root_props(), children))
     }
 
     fn get_group_properties(&self, ids: Vec<i32>, _property_names: Vec<String>) -> Vec<(i32, Props)> {
-        MENU.iter().filter(|(id, _)| ids.is_empty() || ids.contains(id)).map(|(id, e)| (*id, item_props(*e))).collect()
+        menu().filter(|(id, _)| ids.is_empty() || ids.contains(id)).map(|(id, e)| (*id, item_props(*e))).collect()
     }
 
     fn get_property(&self, id: i32, name: &str) -> zbus::fdo::Result<OwnedVariant> {
-        let props =
-            if id == 0 { root_props() } else { MENU.iter().find(|(i, _)| *i == id).map(|(_, e)| item_props(*e)).unwrap_or_default() };
+        let props = if id == 0 { root_props() } else { menu().find(|(i, _)| *i == id).map(|(_, e)| item_props(*e)).unwrap_or_default() };
         props.get(name).map(|v| v.try_clone().expect("no fds")).ok_or_else(|| zbus::fdo::Error::InvalidArgs(name.into()))
     }
 
@@ -327,7 +341,7 @@ impl Menu {
         if event_id != "clicked" {
             return;
         }
-        if let Some((_, Some((_, a)))) = MENU.iter().find(|(i, _)| *i == id) {
+        if let Some((_, Some((_, a)))) = menu().find(|(i, _)| *i == id) {
             run_action(*a, &self.save_dir);
         }
     }
@@ -371,6 +385,30 @@ impl Menu {
     }
 }
 
+/// In a Flatpak there's no install.sh to write an autostart entry, so ask the
+/// Background portal to start the tray with the desktop. The desktop asks the
+/// user once and remembers; it's revoked in the desktop's app settings.
+fn request_autostart() {
+    let r = (|| -> Result<()> {
+        let conn = crate::dbus::session()?;
+        let p = crate::dbus::Proxy::new(
+            &conn,
+            "org.freedesktop.portal.Desktop",
+            "/org/freedesktop/portal/desktop",
+            "org.freedesktop.portal.Background",
+        )?;
+        let mut opts: HashMap<&str, Variant> = HashMap::new();
+        opts.insert("reason", Variant::from("Start the clipt tray icon when you log in"));
+        opts.insert("autostart", Variant::from(true));
+        opts.insert("commandline", Variant::from(vec!["clipt", "tray"]));
+        let _: OwnedObjectPath = p.call("RequestBackground", &("", opts))?;
+        Ok(())
+    })();
+    if let Err(e) = r {
+        eprintln!("clipt tray: couldn't request autostart: {e:#}");
+    }
+}
+
 async fn register(conn: &Connection, name: &str) -> zbus::Result<()> {
     conn.call_method(Some(WATCHER), "/StatusNotifierWatcher", Some(WATCHER), "RegisterStatusNotifierItem", &(name,)).await.map(drop)
 }
@@ -392,16 +430,21 @@ pub fn run(save_dir: String, check_updates: bool) -> Result<()> {
         use zbus::fdo::{RequestNameFlags, RequestNameReply};
         // After a self-update the old tray's connection may still be closing.
         let tries = if std::env::var_os("CLIPT_TRAY_RESTART").is_some() { 20 } else { 1 };
+        let lock = lock_name();
         let mut owned = false;
         for _ in 0..tries {
-            if dbus.request_name(LOCK_NAME.try_into()?, RequestNameFlags::DO_NOT_QUEUE).await? == RequestNameReply::PrimaryOwner {
+            if dbus.request_name(lock.as_str().try_into()?, RequestNameFlags::DO_NOT_QUEUE).await? == RequestNameReply::PrimaryOwner {
                 owned = true;
                 break;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
         anyhow::ensure!(owned, "a clipt tray is already running");
-        if check_updates {
+        let flatpak = crate::update::flatpak();
+        if flatpak {
+            std::thread::spawn(request_autostart);
+        }
+        if check_updates && !flatpak {
             // Once shortly after login, then daily.
             std::thread::spawn(|| {
                 std::thread::sleep(Duration::from_secs(60));
@@ -412,8 +455,16 @@ pub fn run(save_dir: String, check_updates: bool) -> Result<()> {
             });
         }
 
-        let name = format!("org.kde.StatusNotifierItem-{}-1", std::process::id());
-        conn.request_name(name.as_str()).await?;
+        // The spec's well-known name can't be owned from a Flatpak sandbox
+        // (and its PID would be the sandbox's); watchers also accept the
+        // connection's unique name, with the item at the default path.
+        let name = if flatpak {
+            conn.unique_name().context("no unique bus name")?.to_string()
+        } else {
+            let name = format!("org.kde.StatusNotifierItem-{}-1", std::process::id());
+            conn.request_name(name.as_str()).await?;
+            name
+        };
 
         let mut owners = dbus.receive_name_owner_changed_with_args(&[(0, WATCHER)]).await?;
         if let Err(e) = register(&conn, &name).await {

@@ -88,7 +88,7 @@ fn serve(data: Arc<Vec<u8>>, fd: OwnedFd) {
 
 /// Claim the clipboard and block until someone else replaces it.
 pub fn copy_and_serve(png: Vec<u8>, before_serving: impl FnOnce()) -> Result<()> {
-    let conn = Connection::connect_to_env()?;
+    let conn = crate::capture::wayland::connection()?;
     let (globals, mut queue) = registry_queue_init::<State>(&conn)?;
     let qh = queue.handle();
     let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=1, ()).context("no wl_seat")?;

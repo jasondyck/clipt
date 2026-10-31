@@ -39,6 +39,8 @@ pub enum Install {
     SelfManaged(PathBuf),
     Cargo,
     Nix,
+    /// Flatpak: Flathub or the user's software centre updates it.
+    Flatpak,
     /// /usr/bin and friends: the distro package manager owns it.
     Package,
 }
@@ -47,7 +49,9 @@ impl Install {
     pub fn detect() -> Self {
         let exe = current_exe();
         let s = exe.to_string_lossy();
-        if s.starts_with("/nix/store/") {
+        if flatpak() {
+            Install::Flatpak
+        } else if s.starts_with("/nix/store/") {
             Install::Nix
         } else if s.contains("/.cargo/bin/") {
             Install::Cargo
@@ -66,9 +70,15 @@ impl Install {
             Install::SelfManaged(_) => "run `clipt update`",
             Install::Cargo => "run `cargo install clipt`",
             Install::Nix => "update your flake input",
+            Install::Flatpak => "run `flatpak update` or use your software centre",
             Install::Package => "update it with your package manager",
         }
     }
+}
+
+/// Running inside a Flatpak sandbox. Flatpak puts this file in every sandbox.
+pub fn flatpak() -> bool {
+    Path::new("/.flatpak-info").exists()
 }
 
 /// Our binary's path. After an upgrade replaces the file, Linux reports the
@@ -207,6 +217,9 @@ fn sha256(p: &Path) -> Result<String> {
 /// `clipt update [--check]`.
 pub fn cli(check_only: bool) -> Result<()> {
     let current = env!("CARGO_PKG_VERSION");
+    if flatpak() {
+        bail!("this clipt is a Flatpak: {}", Install::Flatpak.how_to_update());
+    }
     let Some(r) = check()? else {
         println!("clipt {current} is up to date");
         return Ok(());

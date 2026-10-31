@@ -71,10 +71,36 @@ pub enum Protocol {
     WlrScreencopy,
 }
 
+/// A connection handed in through WAYLAND_SOCKET (see
+/// packaging/flatpak/clipt-launch), kept for every later user: the fd can only
+/// be taken once, and reconnecting through WAYLAND_DISPLAY would get a
+/// Flatpak's filtered connection instead.
+static INHERITED: std::sync::OnceLock<Connection> = std::sync::OnceLock::new();
+
+/// Connect to the compositor. Capture, overlay and clipboard each call this.
+pub fn connection() -> Result<Connection> {
+    if let Some(c) = INHERITED.get() {
+        return Ok(c.clone());
+    }
+    let inherited = std::env::var_os("WAYLAND_SOCKET").is_some();
+    let conn = Connection::connect_to_env().context("no Wayland display (is WAYLAND_DISPLAY set?)")?;
+    if inherited {
+        let _ = INHERITED.set(conn.clone());
+    }
+    Ok(conn)
+}
+
 impl Wayland {
     pub fn connect() -> Result<Self> {
-        let conn = Connection::connect_to_env().context("no Wayland display (is WAYLAND_DISPLAY set?)")?;
+        let conn = connection()?;
         let (globals, mut queue) = registry_queue_init::<State>(&conn)?;
+        if std::env::var_os("CLIPT_DEBUG").is_some() {
+            // Sandboxed clients (Flatpak) may be shown fewer globals.
+            let mut names: Vec<String> = globals.contents().with_list(|l| l.iter().map(|g| g.interface.clone()).collect());
+            names.sort();
+            names.dedup();
+            eprintln!("clipt: wayland globals: {}", names.join(" "));
+        }
         let qh = queue.handle();
         let mut state = State { outputs: Vec::new(), frame: FrameState::default() };
         for g in globals.contents().clone_list() {
