@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Name=glint
+GenericName=Screenshot Tool
+Comment=Select, annotate and copy a screenshot
+Exec=glint gui
+Icon=applets-screenshooter
+Terminal=false
+Categories=Utility;Graphics;
+Keywords=screenshot;capture;snip;
+# KDE: lets KWin's ScreenShot2 interface answer this binary without a prompt.
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
+NoDisplay=false
+Actions=Full;
+
+[Desktop Action Full]
+Name=Capture full desktop
+Exec=glint full

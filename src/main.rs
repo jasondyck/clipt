@@ -1,0 +1,315 @@
+//! glint — a lightweight Wayland screenshot tool.
+
+mod capture;
+mod clipboard;
+mod config;
+mod editor;
+mod image;
+mod notify;
+mod overlay;
+mod text;
+
+use anyhow::{Context, Result, bail};
+use capture::{Backend, Capturer, Output, Shot};
+use config::Config;
+use editor::{Editor, Outcome};
+use std::io::Write;
+use std::path::PathBuf;
+
+const HELP: &str = "\
+glint — screenshot tool for Wayland
+
+USAGE:
+    glint [gui]           Select a region and annotate it (default)
+    glint full            Capture the whole desktop
+    glint screen [NAME]   Capture one output (default: the first)
+    glint list            Show outputs and available capture backends
+
+OPTIONS:
+    -o, --output PATH     Write the PNG to PATH ('-' for stdout) instead of the save dir
+    -c, --clipboard       Copy to the clipboard (full/screen)
+    -g, --geometry GEOM   Crop to \"X,Y WxH\" in logical pixels (slurp format)
+    -d, --delay SECS      Wait before capturing
+    -b, --backend NAME    Force a backend: ext, wlr, kwin, portal
+        --cursor          Include the pointer
+    -h, --help            Show this help
+    -V, --version         Show the version
+
+EDITOR KEYS:
+    drag                  select (click = whole screen; drag handles to resize)
+    V R E A L P M T X N   select, rect, ellipse, arrow, line, pen, highlighter,
+                          text, pixelate, counter
+    1-8                   colour          scroll / [ ]   stroke width
+    Shift                 square / 45°    arrows         nudge (Shift resizes)
+    Enter, Ctrl+C, dbl-click  copy        Ctrl+S         save
+    Ctrl+Z / Ctrl+Shift+Z undo / redo     Esc / right-click  cancel / back
+
+Config: ~/.config/glint/config.toml (save_dir, filename, color, width,
+copy_on_save, notify, backend, cursor, font).
+";
+
+#[derive(Default)]
+struct Args {
+    cmd: String,
+    screen: Option<String>,
+    output: Option<String>,
+    clipboard: bool,
+    geometry: Option<String>,
+    delay: f64,
+    backend: Option<String>,
+    cursor: bool,
+}
+
+fn parse_args() -> Result<Args> {
+    use lexopt::prelude::*;
+    let mut a = Args { cmd: "gui".into(), ..Default::default() };
+    let mut p = lexopt::Parser::from_env();
+    let mut positional = 0;
+    while let Some(arg) = p.next()? {
+        match arg {
+            Short('o') | Long("output") => a.output = Some(p.value()?.string()?),
+            Short('c') | Long("clipboard") => a.clipboard = true,
+            Short('g') | Long("geometry") => a.geometry = Some(p.value()?.string()?),
+            Short('d') | Long("delay") => a.delay = p.value()?.parse()?,
+            Short('b') | Long("backend") => a.backend = Some(p.value()?.string()?),
+            Long("cursor") => a.cursor = true,
+            Short('h') | Long("help") => {
+                print!("{HELP}");
+                std::process::exit(0);
+            }
+            Short('V') | Long("version") => {
+                println!("glint {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
+            Value(v) if positional == 0 => {
+                a.cmd = v.string()?;
+                positional += 1;
+            }
+            Value(v) if positional == 1 && a.cmd == "screen" => {
+                a.screen = Some(v.string()?);
+                positional += 1;
+            }
+            _ => return Err(arg.unexpected().into()),
+        }
+    }
+    Ok(a)
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("glint: {e:#}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
+    let args = parse_args()?;
+    let cfg = Config::load()?;
+    let backend = match args.backend.as_deref().unwrap_or(&cfg.backend) {
+        "auto" => None,
+        b => Some(Backend::parse(b)?),
+    };
+    let cursor = args.cursor || cfg.cursor;
+    if args.delay > 0.0 {
+        std::thread::sleep(std::time::Duration::from_secs_f64(args.delay));
+    }
+
+    // Font loading overlaps the capture.
+    let font_path = cfg.font.clone();
+    let fonts = std::thread::spawn(move || text::Fonts::load(font_path.as_deref()));
+
+    let mut cap = Capturer::new()?;
+    let outputs = cap.outputs();
+    if outputs.is_empty() {
+        bail!("no outputs found");
+    }
+
+    match args.cmd.as_str() {
+        "list" => {
+            for o in &outputs {
+                println!("{}\t{}x{}+{}+{}\t{}", o.name, o.width, o.height, o.x, o.y, o.description);
+            }
+            let avail: Vec<String> = cap.available().iter().map(|b| format!("{b:?}").to_lowercase()).collect();
+            println!("backends: {}", avail.join(", "));
+            Ok(())
+        }
+        "full" | "screen" => {
+            let targets: Vec<Output> = if args.cmd == "screen" {
+                let o = match &args.screen {
+                    Some(n) => outputs.iter().find(|o| &o.name == n).with_context(|| format!("no output named '{n}'"))?,
+                    None => &outputs[0],
+                };
+                vec![o.clone()]
+            } else {
+                outputs.clone()
+            };
+            let (_, shots) = cap.capture(&targets, cursor, backend)?;
+            let mut img = stitch(&shots);
+            if let Some(g) = &args.geometry {
+                img = crop_geometry(&img, &shots, g)?;
+            }
+            deliver(&cfg, &args, img)
+        }
+        "gui" => {
+            let (_, shots) = cap.capture(&outputs, cursor, backend)?;
+            let fonts = fonts.join().map_err(|_| anyhow::anyhow!("font loader panicked"))??;
+            drop(cap);
+            gui(&cfg, &args, shots, fonts)
+        }
+        "debug-render" => {
+            let (_, shots) = cap.capture(&outputs, cursor, backend)?;
+            let fonts = fonts.join().map_err(|_| anyhow::anyhow!("font loader panicked"))??;
+            let ed = Editor::new(shots, fonts, false, cfg.color.saturating_sub(1), cfg.width);
+            let s = &ed.screens[0];
+            let mut pm = tiny_skia::Pixmap::new(s.bg.width(), s.bg.height()).unwrap();
+            editor::ui::render(&ed, 0, &mut pm.as_mut());
+            let img = image::Image { width: pm.width(), height: pm.height(), data: pm.take() };
+            std::fs::write(args.output.as_deref().unwrap_or("/tmp/glint-ui.png"), img.encode_png()?)?;
+            Ok(())
+        }
+        other => bail!("unknown command '{other}' (try --help)"),
+    }
+}
+
+fn gui(cfg: &Config, args: &Args, shots: Vec<Shot>, fonts: text::Fonts) -> Result<()> {
+    let ed = Editor::new(shots, fonts, true, cfg.color.saturating_sub(1), cfg.width);
+    let mut session = overlay::Session::new(ed)?;
+    let outcome = session.run()?;
+    if outcome == Outcome::Cancel {
+        return Ok(());
+    }
+    let img = session.overlay.editor.export().context("nothing selected")?;
+    let png = img.encode_png()?;
+
+    let want_copy = outcome == Outcome::Copy || cfg.copy_on_save;
+    if want_copy {
+        if let Err(e) = session.set_clipboard(png.clone()) {
+            eprintln!("glint: {e:#}");
+        }
+    }
+    session.hide()?;
+
+    let saved = if outcome == Outcome::Save || args.output.is_some() {
+        Some(write_png(cfg, args.output.as_deref(), &png)?)
+    } else {
+        None
+    };
+    if cfg.notify {
+        match (&saved, want_copy) {
+            (Some(Some(p)), true) => notify::send("Screenshot saved and copied", &p.display().to_string(), Some(p)),
+            (Some(Some(p)), false) => notify::send("Screenshot saved", &p.display().to_string(), Some(p)),
+            (_, true) => notify::send("Screenshot copied", &format!("{} × {}", img.width, img.height), None),
+            _ => {}
+        }
+    }
+    if want_copy {
+        // Detach so the launching terminal/hotkey returns while we keep
+        // answering paste requests.
+        daemonize();
+        session.serve_clipboard()?;
+    }
+    Ok(())
+}
+
+fn deliver(cfg: &Config, args: &Args, img: image::Image) -> Result<()> {
+    let png = img.encode_png()?;
+    let path = if args.output.is_some() || !args.clipboard { write_png(cfg, args.output.as_deref(), &png)? } else { None };
+    if let Some(p) = &path {
+        if args.output.is_none() {
+            println!("{}", p.display());
+        }
+    }
+    if args.clipboard {
+        if cfg.notify {
+            notify::send("Screenshot copied", &format!("{} × {}", img.width, img.height), path.as_deref());
+        }
+        clipboard::copy_and_serve(png, daemonize)?;
+    } else if let (true, Some(p)) = (cfg.notify && args.output.is_none(), &path) {
+        notify::send("Screenshot saved", &p.display().to_string(), Some(p));
+    }
+    Ok(())
+}
+
+/// Returns the path written, or None for stdout.
+fn write_png(cfg: &Config, output: Option<&str>, png: &[u8]) -> Result<Option<PathBuf>> {
+    match output {
+        Some("-") => {
+            std::io::stdout().lock().write_all(png)?;
+            Ok(None)
+        }
+        Some(p) => {
+            let p = config::expand(p);
+            std::fs::write(&p, png).with_context(|| format!("writing {}", p.display()))?;
+            Ok(Some(p))
+        }
+        None => {
+            let p = cfg.next_save_path();
+            if let Some(d) = p.parent() {
+                std::fs::create_dir_all(d).with_context(|| format!("creating {}", d.display()))?;
+            }
+            std::fs::write(&p, png).with_context(|| format!("writing {}", p.display()))?;
+            Ok(Some(p))
+        }
+    }
+}
+
+/// Composite per-output shots into one image in logical layout. Mixed scales
+/// are normalised to the largest so nothing is downsampled.
+fn stitch(shots: &[Shot]) -> image::Image {
+    if shots.len() == 1 {
+        return shots[0].image.clone();
+    }
+    let scale = shots.iter().map(|s| s.scale()).fold(1.0f64, f64::max);
+    let minx = shots.iter().map(|s| s.output.x).min().unwrap();
+    let miny = shots.iter().map(|s| s.output.y).min().unwrap();
+    let maxx = shots.iter().map(|s| s.output.x + s.output.width as i32).max().unwrap();
+    let maxy = shots.iter().map(|s| s.output.y + s.output.height as i32).max().unwrap();
+    let w = ((maxx - minx) as f64 * scale).round() as u32;
+    let h = ((maxy - miny) as f64 * scale).round() as u32;
+    let mut pm = tiny_skia::Pixmap::new(w, h).unwrap();
+    for s in shots {
+        let src = tiny_skia::Pixmap::from_vec(s.image.data.clone(), tiny_skia::IntSize::from_wh(s.image.width, s.image.height).unwrap()).unwrap();
+        let k = (scale / s.scale()) as f32;
+        let tx = ((s.output.x - minx) as f64 * scale).round() as f32;
+        let ty = ((s.output.y - miny) as f64 * scale).round() as f32;
+        let q = if (k - 1.0).abs() < 1e-3 { tiny_skia::FilterQuality::Nearest } else { tiny_skia::FilterQuality::Bicubic };
+        let paint = tiny_skia::PixmapPaint { quality: q, ..Default::default() };
+        pm.draw_pixmap(0, 0, src.as_ref(), &paint, tiny_skia::Transform::from_row(k, 0.0, 0.0, k, tx, ty), None);
+    }
+    image::Image { width: w, height: h, data: pm.take() }
+}
+
+/// Crop a stitched image to slurp-style "X,Y WxH" logical geometry.
+fn crop_geometry(img: &image::Image, shots: &[Shot], g: &str) -> Result<image::Image> {
+    let bad = || anyhow::anyhow!("bad geometry '{g}', expected \"X,Y WxH\"");
+    let (pos, size) = g.trim().split_once(' ').ok_or_else(bad)?;
+    let (x, y) = pos.split_once(',').ok_or_else(bad)?;
+    let (w, h) = size.split_once('x').ok_or_else(bad)?;
+    let p = |s: &str| s.trim().parse::<f64>().map_err(|_| bad());
+    let (x, y, w, h) = (p(x)?, p(y)?, p(w)?, p(h)?);
+    let scale = shots.iter().map(|s| s.scale()).fold(1.0f64, f64::max);
+    let minx = shots.iter().map(|s| s.output.x).min().unwrap_or(0) as f64;
+    let miny = shots.iter().map(|s| s.output.y).min().unwrap_or(0) as f64;
+    let r = |v: f64| (v * scale).round().max(0.0) as u32;
+    Ok(img.crop(r(x - minx), r(y - miny), r(w).max(1), r(h).max(1)))
+}
+
+/// Fork into the background: the parent exits immediately, the child carries
+/// on (with the Wayland connection it inherited) to serve the clipboard.
+fn daemonize() {
+    unsafe {
+        match libc::fork() {
+            -1 => {} // keep serving in the foreground
+            0 => {
+                libc::setsid();
+                let null = libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);
+                if null >= 0 {
+                    libc::dup2(null, 0);
+                    libc::dup2(null, 1);
+                    libc::dup2(null, 2);
+                }
+            }
+            _ => libc::_exit(0),
+        }
+    }
+}
