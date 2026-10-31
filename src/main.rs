@@ -260,7 +260,7 @@ fn deliver(cfg: &Config, args: &Args, img: image::Image) -> Result<()> {
             notify::send("Screenshot copied", &format!("{iw} × {ih}"), path.as_deref());
         }
         // Hand freed pages back before lingering as the clipboard owner.
-        unsafe { libc::malloc_trim(0) };
+        crate::trim_heap();
         clipboard::copy_and_serve(png, daemonize)?;
     } else if let (true, Some(p)) = (cfg.notify && args.output.is_none(), &path) {
         notify::send("Screenshot saved", &p.display().to_string(), Some(p));
@@ -338,6 +338,16 @@ fn crop_geometry(img: &image::Image, shots: &[Shot], g: &str) -> Result<image::I
     let miny = shots.iter().map(|s| s.output.y).min().unwrap_or(0) as f64;
     let r = |v: f64| (v * scale).round().max(0.0) as u32;
     Ok(img.crop(r(x - minx), r(y - miny), r(w).max(1), r(h).max(1)))
+}
+
+/// Return freed heap pages to the OS before lingering in the background.
+/// glibc keeps them otherwise; musl and the BSD allocators release large
+/// frees on their own.
+pub fn trim_heap() {
+    #[cfg(target_env = "gnu")]
+    unsafe {
+        libc::malloc_trim(0);
+    }
 }
 
 /// Fork into the background: the parent exits immediately, the child carries

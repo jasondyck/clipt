@@ -48,6 +48,34 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
       - run: cargo check --all-targets --locked
 
+  # Compile for every target we ship or expect distros to build, so libc and
+  # platform differences surface in CI rather than in a packager's bug report.
+  targets:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-gnu
+          - riscv64gc-unknown-linux-gnu
+          - armv7-unknown-linux-gnueabihf
+          - x86_64-unknown-freebsd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
+      # Type-check only (no linking), so host pkg-config is fine.
+      - run: cargo clippy --locked --target ${{ matrix.target }} -- -D warnings
+        env:
+          PKG_CONFIG_ALLOW_CROSS: "1"
+
   deny:
     runs-on: ubuntu-latest
     steps:

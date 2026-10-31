@@ -318,7 +318,7 @@ impl Session {
         if let Ok(pool) = SlotPool::new(4096, &ov.shm) {
             ov.pool = pool;
         }
-        unsafe { libc::malloc_trim(0) };
+        crate::trim_heap();
     }
 
     /// Keep serving the clipboard until another client takes the selection.
