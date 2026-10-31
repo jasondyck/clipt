@@ -5,11 +5,13 @@ mod clipboard;
 mod config;
 mod dbus;
 mod editor;
+mod icon;
 mod image;
 mod notify;
 mod overlay;
 mod session;
 mod text;
+mod tray;
 mod x11;
 
 use anyhow::{Context, Result, bail};
@@ -27,6 +29,7 @@ USAGE:
     clipt full            Capture the whole desktop
     clipt screen [NAME]   Capture one output (default: the first)
     clipt list            Show outputs and available capture backends
+    clipt tray            Sit in the system tray (click: region, right-click: menu)
 
 OPTIONS:
     -o, --output PATH     Write the PNG to PATH ('-' for stdout) instead of the save dir
@@ -122,6 +125,14 @@ fn run() -> Result<()> {
         "auto" => None,
         b => Some(Backend::parse(b)?),
     };
+    if args.cmd == "debug-icon" {
+        let out = args.output.as_deref().unwrap_or("clipt-icon-preview.png");
+        std::fs::write(out, icon::preview().encode_png()?)?;
+        return Ok(());
+    }
+    if args.cmd == "tray" {
+        return tray::run(config::expand(&cfg.save_dir).display().to_string());
+    }
     let cursor = args.cursor || cfg.cursor;
     if args.delay > 0.0 {
         std::thread::sleep(std::time::Duration::from_secs_f64(args.delay));

@@ -37,6 +37,7 @@ package() {
   cd "$pkgname-$pkgver"
   install -Dm755 target/release/clipt -t "$pkgdir/usr/bin/"
   install -Dm644 data/clipt.desktop -t "$pkgdir/usr/share/applications/"
+  install -Dm644 data/clipt.svg -t "$pkgdir/usr/share/icons/hicolor/scalable/apps/"
   install -Dm644 README.md CHANGELOG.md -t "$pkgdir/usr/share/doc/$pkgname/"
   install -Dm644 LICENSE-MIT LICENSE-APACHE -t "$pkgdir/usr/share/licenses/$pkgname/"
 }

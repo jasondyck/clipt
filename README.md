@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/mascot.png" width="180" alt="clipt's mascot: a cream blob holding up a lavender picture frame">
+</p>
+
 # clipt
 
 A lightweight screenshot tool for Wayland and X11, in the spirit of Flameshot: freeze
@@ -45,6 +49,7 @@ clipt full -c       # whole desktop to the clipboard
 clipt screen DP-1   # one output, saved to the save dir
 clipt full -g "$(slurp)" -o -   # slurp region to stdout
 clipt list          # outputs and available backends
+clipt tray          # tray icon: click = region, right-click = menu
 ```
 
 Editor: drag to select (click = whole screen), drag handles to resize, drag
@@ -54,6 +59,12 @@ arrow, **L** line, **P** pen, **M** highlighter, **T** text, **X** pixelate,
 for squares and 45° lines. **Enter**/**Ctrl+C**/double-click copies, **Ctrl+S**
 saves, **Ctrl+Z**/**Ctrl+Shift+Z** undo/redo, **Esc** cancels, right-click
 backs out a step.
+
+`clipt tray` puts an icon in the system tray (StatusNotifierItem: KDE, waybar,
+GNOME with the AppIndicator extension, Xfce, …). Left-click captures a region,
+middle-click copies the whole desktop, and the right-click menu adds a 3-second
+delay, the screenshots folder and Quit. Each capture runs as a fresh `clipt`
+process, so the tray itself stays idle.
 
 After copying, clipt forks into the background to serve the clipboard until
 something else is copied (Wayland clipboards are owned by a live client).
@@ -93,6 +104,7 @@ From a release tarball or a checkout:
 
 ```
 ./install.sh        # builds if needed; ~/.local/bin/clipt + desktop entry
+./install.sh --tray # same, plus start `clipt tray` at login
 ```
 
 On KDE the desktop entry carries `X-KDE-DBUS-Restricted-Interfaces` so KWin

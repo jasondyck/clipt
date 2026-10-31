@@ -6,6 +6,13 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `clipt tray`: system tray icon (StatusNotifierItem + dbusmenu). Click for a
+  region, middle-click for the full desktop, menu for delayed capture, the
+  screenshots folder and Quit. `install.sh --tray` adds it to autostart.
+- clipt icon (flat mascot holding a picture frame): drawn in code for the tray,
+  simplified and pixel-snapped below 32 px; `data/clipt.svg` for the desktop entry.
+
 ## [0.1.0] - unreleased
 
 First public release.

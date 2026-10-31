@@ -35,7 +35,7 @@ jobs:
         run: |
           name="clipt-${GITHUB_REF_NAME}-${{ matrix.arch }}-linux"
           mkdir -p "$name"
-          cp target/release/clipt data/clipt.desktop install.sh README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "$name/"
+          cp target/release/clipt data/clipt.desktop data/clipt-tray.desktop data/clipt.svg install.sh README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "$name/"
           tar czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
       - uses: actions/upload-artifact@v4

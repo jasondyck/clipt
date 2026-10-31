@@ -29,7 +29,7 @@ wayland-protocols = { version = "0.32", features = ["client", "staging", "unstab
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 x11rb = { version = "0.14", default-features = false, features = ["randr", "shm", "xfixes", "xinerama"] }
 xkeysym = "0.2"
-zbus = { version = "6", default-features = false, features = ["default-rt", "proxy"] }
+zbus = { version = "6", default-features = false, features = ["default-rt", "proxy", "service"] }
 
 [profile.release]
 lto = true
@@ -60,6 +60,7 @@ depends = "libc6 (>= 2.35), libxkbcommon0"
 assets = [
     ["target/release/clipt", "usr/bin/", "755"],
     ["data/clipt.desktop", "usr/share/applications/", "644"],
+    ["data/clipt.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
     ["README.md", "usr/share/doc/clipt/", "644"],
     ["CHANGELOG.md", "usr/share/doc/clipt/", "644"],
     ["LICENSE-MIT", "usr/share/doc/clipt/", "644"],
@@ -70,6 +71,7 @@ assets = [
 assets = [
     { source = "target/release/clipt", dest = "/usr/bin/clipt", mode = "755" },
     { source = "data/clipt.desktop", dest = "/usr/share/applications/clipt.desktop", mode = "644" },
+    { source = "data/clipt.svg", dest = "/usr/share/icons/hicolor/scalable/apps/clipt.svg", mode = "644" },
     { source = "README.md", dest = "/usr/share/doc/clipt/README.md", mode = "644", doc = true },
     { source = "LICENSE-MIT", dest = "/usr/share/licenses/clipt/LICENSE-MIT", mode = "644", doc = true },
     { source = "LICENSE-APACHE", dest = "/usr/share/licenses/clipt/LICENSE-APACHE", mode = "644", doc = true },

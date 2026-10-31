@@ -17,4 +17,17 @@ desktop=data/clipt.desktop
 sed "s|^Exec=clipt|Exec=$prefix/bin/clipt|" "$desktop" > /tmp/clipt.desktop.$$
 install -Dm644 /tmp/clipt.desktop.$$ "$prefix/share/applications/clipt.desktop"
 rm -f /tmp/clipt.desktop.$$
+icon=data/clipt.svg
+[ -f "$icon" ] || icon=clipt.svg
+install -Dm644 "$icon" "$prefix/share/icons/hicolor/scalable/apps/clipt.svg"
+# --tray: start `clipt tray` at login.
+if [ "${1:-}" = "--tray" ]; then
+  tray=data/clipt-tray.desktop
+  [ -f "$tray" ] || tray=clipt-tray.desktop
+  autostart="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+  sed "s|^Exec=clipt|Exec=$prefix/bin/clipt|" "$tray" > /tmp/clipt-tray.desktop.$$
+  install -Dm644 /tmp/clipt-tray.desktop.$$ "$autostart/clipt-tray.desktop"
+  rm -f /tmp/clipt-tray.desktop.$$
+  echo "clipt tray will start at login ($autostart/clipt-tray.desktop)"
+fi
 echo "installed $prefix/bin/clipt"

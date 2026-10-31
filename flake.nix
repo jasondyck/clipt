@@ -24,6 +24,7 @@
           '';
           postInstall = ''
             install -Dm644 data/clipt.desktop -t $out/share/applications
+            install -Dm644 data/clipt.svg -t $out/share/icons/hicolor/scalable/apps
             # fc-match finds the UI font; make sure it's on PATH.
             wrapProgram $out/bin/clipt --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.fontconfig ]}
           '';

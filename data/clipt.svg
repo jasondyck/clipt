@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="128" height="128">
+  <!-- Same drawing as src/icon.rs (the 32 px and larger variant). -->
+  <rect x="4" y="4" width="92" height="92" rx="22" fill="#c4b1ef"/>
+  <path d="M50 18C67.28 18 81.28 33.22 83.32 52C85.36 70.78 69.53 86 50 86C30.47 86 14.64 70.78 16.68 52C18.72 33.22 32.72 18 50 18Z" fill="#fff4de"/>
+  <ellipse cx="38" cy="43" rx="5" ry="5.5" fill="#2d2340"/>
+  <ellipse cx="62" cy="43" rx="5" ry="5.5" fill="#2d2340"/>
+  <circle cx="36.25" cy="41.0" r="1.6" fill="#fff4de"/>
+  <circle cx="60.25" cy="41.0" r="1.6" fill="#fff4de"/>
+  <path d="M45.5 50Q50 54 54.5 50" fill="none" stroke="#2d2340" stroke-width="2.2" stroke-linecap="round"/>
+  <g transform="rotate(-5 50 72)">
+    <rect x="24" y="58" width="50" height="28" rx="5" fill="#8a6cd6"/>
+    <rect x="29" y="63" width="40" height="18" rx="2" fill="#f1ebfd"/>
+  </g>
+  <g fill="#fff4de" stroke="#2d2340" stroke-opacity=".25" stroke-width="1.2">
+    <ellipse cx="25" cy="75.36" rx="8.5" ry="7.5"/>
+    <ellipse cx="73" cy="78.36" rx="8.5" ry="7.5"/>
+  </g>
+</svg>

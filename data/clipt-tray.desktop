@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=clipt tray
+Comment=Screenshot tool in the system tray
+Exec=clipt tray
+Icon=clipt
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-KDE-autostart-phase=2
