@@ -219,7 +219,7 @@ impl Editor {
         self.swap_rb = swap;
         self.revision += 1;
         for s in &mut self.screens {
-            for p in s.bg.data_mut().chunks_exact_mut(4) {
+            for p in s.bg.data_mut().as_chunks_mut::<4>().0 {
                 p.swap(0, 2);
             }
         }
@@ -656,7 +656,7 @@ impl Editor {
         }
         let mut data = pm.take();
         if self.swap_rb {
-            for p in data.chunks_exact_mut(4) {
+            for p in data.as_chunks_mut::<4>().0 {
                 p.swap(0, 2);
             }
         }
@@ -688,7 +688,7 @@ fn snap45(a: Pt, b: Pt) -> Pt {
 
 fn to_pixmap(img: Image, swap_rb: bool) -> Pixmap {
     let mut data = img.data;
-    for p in data.chunks_exact_mut(4) {
+    for p in data.as_chunks_mut::<4>().0 {
         if swap_rb {
             p.swap(0, 2);
         }
@@ -704,7 +704,7 @@ mod tests {
 
     fn shot(name: &str, x: i32, w: u32, h: u32, scale: u32, rgb: [u8; 3]) -> Shot {
         let mut image = Image::new(w * scale, h * scale);
-        for p in image.data.chunks_exact_mut(4) {
+        for p in image.data.as_chunks_mut::<4>().0 {
             p.copy_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
         }
         Shot {
@@ -819,7 +819,7 @@ mod tests {
     #[test]
     fn partial_repaints_match_full_render() {
         let mut img = Image::new(640, 400);
-        for (i, p) in img.data.chunks_exact_mut(4).enumerate() {
+        for (i, p) in img.data.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let (x, y) = (i % 640, i / 640);
             p.copy_from_slice(&[(x * 7 % 256) as u8, (y * 5 % 256) as u8, ((x ^ y) % 256) as u8, 255]);
         }

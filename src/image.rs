@@ -22,7 +22,7 @@ impl Image {
         for y in 0..height as usize {
             let row = &src[y * stride..y * stride + width as usize * bpp];
             let out = &mut img.data[y * width as usize * 4..(y + 1) * width as usize * 4];
-            for (s, d) in row.chunks_exact(bpp).zip(out.chunks_exact_mut(4)) {
+            for (s, d) in row.chunks_exact(bpp).zip(out.as_chunks_mut::<4>().0) {
                 d.copy_from_slice(&f(s));
             }
         }
@@ -124,7 +124,7 @@ impl Image {
                 acc[i] &= b[i];
             }
         }
-        if !(0..16).all(|i| acc[i * 4 + 3] == 255) || !rest.chunks_exact(4).all(|p| p[3] == 255) {
+        if !(0..16).all(|i| acc[i * 4 + 3] == 255) || !rest.as_chunks::<4>().0.iter().all(|p| p[3] == 255) {
             return None;
         }
         let mut out = vec![0u8; self.data.len() / 4 * 3];
@@ -133,7 +133,7 @@ impl Image {
         for (o, s) in dst.iter_mut().zip(src) {
             *o = [s[0], s[1], s[2], s[4], s[5], s[6], s[8], s[9], s[10], s[12], s[13], s[14]];
         }
-        for (o, s) in drem.chunks_exact_mut(3).zip(srem.chunks_exact(4)) {
+        for (o, s) in drem.as_chunks_mut::<3>().0.iter_mut().zip(srem.as_chunks::<4>().0) {
             o.copy_from_slice(&s[..3]);
         }
         Some(out)
@@ -149,7 +149,7 @@ impl Image {
         let (w, h) = (info.width, info.height);
         let data = match info.color_type {
             png::ColorType::Rgba => buf,
-            png::ColorType::GrayscaleAlpha => buf.chunks_exact(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+            png::ColorType::GrayscaleAlpha => buf.as_chunks::<2>().0.iter().flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
             other => anyhow::bail!("unexpected png color type {other:?}"),
         };
         Ok(Self { width: w, height: h, data })
@@ -211,11 +211,11 @@ mod bench {
     fn rgb_packing_and_alpha_detection() {
         // odd pixel count exercises the remainder paths
         let mut img = Image::new(7, 3);
-        for (i, p) in img.data.chunks_exact_mut(4).enumerate() {
+        for (i, p) in img.data.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             p.copy_from_slice(&[i as u8, (i * 3) as u8, (i * 5) as u8, 255]);
         }
         let rgb = img.to_rgb_if_opaque().unwrap();
-        let want: Vec<u8> = img.data.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+        let want: Vec<u8> = img.data.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
         assert_eq!(rgb, want);
         img.data[4 * 20 + 3] = 254; // last pixel, in the remainder
         assert!(img.to_rgb_if_opaque().is_none());
@@ -234,7 +234,7 @@ mod bench {
         let files = std::env::var("CLIPT_BENCH_PNGS").unwrap_or_default();
         for f in files.split(',').filter(|f| !f.is_empty()) {
             let img = Image::decode_png(&std::fs::read(f).unwrap()).unwrap();
-            let rgb: Vec<u8> = img.data.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+            let rgb: Vec<u8> = img.data.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
             let t = std::time::Instant::now();
             let chosen = img.encode_png().unwrap();
             eprintln!(

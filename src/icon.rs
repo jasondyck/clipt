@@ -165,7 +165,7 @@ pub fn preview() -> crate::image::Image {
         }
     }
     let mut img = crate::image::Image::new(w, row * 2);
-    for (d, p) in img.data.chunks_exact_mut(4).zip(sheet.pixels()) {
+    for (d, p) in img.data.as_chunks_mut::<4>().0.iter_mut().zip(sheet.pixels()) {
         let c = p.demultiply();
         d.copy_from_slice(&[c.red(), c.green(), c.blue(), c.alpha()]);
     }

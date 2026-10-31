@@ -81,7 +81,7 @@ fn decode_qimage(w: u32, h: u32, stride: usize, format: u32, mut data: Vec<u8>) 
             }),
             _ => {
                 // premultiplied variants: rare, keep it simple
-                for p in data.chunks_exact_mut(4) {
+                for p in data.as_chunks_mut::<4>().0 {
                     if format == 6 {
                         p.swap(0, 2);
                     }
