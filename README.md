@@ -4,6 +4,9 @@ A lightweight screenshot tool for Wayland, in the spirit of Flameshot: freeze
 the screen, drag a region, annotate it, copy or save. One small Rust binary, no
 Qt/GTK, CPU-rendered with tiny-skia.
 
+![glint's editor: a selection with its size label, a rectangle, an arrow,
+numbered counters, a highlighter, text and the toolbar](docs/screenshot.png)
+
 ## Compositor support
 
 Capture backend is picked automatically (override with `-b` or `backend =`):
