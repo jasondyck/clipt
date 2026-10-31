@@ -1,0 +1,21 @@
+pkgbase = clipt-bin
+	pkgdesc = Fast, lightweight screenshot tool for Wayland and X11 (prebuilt binary)
+	pkgver = 0.1.1
+	pkgrel = 1
+	url = https://github.com/jasondyck/clipt
+	arch = x86_64
+	arch = aarch64
+	license = MIT OR Apache-2.0
+	depends = glibc
+	depends = libgcc
+	depends = libxkbcommon
+	depends = fontconfig
+	provides = clipt
+	conflicts = clipt
+	options = !debug
+	source_x86_64 = https://github.com/jasondyck/clipt/releases/download/v0.1.1/clipt-v0.1.1-x86_64-linux.tar.gz
+	sha256sums_x86_64 = fd7b277090f55b4f23b7d9395f4a8a5f435eddad2ba89aefce28336c0c035717
+	source_aarch64 = https://github.com/jasondyck/clipt/releases/download/v0.1.1/clipt-v0.1.1-aarch64-linux.tar.gz
+	sha256sums_aarch64 = 6bcdeee034a380ffc8ed45bd836df09660e23f597838d5b6818fd5a6754091af
+
+pkgname = clipt-bin

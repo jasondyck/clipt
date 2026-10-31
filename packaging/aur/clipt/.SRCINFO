@@ -1,0 +1,20 @@
+pkgbase = clipt
+	pkgdesc = Fast, lightweight screenshot tool for Wayland and X11 with region select and annotation
+	pkgver = 0.1.1
+	pkgrel = 1
+	url = https://github.com/jasondyck/clipt
+	arch = x86_64
+	arch = aarch64
+	license = MIT OR Apache-2.0
+	makedepends = cargo
+	depends = glibc
+	depends = libgcc
+	depends = libxkbcommon
+	depends = fontconfig
+	optdepends = xdg-desktop-portal: capture on GNOME
+	optdepends = noto-fonts: default UI font
+	options = !debug
+	source = clipt-0.1.1.tar.gz::https://github.com/jasondyck/clipt/archive/refs/tags/v0.1.1.tar.gz
+	sha256sums = cc603c85137b582909a15435597ed7b8ca05afb28e1c8ef2dc415c78b48e2e0e
+
+pkgname = clipt
