@@ -8,7 +8,9 @@ mod editor;
 mod image;
 mod notify;
 mod overlay;
+mod session;
 mod text;
+mod x11;
 
 use anyhow::{Context, Result, bail};
 use capture::{Backend, Capturer, Output, Shot};
@@ -171,13 +173,14 @@ fn run() -> Result<()> {
                 outputs.clone()
             };
             let (_, shots) = cap.capture(&targets, cursor, backend)?;
+            let kind = cap.kind();
             drop(cap);
             let mut img = stitch(&shots);
             if let Some(g) = &args.geometry {
                 img = crop_geometry(&img, &shots, g)?;
             }
             drop(shots);
-            deliver(&cfg, &args, img)
+            deliver(&cfg, &args, img, kind)
         }
         "gui" => {
             lap("connected");
@@ -185,8 +188,9 @@ fn run() -> Result<()> {
             lap("captured");
             let fonts = fonts.join().map_err(|_| anyhow::anyhow!("font loader panicked"))??;
             lap("fonts");
+            let kind = cap.kind();
             drop(cap);
-            gui(&cfg, &args, shots, fonts, &lap)
+            gui(&cfg, &args, shots, fonts, kind, &lap)
         }
         "debug-render" => {
             let (_, shots) = cap.capture(&outputs, cursor, backend)?;
@@ -203,16 +207,16 @@ fn run() -> Result<()> {
     }
 }
 
-fn gui(cfg: &Config, args: &Args, shots: Vec<Shot>, fonts: text::Fonts, lap: &dyn Fn(&str)) -> Result<()> {
+fn gui(cfg: &Config, args: &Args, shots: Vec<Shot>, fonts: text::Fonts, kind: capture::DisplayKind, lap: &dyn Fn(&str)) -> Result<()> {
     let ed = Editor::new(shots, fonts, true, cfg.color.saturating_sub(1), cfg.width);
     lap("editor");
-    let mut session = overlay::Session::new(ed)?;
+    let mut session = session::open(ed, kind)?;
     lap("surfaces");
     let outcome = session.run()?;
     if outcome == Outcome::Cancel {
         return Ok(());
     }
-    let img = session.overlay.editor.export().context("nothing selected")?;
+    let img = session.editor().export().context("nothing selected")?;
 
     // Claim the clipboard while we still hold focus, close the overlay right
     // away, and only then encode: the encode can take ~100 ms and the screen
@@ -245,7 +249,7 @@ fn gui(cfg: &Config, args: &Args, shots: Vec<Shot>, fonts: text::Fonts, lap: &dy
     Ok(())
 }
 
-fn deliver(cfg: &Config, args: &Args, img: image::Image) -> Result<()> {
+fn deliver(cfg: &Config, args: &Args, img: image::Image, kind: capture::DisplayKind) -> Result<()> {
     let png = img.encode_png()?;
     let (iw, ih) = (img.width, img.height);
     drop(img);
@@ -261,7 +265,10 @@ fn deliver(cfg: &Config, args: &Args, img: image::Image) -> Result<()> {
         }
         // Hand freed pages back before lingering as the clipboard owner.
         crate::trim_heap();
-        clipboard::copy_and_serve(png, daemonize)?;
+        match kind {
+            capture::DisplayKind::Wayland => clipboard::copy_and_serve(png, daemonize)?,
+            capture::DisplayKind::X11 => x11::clip::copy_and_serve(png, daemonize)?,
+        }
     } else if let (true, Some(p)) = (cfg.notify && args.output.is_none(), &path) {
         notify::send("Screenshot saved", &p.display().to_string(), Some(p));
     }

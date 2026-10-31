@@ -13,14 +13,15 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 cargo deny check          # licences and RustSec advisories
 typos
-tests/e2e.sh              # needs Docker: headless Sway (4 layouts) + GNOME (2)
+tests/e2e.sh              # needs Docker: headless Sway (4 layouts), GNOME (2), X11 (2)
 ```
 
 `tests/e2e.sh sway triple` (or any `IMAGE LAYOUT` pair) runs one suite. The
 suites start a real compositor in a container, drive it with scripted mouse
 and keyboard input (`examples/vinput.rs` on Sway, Mutter's RemoteDesktop API
-on GNOME) and compare every capture against `grim` or the expected native
-size, including mixed-DPI, fractional-scale and rotated monitors.
+on GNOME, xdotool on X11) and compare every capture against `grim`,
+ImageMagick's `import` or the expected native size, including mixed-DPI,
+fractional-scale and rotated monitors.
 
 Rendering changes are guarded by `partial_repaints_match_full_render`, which
 replays a session through the damage-tracked redraw path and compares every

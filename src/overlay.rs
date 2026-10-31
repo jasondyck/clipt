@@ -3,6 +3,7 @@
 //! otherwise a fullscreen xdg_toplevel (GNOME).
 
 use crate::editor::{CursorKind, Editor, Handle, Key, Mods};
+use crate::session::Later;
 use anyhow::{Context, Result};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
@@ -59,11 +60,11 @@ impl Role {
 
 /// Screen-pixel rectangle.
 #[derive(Clone, Copy, Debug)]
-struct IRect {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
+pub(crate) struct IRect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
 }
 
 impl IRect {
@@ -83,7 +84,7 @@ impl IRect {
 }
 
 /// Merge overlapping rectangles until none touch.
-fn merge(mut v: Vec<IRect>) -> Vec<IRect> {
+pub(crate) fn merge(mut v: Vec<IRect>) -> Vec<IRect> {
     let mut i = 0;
     while i < v.len() {
         let mut j = i + 1;
@@ -102,6 +103,22 @@ fn merge(mut v: Vec<IRect>) -> Vec<IRect> {
         }
     }
     v
+}
+
+/// Logical damage rectangles -> pixel rectangles inside one screen's buffer.
+pub(crate) fn screen_rects(scr: &crate::editor::Screen, rs: &[tiny_skia::Rect]) -> Vec<IRect> {
+    let (bw, bh) = (scr.bg.width() as i32, scr.bg.height() as i32);
+    let o = &scr.output;
+    let k = scr.scale;
+    rs.iter()
+        .filter_map(|r| {
+            let x0 = (((r.left() - o.x as f32) * k).floor() as i32).clamp(0, bw);
+            let y0 = (((r.top() - o.y as f32) * k).floor() as i32).clamp(0, bh);
+            let x1 = (((r.right() - o.x as f32) * k).ceil() as i32).clamp(0, bw);
+            let y1 = (((r.bottom() - o.y as f32) * k).ceil() as i32).clamp(0, bh);
+            (x1 > x0 && y1 > y0).then_some(IRect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+        })
+        .collect()
 }
 
 /// Damage still owed to a buffer or the compositor. `None` = everything.
@@ -160,31 +177,6 @@ pub struct Overlay {
     /// The PNG may still be encoding when the selection is claimed.
     clip: Option<(CopyPasteSource, Arc<Later<Vec<u8>>>)>,
     clip_done: bool,
-}
-
-/// A value filled in later by one thread and awaited by others.
-pub struct Later<T> {
-    value: std::sync::Mutex<Option<Arc<T>>>,
-    ready: std::sync::Condvar,
-}
-
-impl<T> Later<T> {
-    fn new() -> Self {
-        Self { value: std::sync::Mutex::new(None), ready: std::sync::Condvar::new() }
-    }
-    pub fn set(&self, v: T) {
-        *self.value.lock().unwrap() = Some(Arc::new(v));
-        self.ready.notify_all();
-    }
-    fn wait(&self) -> Arc<T> {
-        let mut g = self.value.lock().unwrap();
-        loop {
-            if let Some(v) = &*g {
-                return v.clone();
-            }
-            g = self.ready.wait(g).unwrap();
-        }
-    }
 }
 
 pub struct Session {
@@ -294,7 +286,7 @@ impl Session {
         };
         let src = mgr.create_copy_paste_source(&qh, ["image/png"]);
         src.set_selection(dev, ov.serial);
-        let pending = Arc::new(Later::new());
+        let pending = Arc::new(Later::default());
         ov.clip = Some((src, pending.clone()));
         self.queue.roundtrip(&mut self.overlay)?;
         Ok(pending)
@@ -330,6 +322,27 @@ impl Session {
     }
 }
 
+impl crate::session::UiSession for Session {
+    fn run(&mut self) -> Result<crate::editor::Outcome> {
+        Session::run(self)
+    }
+    fn editor(&mut self) -> &mut Editor {
+        &mut self.overlay.editor
+    }
+    fn claim_clipboard(&mut self) -> Result<Arc<Later<Vec<u8>>>> {
+        Session::claim_clipboard(self)
+    }
+    fn hide(&mut self) -> Result<()> {
+        Session::hide(self)
+    }
+    fn release_memory(&mut self) {
+        Session::release_memory(self)
+    }
+    fn serve_clipboard(&mut self) -> Result<()> {
+        Session::serve_clipboard(self)
+    }
+}
+
 impl Overlay {
     /// Turn the editor's logical damage into per-surface pixel damage.
     fn mark_all(&mut self) {
@@ -338,22 +351,7 @@ impl Overlay {
             let scr = &self.editor.screens[s.screen];
             let rects: Pending = match &damage {
                 crate::editor::Damage::Full => None,
-                crate::editor::Damage::Rects(rs) => {
-                    let (bw, bh) = (scr.bg.width() as i32, scr.bg.height() as i32);
-                    let o = &scr.output;
-                    let k = scr.scale;
-                    Some(
-                        rs.iter()
-                            .filter_map(|r| {
-                                let x0 = (((r.left() - o.x as f32) * k).floor() as i32).clamp(0, bw);
-                                let y0 = (((r.top() - o.y as f32) * k).floor() as i32).clamp(0, bh);
-                                let x1 = (((r.right() - o.x as f32) * k).ceil() as i32).clamp(0, bw);
-                                let y1 = (((r.bottom() - o.y as f32) * k).ceil() as i32).clamp(0, bh);
-                                (x1 > x0 && y1 > y0).then_some(IRect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
-                            })
-                            .collect(),
-                    )
-                }
+                crate::editor::Damage::Rects(rs) => Some(screen_rects(scr, rs)),
             };
             add(&mut s.damage, &rects);
             for b in &mut s.bufs {

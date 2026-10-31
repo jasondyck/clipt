@@ -22,5 +22,8 @@ First public release.
 - Overlay on every monitor at once at native resolution: no monitor
   picker, correct with mixed resolutions, fractional scaling and rotated
   monitors.
+- X11 support (Xfce, Cinnamon, MATE, LXQt, i3, Openbox, …): RandR or
+  Xinerama monitors, MIT-SHM overlay, CLIPBOARD with INCR for large images.
+- Builds on glibc and musl Linux (x86_64, aarch64, armv7, riscv64) and FreeBSD.
 - `full`, `screen` and slurp-compatible `-g` modes; stdout output.
-- End-to-end test suites on headless Sway and GNOME Shell.
+- End-to-end test suites on headless Sway, GNOME Shell and X11.

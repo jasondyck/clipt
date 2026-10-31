@@ -1,6 +1,6 @@
 # clipt
 
-A lightweight screenshot tool for Wayland, in the spirit of Flameshot: freeze
+A lightweight screenshot tool for Wayland and X11, in the spirit of Flameshot: freeze
 the screen, drag a region, annotate it, copy or save. One small Rust binary, no
 Qt/GTK, CPU-rendered with tiny-skia.
 
@@ -17,9 +17,13 @@ Capture backend is picked automatically (override with `-b` or `backend =`):
 | `wlr`    | wlr-screencopy: Sway, Hyprland, river, labwc, Wayfire        |
 | `kwin`   | KDE Plasma (org.kde.KWin.ScreenShot2, HDR is tonemapped by KWin) |
 | `portal` | GNOME, or anything with xdg-desktop-portal                   |
+| `x11`    | X11 sessions: Xfce, Cinnamon, MATE, LXQt, i3, Openbox, …     |
 
 The editor overlay uses wlr-layer-shell where available (KDE, wlroots,
-Hyprland, niri, COSMIC) and falls back to a fullscreen window on GNOME.
+Hyprland, niri, COSMIC) and falls back to a fullscreen window on GNOME. On
+X11 it uses override-redirect windows with MIT-SHM drawing; the clipboard
+supports INCR, so large PNGs paste correctly into any X application. Compositor
+users can exclude the overlay by its `WM_CLASS`, `clipt`.
 ### Multiple monitors
 
 There is no "pick a monitor" step: every monitor gets its own overlay at the
@@ -29,9 +33,9 @@ selection on any of them, or across two. Mixed resolutions, fractional scaling
 the end-to-end tests, and saved images keep the native pixel size of the
 monitor they came from.
 
-Tested on KDE Plasma 6.8 (by hand), and end-to-end in containers on Sway 1.12
-and GNOME Shell 51 across single, fractional-scale, mixed-DPI and
-three-monitor (offset + rotated) layouts.
+Tested on KDE Plasma 6.8 (by hand), and end-to-end in containers on Sway 1.12,
+GNOME Shell 51 and X11 (Xvfb and headless Xorg, under Openbox) across single,
+fractional-scale, mixed-DPI and three-monitor (offset + rotated) layouts.
 
 ## Usage
 

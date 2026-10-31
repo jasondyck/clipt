@@ -6,6 +6,7 @@
 //! | `wlr`    | wlr-screencopy: Sway, Hyprland, river, labwc, Wayfire |
 //! | `kwin`   | KDE Plasma (org.kde.KWin.ScreenShot2)                |
 //! | `portal` | GNOME and anything with xdg-desktop-portal           |
+//! | `x11`    | X11 sessions (Xfce, Cinnamon, MATE, i3, ...)         |
 
 pub mod kwin;
 pub mod portal;
@@ -49,6 +50,19 @@ pub enum Backend {
     Wlr,
     Kwin,
     Portal,
+    X11,
+}
+
+/// Which display system clipt is talking to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayKind {
+    Wayland,
+    X11,
+}
+
+enum Display {
+    Wayland(Box<wayland::Wayland>),
+    X11(Box<crate::x11::X11>),
 }
 
 impl Backend {
@@ -58,32 +72,61 @@ impl Backend {
             "wlr" => Self::Wlr,
             "kwin" => Self::Kwin,
             "portal" => Self::Portal,
-            _ => bail!("unknown backend '{s}' (ext, wlr, kwin, portal)"),
+            "x11" => Self::X11,
+            _ => bail!("unknown backend '{s}' (ext, wlr, kwin, portal, x11)"),
         })
     }
 }
 
 pub struct Capturer {
-    wl: wayland::Wayland,
+    display: Display,
     bus: Option<crate::dbus::Connection>,
 }
 
 impl Capturer {
+    /// Wayland when there is a compositor to talk to, X11 otherwise.
+    /// `CLIPT_X11=1` forces X11 (useful for testing under XWayland, which
+    /// only shows X clients).
     pub fn new() -> Result<Self> {
         let bus = crate::dbus::session().ok();
         if let Some(b) = &bus {
             portal::register(b);
         }
-        Ok(Self { wl: wayland::Wayland::connect()?, bus })
+        let force_x11 = std::env::var_os("CLIPT_X11").is_some_and(|v| v != "0");
+        let display = match (force_x11, wayland::Wayland::connect()) {
+            (false, Ok(wl)) => Display::Wayland(Box::new(wl)),
+            (_, wl_err) if crate::x11::available() => Display::X11(Box::new(crate::x11::X11::connect().map_err(|e| match wl_err {
+                Err(w) => e.context(format!("and Wayland: {w:#}")),
+                Ok(_) => e,
+            })?)),
+            (_, Err(e)) => return Err(e.context("no Wayland compositor and no X11 display")),
+            (true, Ok(_)) => bail!("CLIPT_X11 is set but DISPLAY isn't"),
+        };
+        Ok(Self { display, bus })
+    }
+
+    pub fn kind(&self) -> DisplayKind {
+        match self.display {
+            Display::Wayland(_) => DisplayKind::Wayland,
+            Display::X11(_) => DisplayKind::X11,
+        }
     }
 
     pub fn outputs(&self) -> Vec<Output> {
-        self.wl.outputs()
+        match &self.display {
+            Display::Wayland(wl) => wl.outputs(),
+            Display::X11(x) => x.outputs(),
+        }
     }
 
     pub fn available(&self) -> Vec<Backend> {
         let mut v = Vec::new();
-        for p in self.wl.protocols() {
+        let wl = match &self.display {
+            Display::Wayland(wl) => wl,
+            // X11 can always read the root window; nothing else needed.
+            Display::X11(_) => return vec![Backend::X11],
+        };
+        for p in wl.protocols() {
             v.push(match p {
                 wayland::Protocol::ExtImageCopy => Backend::Ext,
                 wayland::Protocol::WlrScreencopy => Backend::Wlr,
@@ -110,16 +153,20 @@ impl Capturer {
             bail!("no capture backend available (no screencopy protocol, KWin or portal)");
         }
         let mut errors = Vec::new();
+        let all = self.outputs();
         for b in order {
-            let r = match b {
-                Backend::Ext => self.wl.capture(outputs, cursor, wayland::Protocol::ExtImageCopy),
-                Backend::Wlr => self.wl.capture(outputs, cursor, wayland::Protocol::WlrScreencopy),
-                Backend::Kwin => match &self.bus {
+            let r = match (b, &mut self.display) {
+                (Backend::Ext, Display::Wayland(wl)) => wl.capture(outputs, cursor, wayland::Protocol::ExtImageCopy),
+                (Backend::Wlr, Display::Wayland(wl)) => wl.capture(outputs, cursor, wayland::Protocol::WlrScreencopy),
+                (Backend::X11, Display::X11(x)) => x.capture(outputs, cursor),
+                (Backend::Ext | Backend::Wlr, _) => Err(anyhow::anyhow!("not a Wayland session")),
+                (Backend::X11, _) => Err(anyhow::anyhow!("not an X11 session")),
+                (Backend::Kwin, _) => match &self.bus {
                     Some(bus) => kwin::capture(bus, outputs, cursor),
                     None => Err(anyhow::anyhow!("no session bus")),
                 },
-                Backend::Portal => match &self.bus {
-                    Some(bus) => portal::capture(bus, &self.wl.outputs(), outputs),
+                (Backend::Portal, _) => match &self.bus {
+                    Some(bus) => portal::capture(bus, &all, outputs),
                     None => Err(anyhow::anyhow!("no session bus")),
                 },
             };
