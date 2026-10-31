@@ -67,7 +67,11 @@ pub struct Capturer {
 
 impl Capturer {
     pub fn new() -> Result<Self> {
-        Ok(Self { wl: wayland::Wayland::connect()?, bus: zbus::blocking::Connection::session().ok() })
+        let bus = zbus::blocking::Connection::session().ok();
+        if let Some(b) = &bus {
+            portal::register(b);
+        }
+        Ok(Self { wl: wayland::Wayland::connect()?, bus })
     }
 
     pub fn outputs(&self) -> Vec<Output> {

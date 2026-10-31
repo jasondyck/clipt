@@ -20,8 +20,8 @@ Hyprland, niri, COSMIC) and falls back to a fullscreen window on GNOME.
 Multiple monitors and fractional scaling are handled: the overlay shows each
 output at native resolution, and exports are at native resolution.
 
-Tested so far on KDE Plasma 6.8. The wlroots and GNOME paths compile and follow
-the protocols but haven't been run on those compositors yet.
+Tested on KDE Plasma 6.8 (by hand), and end-to-end in containers on Sway 1.12
+(single, 1.5× fractional and mixed-DPI dual output) and GNOME Shell 51.
 
 ## Usage
 
@@ -69,3 +69,23 @@ cursor = false
 On KDE the desktop entry carries `X-KDE-DBUS-Restricted-Interfaces` so KWin
 lets glint capture silently. Bind `glint` to Print in System Settings →
 Shortcuts.
+
+**GNOME:** captures go through the screenshot portal, which needs the desktop
+entry (glint registers its app ID from it, and GLib ignores entries whose
+`Exec` doesn't resolve) plus a one-time permission. If you aren't prompted,
+grant it directly:
+
+```
+gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore \
+  --object-path /org/freedesktop/impl/portal/PermissionStore \
+  --method org.freedesktop.impl.portal.PermissionStore.SetPermission \
+  screenshot true screenshot glint "['yes']"
+```
+
+## Tests
+
+```
+cargo test                                   # editor logic + partial-repaint equivalence
+cargo test --release bench_4k -- --ignored --nocapture
+tests/e2e.sh                                 # headless Sway (3 layouts) + GNOME in Docker
+```

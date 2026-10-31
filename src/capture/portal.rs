@@ -12,6 +12,15 @@ use zbus::zvariant::{OwnedValue, Value};
 const DEST: &str = "org.freedesktop.portal.Desktop";
 const PATH: &str = "/org/freedesktop/portal/desktop";
 
+/// Unsandboxed apps have no app ID unless they register one, and GNOME then
+/// re-asks screenshot permission every time; registering as "glint" lets
+/// "Allow" stick. Must precede any other portal call on this connection and
+/// needs xdg-desktop-portal 1.19+, so failure is ignored.
+pub fn register(conn: &zbus::blocking::Connection) {
+    let _ = zbus::blocking::Proxy::new(conn, DEST, PATH, "org.freedesktop.host.portal.Registry")
+        .and_then(|p| p.call::<_, _, ()>("Register", &("glint", HashMap::<&str, Value>::new())));
+}
+
 pub fn available(conn: &zbus::blocking::Connection) -> bool {
     zbus::blocking::Proxy::new(conn, DEST, PATH, "org.freedesktop.portal.Screenshot")
         .and_then(|p| p.get_property::<u32>("version"))
@@ -39,7 +48,10 @@ pub fn capture(conn: &zbus::blocking::Connection, outputs: &[Output]) -> Result<
     match code {
         0 => {}
         1 => bail!("screenshot was cancelled or denied in the portal dialog"),
-        _ => bail!("portal screenshot failed (response {code})"),
+        _ => bail!(
+            "the portal refused the screenshot (response {code}); GNOME asks permission for \
+             non-interactive screenshots — see README (Install → GNOME)"
+        ),
     }
     let uri: String = results.get("uri").context("portal returned no uri")?.try_clone()?.try_into()?;
     let path = uri.strip_prefix("file://").context("non-file uri from portal")?;
