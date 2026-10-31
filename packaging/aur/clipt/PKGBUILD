@@ -6,7 +6,9 @@ pkgdesc="Fast, lightweight screenshot tool for Wayland and X11 with region selec
 arch=('x86_64' 'aarch64')
 url="https://github.com/jasondyck/clipt"
 license=('MIT OR Apache-2.0')
-depends=('glibc' 'gcc-libs' 'libxkbcommon' 'fontconfig')
+# fontconfig: fc-match is run (not linked) to find the UI font
+depends=('glibc' 'libgcc' 'libxkbcommon' 'fontconfig')
+options=('!debug')  # release builds are stripped
 makedepends=('cargo')
 optdepends=('xdg-desktop-portal: capture on GNOME'
             'noto-fonts: default UI font')

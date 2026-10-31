@@ -7,7 +7,9 @@ pkgdesc="Fast, lightweight screenshot tool for Wayland and X11 (prebuilt binary)
 arch=('x86_64' 'aarch64')
 url="https://github.com/jasondyck/clipt"
 license=('MIT OR Apache-2.0')
-depends=('glibc' 'gcc-libs' 'libxkbcommon' 'fontconfig')
+# fontconfig: fc-match is run (not linked) to find the UI font
+depends=('glibc' 'libgcc' 'libxkbcommon' 'fontconfig')
+options=('!debug')  # release builds are stripped
 provides=("$_pkgname")
 conflicts=("$_pkgname")
 source_x86_64=("$url/releases/download/v$pkgver/$_pkgname-v$pkgver-x86_64-linux.tar.gz")
