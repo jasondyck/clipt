@@ -61,11 +61,31 @@ fn capture_screen(proxy: &zbus::blocking::Proxy, name: &str, cursor: bool) -> Re
     if std::env::var_os("GLINT_DEBUG").is_some() {
         eprintln!("kwin: {w}x{h} stride {stride} format {format} reply {reply:?}");
     }
-    decode_qimage(w, h, stride, format, &data)
+    decode_qimage(w, h, stride, format, data)
 }
 
 /// Decode the QImage::Format values KWin is known to emit.
-fn decode_qimage(w: u32, h: u32, stride: usize, format: u32, d: &[u8]) -> Result<Image> {
+fn decode_qimage(w: u32, h: u32, stride: usize, format: u32, mut data: Vec<u8>) -> Result<Image> {
+    // Common case (what KWin sends for SDR and tonemapped HDR alike): tightly
+    // packed 8-bit RGBA, converted in place without a second 33 MB buffer.
+    let packed = stride == w as usize * 4 && data.len() >= stride * h as usize;
+    if packed && matches!(format, 4 | 5 | 6 | 16 | 17 | 18) {
+        data.truncate(stride * h as usize);
+        for p in data.chunks_exact_mut(4) {
+            if format <= 6 {
+                p.swap(0, 2); // BGRA → RGBA
+            }
+            let px = [p[0], p[1], p[2], p[3]];
+            let px = match format {
+                4 | 16 => [px[0], px[1], px[2], 255],
+                6 | 18 => unpremul(px, true),
+                _ => px,
+            };
+            p.copy_from_slice(&px);
+        }
+        return Ok(Image { width: w, height: h, data });
+    }
+    let d = &data[..];
     match format {
         // RGB32 / ARGB32 / ARGB32_Premultiplied: 0xAARRGGBB native-endian = BGRA bytes
         4 => Image::from_rows(w, h, stride, 4, d, |p| [p[2], p[1], p[0], 255]),

@@ -61,11 +61,14 @@ pub struct View {
     pub scale: f32,
     /// Target stores BGRA instead of RGBA.
     pub swap_rb: bool,
+    /// Pixel offset of the target within the full output (partial repaints).
+    /// Applied after scaling so partial and full frames round identically.
+    pub off: (f32, f32),
 }
 
 impl View {
     pub fn px(&self, p: Pt) -> Pt {
-        ((p.0 - self.ox) * self.scale, (p.1 - self.oy) * self.scale)
+        ((p.0 - self.ox) * self.scale - self.off.0, (p.1 - self.oy) * self.scale - self.off.1)
     }
     pub fn color(&self, c: Color) -> Color {
         if self.swap_rb { Color::from_rgba(c.blue(), c.green(), c.red(), c.alpha()).unwrap() } else { c }
@@ -105,7 +108,9 @@ fn polyline(view: &View, pts: &[Pt]) -> Option<tiny_skia::Path> {
 }
 
 impl Shape {
-    pub fn draw(&self, pm: &mut PixmapMut, view: &View, src: Option<PixmapRef>, fonts: &Fonts) {
+    /// `src` is the clean background for pixelation, with the offset that maps
+    /// target pixels to source pixels.
+    pub fn draw(&self, pm: &mut PixmapMut, view: &View, src: Option<(PixmapRef, (i32, i32))>, fonts: &Fonts) {
         let s = view.scale;
         let id = Transform::identity();
         match self {
@@ -166,9 +171,35 @@ impl Shape {
                 text::draw(pm, fonts.bold(), fs, p.0 - w / 2.0, p.1 - h / 2.0, &label, fg, view.swap_rb);
             }
             Shape::Pixelate { a, b, block } => {
-                if let (Some(src), Some(r)) = (src, norm_rect(view.px(*a), view.px(*b))) {
-                    pixelate(pm, src, r, (block * s).max(2.0));
+                if let (Some((src, off)), Some(r)) = (src, norm_rect(view.px(*a), view.px(*b))) {
+                    pixelate(pm, src, off, r, (block * s).max(2.0));
                 }
+            }
+        }
+    }
+}
+
+impl Shape {
+    /// Generous logical bounding box (text is measured by the caller).
+    pub fn bounds(&self, fonts: &Fonts) -> Option<Rect> {
+        let pad = |r: Option<Rect>, m: f32| r.and_then(|r| Rect::from_ltrb(r.left() - m, r.top() - m, r.right() + m, r.bottom() + m));
+        let of_pts = |pts: &[Pt]| {
+            let (mut l, mut t, mut r, mut b) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+            for p in pts {
+                (l, t, r, b) = (l.min(p.0), t.min(p.1), r.max(p.0), b.max(p.1));
+            }
+            Rect::from_ltrb(l, t, r.max(l + 1.0), b.max(t + 1.0))
+        };
+        match self {
+            Shape::Rect { a, b, width, .. } | Shape::Ellipse { a, b, width, .. } | Shape::Line { a, b, width, .. } => pad(of_pts(&[*a, *b]), width + 2.0),
+            Shape::Arrow { a, b, width, .. } => pad(of_pts(&[*a, *b]), width * 3.0 + 12.0),
+            Shape::Pixelate { a, b, block } => pad(of_pts(&[*a, *b]), block + 2.0),
+            Shape::Pen { pts, width, .. } | Shape::Marker { pts, width, .. } => pad(of_pts(pts), width + 2.0),
+            Shape::Counter { pos, radius, .. } => pad(of_pts(&[*pos]), radius + 3.0),
+            Shape::Text { pos, text: t, size, .. } => {
+                let w = t.split('\n').map(|l| text::measure(fonts.bold(), *size, l)).fold(0.0, f32::max);
+                let h = text::line_height(fonts.bold(), *size) * (t.matches('\n').count() + 1) as f32;
+                pad(Rect::from_xywh(pos.0, pos.1, w.max(1.0) + 4.0, h), 4.0)
             }
         }
     }
@@ -211,14 +242,18 @@ fn draw_arrow(pm: &mut PixmapMut, view: &View, a: Pt, b: Pt, color: Color, width
     }
 }
 
-/// Replace `r` (pixel space, shared by `pm` and `src`) with block averages of `src`.
-fn pixelate(pm: &mut PixmapMut, src: PixmapRef, r: Rect, block: f32) {
-    let (w, h) = (pm.width().min(src.width()) as i32, pm.height().min(src.height()) as i32);
-    let x0 = (r.left().floor() as i32).clamp(0, w);
-    let y0 = (r.top().floor() as i32).clamp(0, h);
-    let x1 = (r.right().ceil() as i32).clamp(0, w);
-    let y1 = (r.bottom().ceil() as i32).clamp(0, h);
+/// Replace `r` (target pixel space) with block averages of `src`; target pixel
+/// (x, y) corresponds to source pixel (x + off.0, y + off.1). Blocks are aligned
+/// in source space so partial repaints line up with each other.
+fn pixelate(pm: &mut PixmapMut, src: PixmapRef, off: (i32, i32), r: Rect, block: f32) {
     let bs = block.round().max(2.0) as i32;
+    let (sw, sh) = (src.width() as i32, src.height() as i32);
+    // Work in source coordinates, clipped to both images.
+    let x0 = (r.left().floor() as i32 + off.0).clamp(0, sw);
+    let y0 = (r.top().floor() as i32 + off.1).clamp(0, sh);
+    let x1 = (r.right().ceil() as i32 + off.0).clamp(0, sw);
+    let y1 = (r.bottom().ceil() as i32 + off.1).clamp(0, sh);
+    let (tw, th) = (pm.width() as i32, pm.height() as i32);
     let sd = src.data();
     let stride = src.width() as usize * 4;
     let dstride = pm.width() as usize * 4;
@@ -229,6 +264,10 @@ fn pixelate(pm: &mut PixmapMut, src: PixmapRef, r: Rect, block: f32) {
         let mut bx = x0;
         while bx < x1 {
             let ex = (bx + bs).min(x1);
+            if ex - off.0 <= 0 || bx - off.0 >= tw || ey - off.1 <= 0 || by - off.1 >= th {
+                bx = ex; // block not visible in this (partial) target
+                continue;
+            }
             let mut acc = [0u32; 4];
             let mut n = 0u32;
             for y in by..ey {
@@ -243,9 +282,9 @@ fn pixelate(pm: &mut PixmapMut, src: PixmapRef, r: Rect, block: f32) {
             }
             if n > 0 {
                 let px = [(acc[0] / n) as u8, (acc[1] / n) as u8, (acc[2] / n) as u8, (acc[3] / n) as u8];
-                for y in by..ey {
+                for y in (by - off.1).max(0)..(ey - off.1).min(th) {
                     let row = y as usize * dstride;
-                    for x in bx..ex {
+                    for x in (bx - off.0).max(0)..(ex - off.0).min(tw) {
                         let i = row + x as usize * 4;
                         dd[i..i + 4].copy_from_slice(&px);
                     }

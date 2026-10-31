@@ -55,13 +55,84 @@ impl Role {
     }
 }
 
+/// Screen-pixel rectangle.
+#[derive(Clone, Copy, Debug)]
+struct IRect {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+}
+
+impl IRect {
+    fn right(&self) -> i32 {
+        self.x + self.w
+    }
+    fn bottom(&self) -> i32 {
+        self.y + self.h
+    }
+    fn union(&self, o: &IRect) -> IRect {
+        let (x, y) = (self.x.min(o.x), self.y.min(o.y));
+        IRect { x, y, w: self.right().max(o.right()) - x, h: self.bottom().max(o.bottom()) - y }
+    }
+    fn touches(&self, o: &IRect) -> bool {
+        self.x <= o.right() && o.x <= self.right() && self.y <= o.bottom() && o.y <= self.bottom()
+    }
+}
+
+/// Merge overlapping rectangles until none touch.
+fn merge(mut v: Vec<IRect>) -> Vec<IRect> {
+    let mut i = 0;
+    while i < v.len() {
+        let mut j = i + 1;
+        let mut merged = false;
+        while j < v.len() {
+            if v[i].touches(&v[j]) {
+                let r = v.swap_remove(j);
+                v[i] = v[i].union(&r);
+                merged = true;
+            } else {
+                j += 1;
+            }
+        }
+        if !merged {
+            i += 1;
+        }
+    }
+    v
+}
+
+/// Damage still owed to a buffer or the compositor. `None` = everything.
+type Pending = Option<Vec<IRect>>;
+
+fn add(p: &mut Pending, rects: &Pending) {
+    match (p.as_mut(), rects) {
+        (Some(v), Some(r)) => v.extend_from_slice(r),
+        _ => *p = None,
+    }
+}
+
+struct Buf {
+    buffer: smithay_client_toolkit::shm::slot::Buffer,
+    /// What changed since this buffer was last painted.
+    stale: Pending,
+}
+
 struct Surf {
     screen: usize,
     role: Role,
     viewport: Option<WpViewport>,
     configured: bool,
-    dirty: bool,
     frame_pending: bool,
+    bufs: Vec<Buf>,
+    /// Damage to report on the next commit.
+    damage: Pending,
+}
+
+impl Surf {
+    fn dirty(&self) -> bool {
+        self.damage.as_ref().is_none_or(|d| !d.is_empty())
+    }
 }
 
 pub struct Overlay {
@@ -108,7 +179,8 @@ impl Session {
             registry: RegistryState::new(&globals),
             seats: SeatState::new(&globals, &qh),
             outputs: OutputState::new(&globals, &qh),
-            pool: SlotPool::new(1 << 20, &shm)?,
+            // Room for two full frames per output, so the pool never regrows.
+            pool: SlotPool::new(editor.screens.iter().map(|s| s.bg.data().len() * 2).sum::<usize>().max(4096), &shm)?,
             compositor,
             shm,
             format: wl_shm::Format::Argb8888,
@@ -138,7 +210,7 @@ impl Session {
 
         let wl_outputs: Vec<_> = ov.outputs.outputs().collect();
         for (i, scr) in ov.editor.screens.iter().enumerate() {
-            let out = &scr.shot.output;
+            let out = &scr.output;
             let wl_out = wl_outputs
                 .iter()
                 .find(|o| ov.outputs.info(o).and_then(|i| i.name).as_deref() == Some(out.name.as_str()))
@@ -161,7 +233,7 @@ impl Session {
                 w.commit();
                 Role::Window(w)
             };
-            ov.surfs.push(Surf { screen: i, role, viewport, configured: false, dirty: true, frame_pending: false });
+            ov.surfs.push(Surf { screen: i, role, viewport, configured: false, frame_pending: false, bufs: Vec::new(), damage: None });
         }
         Ok(Self { overlay: ov, queue })
     }
@@ -194,10 +266,24 @@ impl Session {
     }
 
     pub fn hide(&mut self) -> Result<()> {
-        self.overlay.surfs.clear();
+        for s in self.overlay.surfs.drain(..) {
+            drop(s.bufs);
+        }
         self.overlay.pointer = None;
         self.queue.roundtrip(&mut self.overlay)?;
         Ok(())
+    }
+
+    /// Free the captures, editor and buffer pool. Called before we linger in
+    /// the background serving the clipboard, which only needs the PNG.
+    pub fn release_memory(&mut self) {
+        let ov = &mut self.overlay;
+        ov.editor.screens = Vec::new();
+        ov.editor.shapes = Vec::new();
+        if let Ok(pool) = SlotPool::new(4096, &ov.shm) {
+            ov.pool = pool;
+        }
+        unsafe { libc::malloc_trim(0) };
     }
 
     /// Keep serving the clipboard until another client takes the selection.
@@ -210,22 +296,47 @@ impl Session {
 }
 
 impl Overlay {
+    /// Turn the editor's logical damage into per-surface pixel damage.
     fn mark_all(&mut self) {
+        let damage = self.editor.take_damage();
         for s in &mut self.surfs {
-            s.dirty = true;
+            let scr = &self.editor.screens[s.screen];
+            let rects: Pending = match &damage {
+                crate::editor::Damage::Full => None,
+                crate::editor::Damage::Rects(rs) => {
+                    let (bw, bh) = (scr.bg.width() as i32, scr.bg.height() as i32);
+                    let o = &scr.output;
+                    let k = scr.scale;
+                    Some(
+                        rs.iter()
+                            .filter_map(|r| {
+                                let x0 = (((r.left() - o.x as f32) * k).floor() as i32).clamp(0, bw);
+                                let y0 = (((r.top() - o.y as f32) * k).floor() as i32).clamp(0, bh);
+                                let x1 = (((r.right() - o.x as f32) * k).ceil() as i32).clamp(0, bw);
+                                let y1 = (((r.bottom() - o.y as f32) * k).ceil() as i32).clamp(0, bh);
+                                (x1 > x0 && y1 > y0).then_some(IRect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+                            })
+                            .collect(),
+                    )
+                }
+            };
+            add(&mut s.damage, &rects);
+            for b in &mut s.bufs {
+                add(&mut b.stale, &rects);
+            }
         }
     }
 
     fn global(&self, surface: &wl_surface::WlSurface, pos: (f64, f64)) -> Option<(f32, f32)> {
         let s = self.surfs.iter().find(|s| s.role.surface() == surface)?;
-        let o = &self.editor.screens[s.screen].shot.output;
+        let o = &self.editor.screens[s.screen].output;
         Some((o.x as f32 + pos.0 as f32, o.y as f32 + pos.1 as f32))
     }
 
     fn draw_dirty(&mut self, qh: &QueueHandle<Self>) {
         for i in 0..self.surfs.len() {
             let s = &self.surfs[i];
-            if s.configured && s.dirty && !s.frame_pending {
+            if s.configured && s.dirty() && !s.frame_pending {
                 self.draw(qh, i);
             }
         }
@@ -235,11 +346,51 @@ impl Overlay {
     fn draw(&mut self, qh: &QueueHandle<Self>, i: usize) {
         let scr_idx = self.surfs[i].screen;
         let (w, h) = (self.editor.screens[scr_idx].bg.width(), self.editor.screens[scr_idx].bg.height());
-        let out = self.editor.screens[scr_idx].shot.output.clone();
-        let Ok((buffer, canvas)) = self.pool.create_buffer(w as i32, h as i32, w as i32 * 4, self.format) else { return };
-        if let Some(mut pm) = tiny_skia::PixmapMut::from_bytes(canvas, w, h) {
-            crate::editor::ui::render(&self.editor, scr_idx, &mut pm);
+        let out = self.editor.screens[scr_idx].output.clone();
+        let t = std::time::Instant::now();
+
+        // Reuse a buffer the compositor has released; allocate up to three.
+        let surf = &mut self.surfs[i];
+        let idx = match surf.bufs.iter().position(|b| b.buffer.canvas(&mut self.pool).is_some()) {
+            Some(idx) => idx,
+            None if surf.bufs.len() < 3 => {
+                let Ok((buffer, _)) = self.pool.create_buffer(w as i32, h as i32, w as i32 * 4, self.format) else { return };
+                surf.bufs.push(Buf { buffer, stale: None });
+                surf.bufs.len() - 1
+            }
+            None => return, // all busy; a release event will wake us
+        };
+        let stale = std::mem::replace(&mut surf.bufs[idx].stale, Some(Vec::new()));
+        let damage = std::mem::replace(&mut surf.damage, Some(Vec::new()));
+        let canvas = surf.bufs[idx].buffer.canvas(&mut self.pool).unwrap();
+
+        // Repaint only what this buffer is missing; fall back to a full frame
+        // when the damage covers most of the screen anyway.
+        let full_area = (w * h) as i64;
+        let rects = stale.map(merge).filter(|v| v.iter().map(|r| (r.w * r.h) as i64).sum::<i64>() < full_area / 2);
+        let mut painted = 0i64;
+        match &rects {
+            None => {
+                if let Some(mut pm) = tiny_skia::PixmapMut::from_bytes(canvas, w, h) {
+                    crate::editor::ui::render(&self.editor, scr_idx, &mut pm, (0, 0));
+                }
+                painted = full_area;
+            }
+            Some(rs) => {
+                for r in rs {
+                    let Some(mut tmp) = tiny_skia::Pixmap::new(r.w as u32, r.h as u32) else { continue };
+                    crate::editor::ui::render(&self.editor, scr_idx, &mut tmp.as_mut(), (r.x, r.y));
+                    let row = r.w as usize * 4;
+                    for (y, src) in tmp.data().chunks_exact(row).enumerate() {
+                        let off = ((r.y as usize + y) * w as usize + r.x as usize) * 4;
+                        canvas[off..off + row].copy_from_slice(src);
+                    }
+                    painted += (r.w * r.h) as i64;
+                }
+            }
         }
+        let render_ms = t.elapsed().as_secs_f64() * 1e3;
+
         let s = &mut self.surfs[i];
         let surface = s.role.surface();
         if let Some(vp) = &s.viewport {
@@ -248,14 +399,20 @@ impl Overlay {
             let k = (w / out.width.max(1)).max(1) as i32;
             surface.set_buffer_scale(k);
         }
-        surface.damage_buffer(0, 0, w as i32, h as i32);
+        match &damage {
+            Some(ds) if rects.is_some() => {
+                for d in merge(ds.clone()) {
+                    surface.damage_buffer(d.x, d.y, d.w, d.h);
+                }
+            }
+            _ => surface.damage_buffer(0, 0, w as i32, h as i32),
+        }
         surface.frame(qh, FrameCallbackData(surface.clone()));
-        let _ = buffer.attach_to(surface);
+        let _ = s.bufs[idx].buffer.attach_to(surface);
         surface.commit();
-        s.dirty = false;
         s.frame_pending = true;
         if std::env::var_os("GLINT_DEBUG").is_some() {
-            eprintln!("glint: drew {} ({w}x{h}, {:?})", out.name, self.format);
+            eprintln!("glint: {} buf{idx} painted {:.1}% in {render_ms:.2} ms", out.name, painted as f64 * 100.0 / full_area as f64);
         }
     }
 
@@ -285,7 +442,7 @@ impl Overlay {
     fn configure_surface(&mut self, surface: &wl_surface::WlSurface, qh: &QueueHandle<Self>) {
         if let Some(i) = self.surfs.iter().position(|s| s.role.surface() == surface) {
             self.surfs[i].configured = true;
-            self.surfs[i].dirty = true;
+            self.surfs[i].damage = None;
             if !self.surfs[i].frame_pending {
                 self.draw(qh, i);
             }
@@ -321,7 +478,7 @@ impl CompositorHandler for Overlay {
     fn frame(&mut self, _: &Connection, qh: &QueueHandle<Self>, surface: &wl_surface::WlSurface, _: u32) {
         if let Some(i) = self.surfs.iter().position(|s| s.role.surface() == surface) {
             self.surfs[i].frame_pending = false;
-            if self.surfs[i].dirty {
+            if self.surfs[i].dirty() {
                 self.draw(qh, i);
             }
         }

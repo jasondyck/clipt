@@ -5,7 +5,7 @@
 pub mod shapes;
 pub mod ui;
 
-use crate::capture::Shot;
+use crate::capture::{Output, Shot};
 use crate::image::Image;
 use crate::text::Fonts;
 use shapes::{Pt, RectExt, Shape, Tool, View, norm_rect};
@@ -70,22 +70,27 @@ pub struct Mods {
 }
 
 pub struct Screen {
-    pub shot: Shot,
-    /// Clean capture in surface byte order.
+    pub output: Output,
+    /// The capture in surface byte order. The only full-size copy we keep:
+    /// the dimmed look is applied while copying it into the frame.
     pub bg: Pixmap,
-    /// Darkened copy shown outside the selection.
-    pub dim: Pixmap,
     pub scale: f32,
 }
 
 impl Screen {
     pub fn bounds(&self) -> Rect {
-        let o = &self.shot.output;
+        let o = &self.output;
         Rect::from_xywh(o.x as f32, o.y as f32, o.width as f32, o.height as f32).unwrap()
     }
     pub fn view(&self, swap_rb: bool) -> View {
-        View { ox: self.shot.output.x as f32, oy: self.shot.output.y as f32, scale: self.scale, swap_rb }
+        View { ox: self.output.x as f32, oy: self.output.y as f32, scale: self.scale, swap_rb, off: (0.0, 0.0) }
     }
+}
+
+/// What changed since the last frame, in logical coordinates.
+pub enum Damage {
+    Full,
+    Rects(Vec<Rect>),
 }
 
 enum Drag {
@@ -121,6 +126,12 @@ pub struct Editor {
     last_click: Option<(std::time::Instant, Pt)>,
     /// Show the size/width hint pill until the next pointer move.
     pub width_hint: bool,
+    /// Bumped whenever committed shapes change; forces a full redraw.
+    revision: u64,
+    drawn_revision: Option<u64>,
+    drawn_sel: Option<Rect>,
+    drawn_layers: Vec<ui::Layer>,
+    frame: u64,
 }
 
 const CLICK_SLOP: f32 = 4.0;
@@ -131,16 +142,8 @@ impl Editor {
         let screens = shots
             .into_iter()
             .map(|shot| {
-                let bg = to_pixmap(&shot.image, swap_rb);
-                let mut dim = bg.clone();
-                for p in dim.data_mut().chunks_exact_mut(4) {
-                    // 45% black over opaque pixels
-                    p[0] = (p[0] as u16 * 140 / 255) as u8;
-                    p[1] = (p[1] as u16 * 140 / 255) as u8;
-                    p[2] = (p[2] as u16 * 140 / 255) as u8;
-                }
                 let scale = shot.scale() as f32;
-                Screen { shot, bg, dim, scale }
+                Screen { output: shot.output, bg: to_pixmap(shot.image, swap_rb), scale }
             })
             .collect();
         Self {
@@ -160,7 +163,43 @@ impl Editor {
             outcome: None,
             last_click: None,
             width_hint: false,
+            revision: 0,
+            drawn_revision: None,
+            drawn_sel: None,
+            drawn_layers: Vec::new(),
+            frame: 0,
         }
+    }
+
+    /// Regions to repaint since the previous call: everything the last frame's
+    /// chrome covered plus everything this frame's will.
+    pub fn take_damage(&mut self) -> Damage {
+        self.frame += 1;
+        let layers = ui::dynamic_layers(self, self.frame);
+        let full = self.drawn_revision != Some(self.revision) || self.drawn_layers.len() != layers.len();
+        let mut out = Vec::new();
+        // A layer whose key changed needs both where it was and where it is.
+        for (old, new) in self.drawn_layers.iter().zip(&layers) {
+            if old.key != new.key {
+                out.extend_from_slice(&old.rects);
+                out.extend_from_slice(&new.rects);
+            }
+        }
+        self.drawn_layers = layers;
+        if self.drawn_sel != self.sel {
+            // Only the area that switched between clean and dimmed changed:
+            // the symmetric difference of the old and new selections.
+            match (self.drawn_sel, self.sel) {
+                (Some(a), Some(b)) => {
+                    out.extend(rect_sub(a, b));
+                    out.extend(rect_sub(b, a));
+                }
+                (a, b) => out.extend(a.or(b)),
+            }
+            self.drawn_sel = self.sel;
+        }
+        self.drawn_revision = Some(self.revision);
+        if full { Damage::Full } else { Damage::Rects(out) }
     }
 
     pub fn set_swap_rb(&mut self, swap: bool) {
@@ -168,11 +207,10 @@ impl Editor {
             return;
         }
         self.swap_rb = swap;
+        self.revision += 1;
         for s in &mut self.screens {
-            for pm in [&mut s.bg, &mut s.dim] {
-                for p in pm.data_mut().chunks_exact_mut(4) {
-                    p.swap(0, 2);
-                }
+            for p in s.bg.data_mut().chunks_exact_mut(4) {
+                p.swap(0, 2);
             }
         }
     }
@@ -540,6 +578,7 @@ impl Editor {
     fn push_shape(&mut self, s: Shape) {
         self.shapes.push(s);
         self.redo.clear();
+        self.revision += 1;
     }
 
     fn commit_text(&mut self) {
@@ -558,12 +597,14 @@ impl Editor {
     fn undo(&mut self) {
         if let Some(s) = self.shapes.pop() {
             self.redo.push(s);
+            self.revision += 1;
         }
     }
 
     fn redo(&mut self) {
         if let Some(s) = self.redo.pop() {
             self.shapes.push(s);
+            self.revision += 1;
         }
     }
 
@@ -594,9 +635,9 @@ impl Editor {
             pm.draw_pixmap(0, 0, s.bg.as_ref(), &paint, Transform::from_row(k, 0.0, 0.0, k, tx.round(), ty.round()), None);
         }
         let clean = pm.clone();
-        let view = View { ox: rect.left(), oy: rect.top(), scale, swap_rb: self.swap_rb };
+        let view = View { ox: rect.left(), oy: rect.top(), scale, swap_rb: self.swap_rb, off: (0.0, 0.0) };
         for shape in &self.shapes {
-            shape.draw(&mut pm.as_mut(), &view, Some(clean.as_ref()), &self.fonts);
+            shape.draw(&mut pm.as_mut(), &view, Some((clean.as_ref(), (0, 0))), &self.fonts);
         }
         let mut data = pm.take();
         if self.swap_rb {
@@ -609,6 +650,20 @@ impl Editor {
     }
 }
 
+/// `a` minus `b` as up to four rectangles.
+fn rect_sub(a: Rect, b: Rect) -> Vec<Rect> {
+    let Some(i) = a.intersect(&b) else { return vec![a] };
+    [
+        Rect::from_ltrb(a.left(), a.top(), a.right(), i.top()),       // above
+        Rect::from_ltrb(a.left(), i.bottom(), a.right(), a.bottom()), // below
+        Rect::from_ltrb(a.left(), i.top(), i.left(), i.bottom()),     // left
+        Rect::from_ltrb(i.right(), i.top(), a.right(), i.bottom()),   // right
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
 fn snap45(a: Pt, b: Pt) -> Pt {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     let len = dx.hypot(dy);
@@ -616,8 +671,8 @@ fn snap45(a: Pt, b: Pt) -> Pt {
     (a.0 + len * ang.cos(), a.1 + len * ang.sin())
 }
 
-fn to_pixmap(img: &Image, swap_rb: bool) -> Pixmap {
-    let mut data = img.data.clone();
+fn to_pixmap(img: Image, swap_rb: bool) -> Pixmap {
+    let mut data = img.data;
     for p in data.chunks_exact_mut(4) {
         if swap_rb {
             p.swap(0, 2);
@@ -729,5 +784,150 @@ mod tests {
         assert_eq!(ed.shapes.len(), 2);
         ed.key(Key::Enter, Mods::default());
         assert_eq!(ed.outcome, Some(Outcome::Copy));
+    }
+
+    /// Replays a session the way the overlay does (one persistent buffer,
+    /// repainting only damaged rects) and checks the result matches a full
+    /// redraw: any region the damage tracking misses shows up as a diff.
+    #[test]
+    fn partial_repaints_match_full_render() {
+        let mut img = Image::new(640, 400);
+        for (i, p) in img.data.chunks_exact_mut(4).enumerate() {
+            let (x, y) = (i % 640, i / 640);
+            p.copy_from_slice(&[(x * 7 % 256) as u8, (y * 5 % 256) as u8, ((x ^ y) % 256) as u8, 255]);
+        }
+        let out = Output { index: 0, name: "A".into(), description: String::new(), x: 0, y: 0, width: 640, height: 400 };
+        let mut ed = editor(vec![Shot { output: out, image: img }], true);
+        let mut buf = Pixmap::new(640, 400).unwrap();
+        let m = Mods::default();
+
+        let mut n = 0;
+        let mut step = |ed: &mut Editor, f: &dyn Fn(&mut Editor)| {
+            n += 1;
+            f(ed);
+            match ed.take_damage() {
+                Damage::Full => ui::render(ed, 0, &mut buf.as_mut(), (0, 0)),
+                Damage::Rects(rs) => {
+                    for r in rs {
+                        let x0 = (r.left().floor() as i32).clamp(0, 640);
+                        let y0 = (r.top().floor() as i32).clamp(0, 400);
+                        let x1 = (r.right().ceil() as i32).clamp(0, 640);
+                        let y1 = (r.bottom().ceil() as i32).clamp(0, 400);
+                        if x1 <= x0 || y1 <= y0 {
+                            continue;
+                        }
+                        let mut tmp = Pixmap::new((x1 - x0) as u32, (y1 - y0) as u32).unwrap();
+                        ui::render(ed, 0, &mut tmp.as_mut(), (x0, y0));
+                        let row = (x1 - x0) as usize * 4;
+                        for (y, src) in tmp.data().chunks_exact(row).enumerate() {
+                            let off = ((y0 as usize + y) * 640 + x0 as usize) * 4;
+                            buf.data_mut()[off..off + row].copy_from_slice(src);
+                        }
+                    }
+                }
+            }
+            let mut full = Pixmap::new(640, 400).unwrap();
+            ui::render(ed, 0, &mut full.as_mut(), (0, 0));
+            // tiny-skia's edge antialiasing varies a little with the target size,
+            // so allow small AA wobble; a missed region shows stale dim/clean
+            // content or missing chrome, which is far larger.
+            let diffs: Vec<i16> = buf.data().iter().zip(full.data()).map(|(a, b)| (*a as i16 - *b as i16).abs()).filter(|d| *d > 2).collect();
+            let max = diffs.iter().copied().max().unwrap_or(0);
+            assert!(max <= 48 && diffs.len() < 400, "step {n}: {} differing values, max {max}: damage tracking missed something", diffs.len());
+        };
+
+        step(&mut ed, &|e| { e.pointer_motion((100.0, 100.0), m); });
+        for i in 0..6 {
+            step(&mut ed, &|e| { e.pointer_motion((120.0 + i as f32 * 30.0, 90.0 + i as f32 * 20.0), m); });
+        }
+        step(&mut ed, &|e| { e.button_press((80.0, 60.0), true, m); });
+        for i in 1..=8 {
+            step(&mut ed, &|e| { e.pointer_motion((80.0 + i as f32 * 50.0, 60.0 + i as f32 * 30.0), m); });
+        }
+        step(&mut ed, &|e| { e.button_release((480.0, 300.0), true); });
+        step(&mut ed, &|e| { e.pointer_motion((300.0, 200.0), m); });
+        step(&mut ed, &|e| { e.button_press((300.0, 200.0), true, m); });
+        step(&mut ed, &|e| { e.pointer_motion((250.0, 150.0), m); }); // move selection
+        step(&mut ed, &|e| { e.button_release((250.0, 150.0), true); });
+        // big selection jumps: select-all, clear, select-all again
+        let ctrl = Mods { ctrl: true, ..Default::default() };
+        step(&mut ed, &|e| { e.key(Key::Char('a'), ctrl); });
+        step(&mut ed, &|e| { e.button_press((300.0, 200.0), false, m); });
+        step(&mut ed, &|e| { e.pointer_motion((310.0, 210.0), m); });
+        step(&mut ed, &|e| { e.button_press((20.0, 20.0), true, m); });
+        step(&mut ed, &|e| { e.pointer_motion((200.0, 140.0), m); });
+        step(&mut ed, &|e| { e.button_release((200.0, 140.0), true); });
+        step(&mut ed, &|e| { e.key(Key::Char('a'), ctrl); });
+        step(&mut ed, &|e| { e.button_press((300.0, 200.0), false, m); });
+        step(&mut ed, &|e| { e.button_press((40.0, 40.0), true, m); });
+        step(&mut ed, &|e| { e.pointer_motion((500.0, 330.0), m); });
+        step(&mut ed, &|e| { e.button_release((500.0, 330.0), true); });
+        step(&mut ed, &|e| { e.tool = Tool::Pen; });
+        step(&mut ed, &|e| { e.button_press((100.0, 100.0), true, m); });
+        for i in 1..10 {
+            step(&mut ed, &|e| { e.pointer_motion((100.0 + i as f32 * 20.0, 100.0 + (i % 3) as f32 * 25.0), m); });
+        }
+        step(&mut ed, &|e| { e.button_release((280.0, 125.0), true); });
+        step(&mut ed, &|e| { e.tool = Tool::Pixelate; });
+        step(&mut ed, &|e| { e.button_press((150.0, 150.0), true, m); });
+        step(&mut ed, &|e| { e.pointer_motion((260.0, 230.0), m); });
+        step(&mut ed, &|e| { e.button_release((260.0, 230.0), true); });
+        step(&mut ed, &|e| { e.tool = Tool::Text; });
+        step(&mut ed, &|e| { e.button_press((120.0, 240.0), true, m); });
+        for c in "abc".chars() {
+            step(&mut ed, &|e| { e.key(Key::Char(c), m); });
+        }
+        step(&mut ed, &|e| { e.key(Key::Backspace, m); });
+        step(&mut ed, &|e| { e.scroll(-1.0); });
+        // hover the toolbar to get a tooltip, then leave
+        let (_, btns) = ui::toolbar_layout(&ed).unwrap();
+        let (r, _) = btns[3];
+        step(&mut ed, &|e| { e.pointer_motion((r.left() + 5.0, r.top() + 5.0), m); });
+        step(&mut ed, &|e| { e.pointer_motion((50.0, 50.0), m); });
+
+    }
+
+    /// `cargo test --release bench_4k -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_4k() {
+        let img = Image::new(3840, 2160);
+        let out = Output { index: 0, name: "A".into(), description: String::new(), x: 0, y: 0, width: 3840, height: 2160 };
+        let t = std::time::Instant::now();
+        let mut ed = editor(vec![Shot { output: out, image: img }], true);
+        eprintln!("editor new: {:?}", t.elapsed());
+        let mut buf = Pixmap::new(3840, 2160).unwrap();
+        let m = Mods::default();
+        let t = std::time::Instant::now();
+        ui::render(&ed, 0, &mut buf.as_mut(), (0, 0));
+        eprintln!("full frame: {:?}", t.elapsed());
+        let _ = ed.take_damage();
+        let run = |name: &str, ed: &mut Editor, f: &dyn Fn(&mut Editor, usize)| {
+            let t = std::time::Instant::now();
+            let mut px = 0;
+            for i in 0..50 {
+                f(ed, i);
+                if let Damage::Rects(rs) = ed.take_damage() {
+                    for r in rs {
+                        let (x0, y0) = (r.left().max(0.0) as i32, r.top().max(0.0) as i32);
+                        let (x1, y1) = (r.right().min(3840.0) as i32, r.bottom().min(2160.0) as i32);
+                        if x1 <= x0 || y1 <= y0 { continue; }
+                        let mut tmp = Pixmap::new((x1 - x0) as u32, (y1 - y0) as u32).unwrap();
+                        ui::render(ed, 0, &mut tmp.as_mut(), (x0, y0));
+                        px += (x1 - x0) * (y1 - y0);
+                    }
+                }
+            }
+            eprintln!("{name}: {:.2} ms/frame, {:.1}% of screen", t.elapsed().as_secs_f64() * 1e3 / 50.0, px as f64 / 50.0 / (3840.0 * 2160.0) * 100.0);
+        };
+        run("hover (crosshair+loupe)", &mut ed, &|e, i| { e.pointer_motion((1000.0 + i as f32 * 7.0, 800.0 + i as f32 * 3.0), m); });
+        ed.button_press((500.0, 400.0), true, m);
+        run("drag selection", &mut ed, &|e, i| { e.pointer_motion((900.0 + i as f32 * 20.0, 700.0 + i as f32 * 12.0), m); });
+        ed.button_release((1900.0, 1300.0), true);
+        ed.tool = Tool::Pen;
+        ed.button_press((800.0, 800.0), true, m);
+        run("pen stroke", &mut ed, &|e, i| { e.pointer_motion((800.0 + i as f32 * 15.0, 800.0 + (i % 5) as f32 * 10.0), m); });
+        ed.button_release((1500.0, 800.0), true);
+        run("hover toolbar area", &mut ed, &|e, i| { e.pointer_motion((1100.0 + i as f32 * 4.0, 1340.0), m); });
     }
 }

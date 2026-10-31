@@ -18,6 +18,19 @@ pub enum Button {
     Close,
 }
 
+impl Button {
+    fn ordinal(self) -> u8 {
+        match self {
+            Button::Tool(_) | Button::Color(_) => 0,
+            Button::Undo => 1,
+            Button::Redo => 2,
+            Button::Save => 3,
+            Button::Copy => 4,
+            Button::Close => 5,
+        }
+    }
+}
+
 const B: f32 = 34.0; // button size
 const GAP: f32 = 2.0;
 const PAD: f32 = 6.0;
@@ -119,33 +132,153 @@ pub fn toolbar_hit(ed: &Editor, p: Pt) -> Option<Button> {
 
 // ---- painting ---------------------------------------------------------------
 
-pub fn render(ed: &Editor, idx: usize, pm: &mut PixmapMut) {
+/// Margin around the selection covering its outline, handles and size label.
+pub const SEL_MARGIN: f32 = 14.0;
+
+pub fn inflate(r: Rect, m: f32) -> Option<Rect> {
+    Rect::from_ltrb(r.left() - m, r.top() - m, r.right() + m, r.bottom() + m)
+}
+
+/// One piece of chrome for damage tracking: a key summarising everything that
+/// affects how it looks, and the logical area it covers.
+pub struct Layer {
+    pub key: u64,
+    pub rects: Vec<Rect>,
+}
+
+fn key(parts: &[f32]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for p in parts {
+        p.to_bits().hash(&mut h);
+    }
+    h.finish()
+}
+
+fn rect_key(r: Option<Rect>) -> [f32; 4] {
+    r.map_or([f32::NAN; 4], |r| [r.left(), r.top(), r.right(), r.bottom()])
+}
+
+/// Everything drawn on top of the background + committed shapes, as layers in
+/// a fixed order. Must cover what `render` paints; the partial-repaint test
+/// checks that.
+pub fn dynamic_layers(ed: &Editor, frame: u64) -> Vec<Layer> {
+    let m = 12.0;
+    let grow = |v: Vec<Option<Rect>>| v.into_iter().flatten().filter_map(|r| inflate(r, m)).collect::<Vec<_>>();
+    let mut layers = Vec::new();
+
+    // selection outline, handles, size label
+    let mut rects = Vec::new();
+    if let Some(sel) = ed.sel {
+        let w = SEL_MARGIN;
+        rects.extend([
+            Rect::from_ltrb(sel.left() - w, sel.top() - w, sel.right() + w, sel.top() + w),
+            Rect::from_ltrb(sel.left() - w, sel.bottom() - w, sel.right() + w, sel.bottom() + w),
+            Rect::from_ltrb(sel.left() - w, sel.top() - w, sel.left() + w, sel.bottom() + w),
+            Rect::from_ltrb(sel.right() - w, sel.top() - w, sel.right() + w, sel.bottom() + w),
+        ]);
+        rects.push(size_label_rect(ed, sel));
+    }
+    let handles = ed.tool == super::Tool::Select && ed.text.is_none();
+    let sk = rect_key(ed.sel);
+    layers.push(Layer { key: key(&[sk[0], sk[1], sk[2], sk[3], handles as u8 as f32]), rects: grow(rects) });
+
+    // crosshair + loupe
+    let p = ed.pointer;
+    let visible = ed.is_selecting() && ed.pointer_in;
+    let mut rects = Vec::new();
+    if visible {
+        if let Some(b) = ed.screens.iter().map(|s| s.bounds()).find(|b| b.contains(p.0, p.1)) {
+            rects.push(Rect::from_xywh(b.left(), p.1 - 2.0, b.width(), 4.0));
+            rects.push(Rect::from_xywh(p.0 - 2.0, b.top(), 4.0, b.height()));
+            rects.push(loupe_rect(b, p));
+        }
+    }
+    layers.push(Layer { key: if visible { key(&[p.0, p.1]) } else { 0 }, rects: grow(rects) });
+
+    // hint pill
+    let hint = ed.sel.is_none() && !ed.is_adjusting();
+    let rects = if hint { ed.screens.iter().map(|s| { let b = s.bounds(); Rect::from_xywh(b.left(), b.top() + 20.0, b.width(), 50.0) }).collect() } else { Vec::new() };
+    layers.push(Layer { key: hint as u64, rects: grow(rects) });
+
+    // toolbar + tooltip
+    let tb = toolbar_layout(ed).map(|(panel, _)| panel);
+    let hover = toolbar_hit(ed, p).filter(|_| ed.pointer_in);
+    let hk = match hover {
+        None => -1.0,
+        Some(Button::Tool(t)) => t as u8 as f32,
+        Some(Button::Color(i)) => 100.0 + i as f32,
+        Some(b) => 200.0 + b.ordinal() as f32,
+    };
+    let tk = rect_key(tb);
+    let rects = tb.and_then(|panel| Rect::from_ltrb(panel.left() - 80.0, panel.top() - 40.0, panel.right() + 80.0, panel.bottom() + 40.0));
+    layers.push(Layer { key: key(&[tk[0], tk[1], tk[2], tk[3], hk, ed.tool as u8 as f32, ed.color as f32]), rects: grow(vec![rects]) });
+
+    // stroke width hint
+    let rects = if ed.width_hint { vec![Rect::from_xywh(p.0, p.1, 140.0, 60.0)] } else { Vec::new() };
+    layers.push(Layer { key: if ed.width_hint { key(&[p.0, p.1, ed.width]) } else { 0 }, rects: grow(rects) });
+
+    // shape being drawn: changes on every motion while it exists
+    let ip = ed.in_progress().and_then(|s| s.bounds(&ed.fonts));
+    layers.push(Layer { key: if ip.is_some() { frame } else { 0 }, rects: grow(vec![ip]) });
+
+    // text being typed
+    let (k, r) = match &ed.text {
+        Some(te) => {
+            let shape = Shape::Text { pos: te.pos, text: format!("{}MM", te.text), color: Color::BLACK, size: ed.text_size() };
+            let mut parts = vec![te.pos.0, te.pos.1, ed.text_size(), ed.color as f32];
+            parts.extend(te.text.chars().map(|c| c as u32 as f32));
+            (key(&parts), shape.bounds(&ed.fonts))
+        }
+        None => (0, None),
+    };
+    layers.push(Layer { key: k, rects: grow(vec![r]) });
+    layers
+}
+
+/// Paint screen `idx` into `pm`, whose (0, 0) is screen pixel `origin`. A full
+/// frame passes the whole buffer and (0, 0); partial repaints pass a small
+/// pixmap covering one damaged rectangle.
+pub fn render(ed: &Editor, idx: usize, pm: &mut PixmapMut, origin: (i32, i32)) {
     let scr = &ed.screens[idx];
-    let view = scr.view(ed.swap_rb);
-    let s = view.scale;
+    let sv = scr.view(ed.swap_rb);
+    let s = sv.scale;
+    let view = View { off: (origin.0 as f32, origin.1 as f32), ..sv };
     let bounds = scr.bounds();
-    let (pw, ph) = (pm.width() as usize, pm.height() as usize);
 
     // Background: dimmed everywhere, clean inside the selection.
     {
+        let (pw, ph) = (pm.width() as usize, pm.height() as usize);
+        let (bw, bh) = (scr.bg.width() as usize, scr.bg.height() as usize);
+        let (ox, oy) = (origin.0.max(0) as usize, origin.1.max(0) as usize);
+        let cols = pw.min(bw.saturating_sub(ox));
+        let sel_px = ed.sel.and_then(|r| r.intersect(&bounds)).map(|sel| {
+            let (x0, y0) = sv.px((sel.left(), sel.top()));
+            let (x1, y1) = sv.px((sel.right(), sel.bottom()));
+            (x0.round().max(0.0) as usize, y0.round().max(0.0) as usize, x1.round().max(0.0) as usize, y1.round().max(0.0) as usize)
+        });
+        let src = scr.bg.data();
         let dst = pm.data_mut();
-        dst.copy_from_slice(scr.dim.data());
-        if let Some(sel) = ed.sel.and_then(|r| r.intersect(&bounds)) {
-            let (x0, y0) = view.px((sel.left(), sel.top()));
-            let (x1, y1) = view.px((sel.right(), sel.bottom()));
-            let (x0, x1) = ((x0.round().max(0.0) as usize).min(pw), (x1.round().max(0.0) as usize).min(pw));
-            let (y0, y1) = ((y0.round().max(0.0) as usize).min(ph), (y1.round().max(0.0) as usize).min(ph));
-            let src = scr.bg.data();
-            for y in y0..y1 {
-                let a = (y * pw + x0) * 4;
-                let b = (y * pw + x1) * 4;
-                dst[a..b].copy_from_slice(&src[a..b]);
+        for y in 0..ph.min(bh.saturating_sub(oy)) {
+            let sy = oy + y;
+            let srow = &src[(sy * bw + ox) * 4..(sy * bw + ox + cols) * 4];
+            let drow = &mut dst[y * pw * 4..(y * pw + cols) * 4];
+            match sel_px {
+                Some((x0, y0, x1, y1)) if sy >= y0 && sy < y1 => {
+                    // [dim | clean | dim], in this pixmap's columns
+                    let a = x0.saturating_sub(ox).min(cols);
+                    let b = x1.saturating_sub(ox).min(cols);
+                    dim_copy(&mut drow[..a * 4], &srow[..a * 4]);
+                    drow[a * 4..b * 4].copy_from_slice(&srow[a * 4..b * 4]);
+                    dim_copy(&mut drow[b * 4..], &srow[b * 4..]);
+                }
+                _ => dim_copy(drow, srow),
             }
         }
     }
 
     for shape in ed.shapes.iter().chain(ed.in_progress()) {
-        shape.draw(pm, &view, Some(scr.bg.as_ref()), &ed.fonts);
+        shape.draw(pm, &view, Some((scr.bg.as_ref(), origin)), &ed.fonts);
     }
     if let Some(te) = &ed.text {
         let size = ed.text_size();
@@ -166,7 +299,7 @@ pub fn render(ed: &Editor, idx: usize, pm: &mut PixmapMut) {
 
     if ed.is_selecting() && ed.pointer_in && bounds.contains(ed.pointer.0, ed.pointer.1) {
         draw_crosshair(pm, &view, bounds, ed.pointer);
-        draw_loupe(ed, idx, pm, &view, bounds);
+        draw_loupe(ed, idx, pm, &view, &sv, bounds);
     }
 
     if ed.sel.is_none() && !ed.is_adjusting() {
@@ -221,16 +354,25 @@ fn draw_selection(ed: &Editor, pm: &mut PixmapMut, view: &View, sel: Rect) {
             pm.stroke_path(&path, &view.paint(ACCENT()), &st, id, None);
         }
     }
-    // Size label in physical pixels: that's what the saved file will be.
-    let scale = ed.screens.iter().find(|x| x.bounds().contains(sel.left() + 1.0, sel.top() + 1.0)).map_or(s, |x| x.scale);
-    let t = format!("{} × {}", (sel.width() * scale).round(), (sel.height() * scale).round());
-    let fs = 12.5;
-    let w = text::measure(&ed.fonts.regular, fs * s, &t) / s + 16.0;
+    let r = size_label_rect(ed, sel);
+    let Some(r) = r else { return };
+    pill(pm, view, r, 6.0);
+    label(ed, pm, view, (r.left() + 8.0, r.top() + 4.5), 12.5, &size_label(ed, sel), ICON(), false);
+}
+
+/// Size in physical pixels: that's what the saved file will be.
+fn size_label(ed: &Editor, sel: Rect) -> String {
+    let scale = ed.screens.iter().find(|x| x.bounds().contains(sel.left() + 1.0, sel.top() + 1.0)).map_or(1.0, |x| x.scale);
+    format!("{} × {}", (sel.width() * scale).round(), (sel.height() * scale).round())
+}
+
+fn size_label_rect(ed: &Editor, sel: Rect) -> Option<Rect> {
+    // Measured at 1x: text width scales linearly, so this is close enough
+    // for layout and damage.
+    let w = text::measure(&ed.fonts.regular, 12.5, &size_label(ed, sel)) + 16.0;
     let h = 24.0;
     let y = if sel.top() - h - 6.0 >= ed.desktop().top() { sel.top() - h - 6.0 } else { sel.top() + 6.0 };
-    let r = Rect::from_xywh(sel.left(), y, w, h).unwrap();
-    pill(pm, view, r, 6.0);
-    label(ed, pm, view, (r.left() + 8.0, r.top() + 4.5), fs, &t, ICON(), false);
+    Rect::from_xywh(sel.left(), y, w, h)
 }
 
 fn draw_crosshair(pm: &mut PixmapMut, view: &View, b: Rect, p: Pt) {
@@ -240,12 +382,12 @@ fn draw_crosshair(pm: &mut PixmapMut, view: &View, b: Rect, p: Pt) {
     fill_rect(pm, view, Rect::from_xywh(p.0, b.top(), w, b.height()), c);
 }
 
-fn draw_loupe(ed: &Editor, idx: usize, pm: &mut PixmapMut, view: &View, b: Rect) {
-    let scr = &ed.screens[idx];
-    let n: i32 = 15; // sampled pixels per side
-    let cell = 8.0; // logical size of one sampled pixel
-    let size = n as f32 * cell;
-    let p = ed.pointer;
+const LOUPE_N: i32 = 15; // sampled pixels per side
+const LOUPE_CELL: f32 = 8.0; // logical size of one sampled pixel
+
+/// Loupe square plus its coordinate label below.
+fn loupe_rect(b: Rect, p: Pt) -> Option<Rect> {
+    let size = LOUPE_N as f32 * LOUPE_CELL;
     let mut x = p.0 + 24.0;
     let mut y = p.1 + 24.0;
     if x + size > b.right() - 4.0 {
@@ -254,9 +396,20 @@ fn draw_loupe(ed: &Editor, idx: usize, pm: &mut PixmapMut, view: &View, b: Rect)
     if y + size + 30.0 > b.bottom() - 4.0 {
         y = p.1 - 24.0 - size - 30.0;
     }
+    Rect::from_xywh(x, y, size, size + 30.0)
+}
+
+fn draw_loupe(ed: &Editor, idx: usize, pm: &mut PixmapMut, view: &View, sv: &View, b: Rect) {
+    let scr = &ed.screens[idx];
+    let n = LOUPE_N;
+    let cell = LOUPE_CELL;
+    let size = n as f32 * cell;
+    let p = ed.pointer;
+    let Some(lr) = loupe_rect(b, p) else { return };
+    let (x, y) = (lr.left(), lr.top());
     let frame = Rect::from_xywh(x, y, size, size).unwrap();
     shadow(pm, view, frame, 10.0);
-    let (cx, cy) = view.px(p);
+    let (cx, cy) = sv.px(p);
     let (cx, cy) = (cx.floor() as i32, cy.floor() as i32);
     let src = scr.bg.data();
     let (bw, bh) = (scr.bg.width() as i32, scr.bg.height() as i32);
@@ -481,6 +634,32 @@ fn icon(ed: &Editor, pm: &mut PixmapMut, view: &View, r: Rect, b: Button, fg: Co
 }
 
 // ---- primitives ---------------------------------------------------------------
+
+/// Copy pixels darkened to ~55% (the dim outside the selection); alpha stays.
+/// Works a whole pixel at a time: two channels per multiply, which the
+/// compiler vectorises. Byte order doesn't matter as long as alpha is byte 3.
+fn dim_copy(dst: &mut [u8], src: &[u8]) {
+    let (d, s) = (as_u32_mut(dst), as_u32(src));
+    for (d, &p) in d.iter_mut().zip(s) {
+        let p = u32::from_le(p);
+        let rb = ((p & 0x00ff_00ff) * 141 >> 8) & 0x00ff_00ff;
+        let g = ((p & 0x0000_ff00) * 141 >> 8) & 0x0000_ff00;
+        *d = (rb | g | (p & 0xff00_0000)).to_le();
+    }
+}
+
+fn as_u32(b: &[u8]) -> &[u32] {
+    // Pixmap and shm data are 4-byte aligned and whole pixels.
+    let (pre, mid, post) = unsafe { b.align_to::<u32>() };
+    assert!(pre.is_empty() && post.is_empty());
+    mid
+}
+
+fn as_u32_mut(b: &mut [u8]) -> &mut [u32] {
+    let (pre, mid, post) = unsafe { b.align_to_mut::<u32>() };
+    assert!(pre.is_empty() && post.is_empty());
+    mid
+}
 
 fn rounded(view: &View, r: Rect, rad: f32) -> Path {
     let (a, b) = (view.px((r.left(), r.top())), view.px((r.right(), r.bottom())));

@@ -103,6 +103,9 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    let t0 = std::time::Instant::now();
+    let dbg = std::env::var_os("GLINT_DEBUG").is_some();
+    let lap = |what: &str| if dbg { eprintln!("glint: {:>7.1} ms  {what}", t0.elapsed().as_secs_f64() * 1e3) };
     let args = parse_args()?;
     let cfg = Config::load()?;
     let backend = match args.backend.as_deref().unwrap_or(&cfg.backend) {
@@ -151,10 +154,13 @@ fn run() -> Result<()> {
             deliver(&cfg, &args, img)
         }
         "gui" => {
+            lap("connected");
             let (_, shots) = cap.capture(&outputs, cursor, backend)?;
+            lap("captured");
             let fonts = fonts.join().map_err(|_| anyhow::anyhow!("font loader panicked"))??;
+            lap("fonts");
             drop(cap);
-            gui(&cfg, &args, shots, fonts)
+            gui(&cfg, &args, shots, fonts, &lap)
         }
         "debug-render" => {
             let (_, shots) = cap.capture(&outputs, cursor, backend)?;
@@ -162,7 +168,7 @@ fn run() -> Result<()> {
             let ed = Editor::new(shots, fonts, false, cfg.color.saturating_sub(1), cfg.width);
             let s = &ed.screens[0];
             let mut pm = tiny_skia::Pixmap::new(s.bg.width(), s.bg.height()).unwrap();
-            editor::ui::render(&ed, 0, &mut pm.as_mut());
+            editor::ui::render(&ed, 0, &mut pm.as_mut(), (0, 0));
             let img = image::Image { width: pm.width(), height: pm.height(), data: pm.take() };
             std::fs::write(args.output.as_deref().unwrap_or("/tmp/glint-ui.png"), img.encode_png()?)?;
             Ok(())
@@ -171,9 +177,11 @@ fn run() -> Result<()> {
     }
 }
 
-fn gui(cfg: &Config, args: &Args, shots: Vec<Shot>, fonts: text::Fonts) -> Result<()> {
+fn gui(cfg: &Config, args: &Args, shots: Vec<Shot>, fonts: text::Fonts, lap: &dyn Fn(&str)) -> Result<()> {
     let ed = Editor::new(shots, fonts, true, cfg.color.saturating_sub(1), cfg.width);
+    lap("editor");
     let mut session = overlay::Session::new(ed)?;
+    lap("surfaces");
     let outcome = session.run()?;
     if outcome == Outcome::Cancel {
         return Ok(());
@@ -204,7 +212,9 @@ fn gui(cfg: &Config, args: &Args, shots: Vec<Shot>, fonts: text::Fonts) -> Resul
     }
     if want_copy {
         // Detach so the launching terminal/hotkey returns while we keep
-        // answering paste requests.
+        // answering paste requests, holding only the PNG.
+        drop((img, png));
+        session.release_memory();
         daemonize();
         session.serve_clipboard()?;
     }
