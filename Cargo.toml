@@ -31,3 +31,9 @@ opt-level = 3
 
 [dev-dependencies]
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
+
+# `cargo build --profile profiling` for perf: release speed, with symbols.
+[profile.profiling]
+inherits = "release"
+strip = false
+debug = "line-tables-only"

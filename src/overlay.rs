@@ -155,8 +155,34 @@ pub struct Overlay {
     pub editor: Editor,
     conn: Connection,
     /// Clipboard payload while we're serving it after the overlay closed.
-    clip: Option<(CopyPasteSource, Arc<Vec<u8>>)>,
+    /// The PNG may still be encoding when the selection is claimed.
+    clip: Option<(CopyPasteSource, Arc<Later<Vec<u8>>>)>,
     clip_done: bool,
+}
+
+/// A value filled in later by one thread and awaited by others.
+pub struct Later<T> {
+    value: std::sync::Mutex<Option<Arc<T>>>,
+    ready: std::sync::Condvar,
+}
+
+impl<T> Later<T> {
+    fn new() -> Self {
+        Self { value: std::sync::Mutex::new(None), ready: std::sync::Condvar::new() }
+    }
+    pub fn set(&self, v: T) {
+        *self.value.lock().unwrap() = Some(Arc::new(v));
+        self.ready.notify_all();
+    }
+    fn wait(&self) -> Arc<T> {
+        let mut g = self.value.lock().unwrap();
+        loop {
+            if let Some(v) = &*g {
+                return v.clone();
+            }
+            g = self.ready.wait(g).unwrap();
+        }
+    }
 }
 
 pub struct Session {
@@ -250,9 +276,11 @@ impl Session {
         }
     }
 
-    /// Put a PNG on the clipboard. Must be called while the overlay still has
-    /// focus (the compositor checks the input serial).
-    pub fn set_clipboard(&mut self, png: Vec<u8>) -> Result<()> {
+    /// Claim the clipboard for a PNG that is still to be encoded; fill it via
+    /// the returned handle. Must be called while the overlay still has focus
+    /// (the compositor checks the input serial); paste requests that arrive
+    /// before the PNG is ready wait for it.
+    pub fn claim_clipboard(&mut self) -> Result<Arc<Later<Vec<u8>>>> {
         let qh = self.queue.handle();
         let ov = &mut self.overlay;
         let (Some(mgr), Some(dev)) = (&ov.data_mgr, &ov.data_device) else {
@@ -260,9 +288,10 @@ impl Session {
         };
         let src = mgr.create_copy_paste_source(&qh, ["image/png"]);
         src.set_selection(dev, ov.serial);
-        ov.clip = Some((src, Arc::new(png)));
+        let pending = Arc::new(Later::new());
+        ov.clip = Some((src, pending.clone()));
         self.queue.roundtrip(&mut self.overlay)?;
-        Ok(())
+        Ok(pending)
     }
 
     pub fn hide(&mut self) -> Result<()> {
@@ -412,7 +441,8 @@ impl Overlay {
         surface.commit();
         s.frame_pending = true;
         if debug() {
-            eprintln!("glint: {} buf{idx} painted {:.1}% in {render_ms:.2} ms", out.name, painted as f64 * 100.0 / full_area as f64);
+            let since = crate::START.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1e3);
+            eprintln!("glint: {since:7.1} ms  {} buf{idx} painted {:.1}% in {render_ms:.2} ms", out.name, painted as f64 * 100.0 / full_area as f64);
         }
     }
 
@@ -646,9 +676,10 @@ impl DataSourceHandler for Overlay {
             return;
         }
         let data = data.clone();
-        // Large PNGs fill the pipe; write off-thread so we keep answering.
+        // Large PNGs fill the pipe and may still be encoding; write off-thread
+        // so we keep answering.
         std::thread::spawn(move || {
-            let _ = pipe.write_all(&data);
+            let _ = pipe.write_all(&data.wait());
         });
     }
     fn cancelled(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {

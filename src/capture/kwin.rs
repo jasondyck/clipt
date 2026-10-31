@@ -71,17 +71,28 @@ fn decode_qimage(w: u32, h: u32, stride: usize, format: u32, mut data: Vec<u8>) 
     let packed = stride == w as usize * 4 && data.len() >= stride * h as usize;
     if packed && matches!(format, 4 | 5 | 6 | 16 | 17 | 18) {
         data.truncate(stride * h as usize);
-        for p in data.chunks_exact_mut(4) {
-            if format <= 6 {
-                p.swap(0, 2); // BGRA → RGBA
+        // One tight loop per format; these run over 33 MB at 4K.
+        let px = as_u32_mut(&mut data);
+        match format {
+            // RGBX8888: bytes already RGBA, alpha undefined
+            16 => px.iter_mut().for_each(|p| *p |= u32::from_le(0xff00_0000)),
+            17 => {}
+            // RGB32 / ARGB32: bytes BGRA; swap R and B
+            4 | 5 => px.iter_mut().for_each(|p| {
+                let v = u32::from_le(*p);
+                let a = if format == 4 { 0xff00_0000 } else { v & 0xff00_0000 };
+                *p = (a | (v & 0x0000_ff00) | ((v >> 16) & 0xff) | ((v & 0xff) << 16)).to_le();
+            }),
+            _ => {
+                // premultiplied variants: rare, keep it simple
+                for p in data.chunks_exact_mut(4) {
+                    if format == 6 {
+                        p.swap(0, 2);
+                    }
+                    let q = unpremul([p[0], p[1], p[2], p[3]], true);
+                    p.copy_from_slice(&q);
+                }
             }
-            let px = [p[0], p[1], p[2], p[3]];
-            let px = match format {
-                4 | 16 => [px[0], px[1], px[2], 255],
-                6 | 18 => unpremul(px, true),
-                _ => px,
-            };
-            p.copy_from_slice(&px);
         }
         return Ok(Image { width: w, height: h, data });
     }
@@ -134,4 +145,11 @@ fn f16_to_u8(h: u16) -> u8 {
     let v = v.clamp(0.0, 1.0);
     let s = if v <= 0.0031308 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
     (s * 255.0 + 0.5) as u8
+}
+
+fn as_u32_mut(b: &mut [u8]) -> &mut [u32] {
+    // Vec<u8> from the allocator is at least 8-byte aligned; length is w*h*4.
+    let (pre, mid, post) = unsafe { b.align_to_mut::<u32>() };
+    assert!(pre.is_empty() && post.is_empty(), "unaligned pixel buffer");
+    mid
 }

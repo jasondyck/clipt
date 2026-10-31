@@ -102,8 +102,11 @@ fn main() {
     }
 }
 
+/// Process start, for GLINT_DEBUG timings.
+pub static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
 fn run() -> Result<()> {
-    let t0 = std::time::Instant::now();
+    let t0 = *START.get_or_init(std::time::Instant::now);
     let dbg = std::env::var_os("GLINT_DEBUG").is_some();
     let lap = |what: &str| if dbg { eprintln!("glint: {:>7.1} ms  {what}", t0.elapsed().as_secs_f64() * 1e3) };
     let args = parse_args()?;
@@ -200,15 +203,21 @@ fn gui(cfg: &Config, args: &Args, shots: Vec<Shot>, fonts: text::Fonts, lap: &dy
         return Ok(());
     }
     let img = session.overlay.editor.export().context("nothing selected")?;
-    let png = img.encode_png()?;
 
+    // Claim the clipboard while we still hold focus, close the overlay right
+    // away, and only then encode: the encode can take ~100 ms and the screen
+    // shouldn't stay frozen for it. Early paste requests wait for the PNG.
     let want_copy = outcome == Outcome::Copy || cfg.copy_on_save;
-    if want_copy {
-        if let Err(e) = session.set_clipboard(png.clone()) {
-            eprintln!("glint: {e:#}");
-        }
-    }
+    let clip = if want_copy {
+        session.claim_clipboard().map_err(|e| eprintln!("glint: {e:#}")).ok()
+    } else {
+        None
+    };
     session.hide()?;
+    let png = img.encode_png()?;
+    if let Some(c) = &clip {
+        c.set(png.clone());
+    }
 
     let saved = if outcome == Outcome::Save || args.output.is_some() {
         Some(write_png(cfg, args.output.as_deref(), &png)?)
