@@ -9,14 +9,12 @@ use crate::image::Image;
 use anyhow::{Context, Result, bail};
 use std::os::fd::{AsFd, OwnedFd};
 use wayland_client::{
-    Proxy,
-    Connection, Dispatch, EventQueue, QueueHandle, WEnum,
+    Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum,
     globals::{GlobalList, GlobalListContents, registry_queue_init},
     protocol::{wl_buffer, wl_output, wl_registry, wl_shm, wl_shm_pool},
 };
 use wayland_protocols::ext::image_capture_source::v1::client::{
-    ext_image_capture_source_v1::ExtImageCaptureSourceV1,
-    ext_output_image_capture_source_manager_v1::ExtOutputImageCaptureSourceManagerV1,
+    ext_image_capture_source_v1::ExtImageCaptureSourceV1, ext_output_image_capture_source_manager_v1::ExtOutputImageCaptureSourceManagerV1,
 };
 use wayland_protocols::ext::image_copy_capture::v1::client::{
     ext_image_copy_capture_frame_v1::{self as ext_frame, ExtImageCopyCaptureFrameV1},
@@ -104,7 +102,12 @@ impl Wayland {
                 let scale = o.scale.max(1);
                 let rotated = matches!(
                     o.transform,
-                    Some(wl_output::Transform::_90 | wl_output::Transform::_270 | wl_output::Transform::Flipped90 | wl_output::Transform::Flipped270)
+                    Some(
+                        wl_output::Transform::_90
+                            | wl_output::Transform::_270
+                            | wl_output::Transform::Flipped90
+                            | wl_output::Transform::Flipped270
+                    )
                 );
                 let mode = if rotated { (o.mode.1, o.mode.0) } else { o.mode };
                 let (lw, lh) = o.logical_size.unwrap_or((mode.0 / scale, mode.1 / scale));
@@ -284,7 +287,15 @@ fn apply_transform(img: Image, t: wl_output::Transform) -> Image {
 // ---- dispatch -------------------------------------------------------------
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
-    fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<wl_output::WlOutput, ()> for State {

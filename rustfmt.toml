@@ -1,0 +1,3 @@
+# The codebase favours fewer, longer lines over vertical sprawl.
+max_width = 140
+use_small_heuristics = "Max"

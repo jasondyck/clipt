@@ -198,7 +198,17 @@ pub fn dynamic_layers(ed: &Editor, frame: u64) -> Vec<Layer> {
 
     // hint pill
     let hint = ed.sel.is_none() && !ed.is_adjusting();
-    let rects = if hint { ed.screens.iter().map(|s| { let b = s.bounds(); Rect::from_xywh(b.left(), b.top() + 20.0, b.width(), 50.0) }).collect() } else { Vec::new() };
+    let rects = if hint {
+        ed.screens
+            .iter()
+            .map(|s| {
+                let b = s.bounds();
+                Rect::from_xywh(b.left(), b.top() + 20.0, b.width(), 50.0)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     layers.push(Layer { key: hint as u64, rects: grow(rects) });
 
     // toolbar + tooltip
@@ -466,9 +476,21 @@ fn draw_toolbar(ed: &Editor, pm: &mut PixmapMut, view: &View, panel: Rect, btns:
                 if active {
                     pm.fill_path(&rounded(view, inset, 8.0), &view.paint(ACCENT()), FillRule::Winding, id, None);
                 } else if hover == Some(b) {
-                    pm.fill_path(&rounded(view, inset, 8.0), &view.paint(Color::from_rgba8(255, 255, 255, 22)), FillRule::Winding, id, None);
+                    pm.fill_path(
+                        &rounded(view, inset, 8.0),
+                        &view.paint(Color::from_rgba8(255, 255, 255, 22)),
+                        FillRule::Winding,
+                        id,
+                        None,
+                    );
                 }
-                let fg = if active { Color::WHITE } else if matches!(b, Button::Close) { MUTED() } else { ICON() };
+                let fg = if active {
+                    Color::WHITE
+                } else if matches!(b, Button::Close) {
+                    MUTED()
+                } else {
+                    ICON()
+                };
                 icon(ed, pm, view, r, b, fg);
             }
         }

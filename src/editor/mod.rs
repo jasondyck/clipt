@@ -96,10 +96,20 @@ pub enum Damage {
 enum Drag {
     None,
     /// Pressed but not moved past the click threshold yet.
-    Pending { start: Pt },
-    Creating { start: Pt },
-    Moving { grab: Pt, orig: Rect },
-    Resizing { handle: Handle, orig: Rect },
+    Pending {
+        start: Pt,
+    },
+    Creating {
+        start: Pt,
+    },
+    Moving {
+        grab: Pt,
+        orig: Rect,
+    },
+    Resizing {
+        handle: Handle,
+        orig: Rect,
+    },
     Drawing(Shape),
 }
 
@@ -273,7 +283,9 @@ impl Editor {
     pub fn desktop(&self) -> Rect {
         let mut it = self.screens.iter().map(|s| s.bounds());
         let first = it.next().unwrap_or(Rect::from_xywh(0.0, 0.0, 1.0, 1.0).unwrap());
-        it.fold(first, |a, b| Rect::from_ltrb(a.left().min(b.left()), a.top().min(b.top()), a.right().max(b.right()), a.bottom().max(b.bottom())).unwrap())
+        it.fold(first, |a, b| {
+            Rect::from_ltrb(a.left().min(b.left()), a.top().min(b.top()), a.right().max(b.right()), a.bottom().max(b.bottom())).unwrap()
+        })
     }
 
     pub fn cursor(&self) -> CursorKind {
@@ -403,7 +415,8 @@ impl Editor {
         }
 
         let now = std::time::Instant::now();
-        let double = self.last_click.is_some_and(|(t, q)| now.duration_since(t).as_millis() < 400 && (q.0 - p.0).hypot(q.1 - p.1) < CLICK_SLOP);
+        let double =
+            self.last_click.is_some_and(|(t, q)| now.duration_since(t).as_millis() < 400 && (q.0 - p.0).hypot(q.1 - p.1) < CLICK_SLOP);
         self.last_click = Some((now, p));
         if double && self.tool == Tool::Select && self.sel.is_some_and(|r| r.contains(p.0, p.1)) {
             self.outcome = Some(Outcome::Copy);
@@ -474,9 +487,11 @@ impl Editor {
             }
             Drag::Drawing(shape) => {
                 let keep = match &shape {
-                    Shape::Rect { a, b, .. } | Shape::Ellipse { a, b, .. } | Shape::Pixelate { a, b, .. } | Shape::Arrow { a, b, .. } | Shape::Line { a, b, .. } => {
-                        (a.0 - b.0).abs() + (a.1 - b.1).abs() > 2.0
-                    }
+                    Shape::Rect { a, b, .. }
+                    | Shape::Ellipse { a, b, .. }
+                    | Shape::Pixelate { a, b, .. }
+                    | Shape::Arrow { a, b, .. }
+                    | Shape::Line { a, b, .. } => (a.0 - b.0).abs() + (a.1 - b.1).abs() > 2.0,
                     _ => true,
                 };
                 if keep {
@@ -831,60 +846,134 @@ mod tests {
             // tiny-skia's edge antialiasing varies a little with the target size,
             // so allow small AA wobble; a missed region shows stale dim/clean
             // content or missing chrome, which is far larger.
-            let diffs: Vec<i16> = buf.data().iter().zip(full.data()).map(|(a, b)| (*a as i16 - *b as i16).abs()).filter(|d| *d > 2).collect();
+            let diffs: Vec<i16> =
+                buf.data().iter().zip(full.data()).map(|(a, b)| (*a as i16 - *b as i16).abs()).filter(|d| *d > 2).collect();
             let max = diffs.iter().copied().max().unwrap_or(0);
-            assert!(max <= 48 && diffs.len() < 400, "step {n}: {} differing values, max {max}: damage tracking missed something", diffs.len());
+            assert!(
+                max <= 48 && diffs.len() < 400,
+                "step {n}: {} differing values, max {max}: damage tracking missed something",
+                diffs.len()
+            );
         };
 
-        step(&mut ed, &|e| { e.pointer_motion((100.0, 100.0), m); });
+        step(&mut ed, &|e| {
+            e.pointer_motion((100.0, 100.0), m);
+        });
         for i in 0..6 {
-            step(&mut ed, &|e| { e.pointer_motion((120.0 + i as f32 * 30.0, 90.0 + i as f32 * 20.0), m); });
+            step(&mut ed, &|e| {
+                e.pointer_motion((120.0 + i as f32 * 30.0, 90.0 + i as f32 * 20.0), m);
+            });
         }
-        step(&mut ed, &|e| { e.button_press((80.0, 60.0), true, m); });
+        step(&mut ed, &|e| {
+            e.button_press((80.0, 60.0), true, m);
+        });
         for i in 1..=8 {
-            step(&mut ed, &|e| { e.pointer_motion((80.0 + i as f32 * 50.0, 60.0 + i as f32 * 30.0), m); });
+            step(&mut ed, &|e| {
+                e.pointer_motion((80.0 + i as f32 * 50.0, 60.0 + i as f32 * 30.0), m);
+            });
         }
-        step(&mut ed, &|e| { e.button_release((480.0, 300.0), true); });
-        step(&mut ed, &|e| { e.pointer_motion((300.0, 200.0), m); });
-        step(&mut ed, &|e| { e.button_press((300.0, 200.0), true, m); });
-        step(&mut ed, &|e| { e.pointer_motion((250.0, 150.0), m); }); // move selection
-        step(&mut ed, &|e| { e.button_release((250.0, 150.0), true); });
+        step(&mut ed, &|e| {
+            e.button_release((480.0, 300.0), true);
+        });
+        step(&mut ed, &|e| {
+            e.pointer_motion((300.0, 200.0), m);
+        });
+        step(&mut ed, &|e| {
+            e.button_press((300.0, 200.0), true, m);
+        });
+        step(&mut ed, &|e| {
+            e.pointer_motion((250.0, 150.0), m);
+        }); // move selection
+        step(&mut ed, &|e| {
+            e.button_release((250.0, 150.0), true);
+        });
         // big selection jumps: select-all, clear, select-all again
         let ctrl = Mods { ctrl: true, ..Default::default() };
-        step(&mut ed, &|e| { e.key(Key::Char('a'), ctrl); });
-        step(&mut ed, &|e| { e.button_press((300.0, 200.0), false, m); });
-        step(&mut ed, &|e| { e.pointer_motion((310.0, 210.0), m); });
-        step(&mut ed, &|e| { e.button_press((20.0, 20.0), true, m); });
-        step(&mut ed, &|e| { e.pointer_motion((200.0, 140.0), m); });
-        step(&mut ed, &|e| { e.button_release((200.0, 140.0), true); });
-        step(&mut ed, &|e| { e.key(Key::Char('a'), ctrl); });
-        step(&mut ed, &|e| { e.button_press((300.0, 200.0), false, m); });
-        step(&mut ed, &|e| { e.button_press((40.0, 40.0), true, m); });
-        step(&mut ed, &|e| { e.pointer_motion((500.0, 330.0), m); });
-        step(&mut ed, &|e| { e.button_release((500.0, 330.0), true); });
-        step(&mut ed, &|e| { e.tool = Tool::Pen; });
-        step(&mut ed, &|e| { e.button_press((100.0, 100.0), true, m); });
+        step(&mut ed, &|e| {
+            e.key(Key::Char('a'), ctrl);
+        });
+        step(&mut ed, &|e| {
+            e.button_press((300.0, 200.0), false, m);
+        });
+        step(&mut ed, &|e| {
+            e.pointer_motion((310.0, 210.0), m);
+        });
+        step(&mut ed, &|e| {
+            e.button_press((20.0, 20.0), true, m);
+        });
+        step(&mut ed, &|e| {
+            e.pointer_motion((200.0, 140.0), m);
+        });
+        step(&mut ed, &|e| {
+            e.button_release((200.0, 140.0), true);
+        });
+        step(&mut ed, &|e| {
+            e.key(Key::Char('a'), ctrl);
+        });
+        step(&mut ed, &|e| {
+            e.button_press((300.0, 200.0), false, m);
+        });
+        step(&mut ed, &|e| {
+            e.button_press((40.0, 40.0), true, m);
+        });
+        step(&mut ed, &|e| {
+            e.pointer_motion((500.0, 330.0), m);
+        });
+        step(&mut ed, &|e| {
+            e.button_release((500.0, 330.0), true);
+        });
+        step(&mut ed, &|e| {
+            e.tool = Tool::Pen;
+        });
+        step(&mut ed, &|e| {
+            e.button_press((100.0, 100.0), true, m);
+        });
         for i in 1..10 {
-            step(&mut ed, &|e| { e.pointer_motion((100.0 + i as f32 * 20.0, 100.0 + (i % 3) as f32 * 25.0), m); });
+            step(&mut ed, &|e| {
+                e.pointer_motion((100.0 + i as f32 * 20.0, 100.0 + (i % 3) as f32 * 25.0), m);
+            });
         }
-        step(&mut ed, &|e| { e.button_release((280.0, 125.0), true); });
-        step(&mut ed, &|e| { e.tool = Tool::Pixelate; });
-        step(&mut ed, &|e| { e.button_press((150.0, 150.0), true, m); });
-        step(&mut ed, &|e| { e.pointer_motion((260.0, 230.0), m); });
-        step(&mut ed, &|e| { e.button_release((260.0, 230.0), true); });
-        step(&mut ed, &|e| { e.tool = Tool::Text; });
-        step(&mut ed, &|e| { e.button_press((120.0, 240.0), true, m); });
+        step(&mut ed, &|e| {
+            e.button_release((280.0, 125.0), true);
+        });
+        step(&mut ed, &|e| {
+            e.tool = Tool::Pixelate;
+        });
+        step(&mut ed, &|e| {
+            e.button_press((150.0, 150.0), true, m);
+        });
+        step(&mut ed, &|e| {
+            e.pointer_motion((260.0, 230.0), m);
+        });
+        step(&mut ed, &|e| {
+            e.button_release((260.0, 230.0), true);
+        });
+        step(&mut ed, &|e| {
+            e.tool = Tool::Text;
+        });
+        step(&mut ed, &|e| {
+            e.button_press((120.0, 240.0), true, m);
+        });
         for c in "abc".chars() {
-            step(&mut ed, &|e| { e.key(Key::Char(c), m); });
+            step(&mut ed, &|e| {
+                e.key(Key::Char(c), m);
+            });
         }
-        step(&mut ed, &|e| { e.key(Key::Backspace, m); });
-        step(&mut ed, &|e| { e.scroll(-1.0); });
+        step(&mut ed, &|e| {
+            e.key(Key::Backspace, m);
+        });
+        step(&mut ed, &|e| {
+            e.scroll(-1.0);
+        });
         // hover the toolbar to get a tooltip, then leave
         let (_, btns) = ui::toolbar_layout(&ed).unwrap();
         let (r, _) = btns[3];
-        step(&mut ed, &|e| { e.pointer_motion((r.left() + 5.0, r.top() + 5.0), m); });
-        step(&mut ed, &|e| { e.pointer_motion((50.0, 50.0), m); });
-
+        step(&mut ed, &|e| {
+            e.pointer_motion((r.left() + 5.0, r.top() + 5.0), m);
+        });
+        step(&mut ed, &|e| {
+            e.pointer_motion((50.0, 50.0), m);
+        });
     }
 
     /// `cargo test --release bench_4k -- --ignored --nocapture`
@@ -911,23 +1000,37 @@ mod tests {
                     for r in rs {
                         let (x0, y0) = (r.left().max(0.0) as i32, r.top().max(0.0) as i32);
                         let (x1, y1) = (r.right().min(3840.0) as i32, r.bottom().min(2160.0) as i32);
-                        if x1 <= x0 || y1 <= y0 { continue; }
+                        if x1 <= x0 || y1 <= y0 {
+                            continue;
+                        }
                         let mut tmp = Pixmap::new((x1 - x0) as u32, (y1 - y0) as u32).unwrap();
                         ui::render(ed, 0, &mut tmp.as_mut(), (x0, y0));
                         px += (x1 - x0) * (y1 - y0);
                     }
                 }
             }
-            eprintln!("{name}: {:.2} ms/frame, {:.1}% of screen", t.elapsed().as_secs_f64() * 1e3 / 50.0, px as f64 / 50.0 / (3840.0 * 2160.0) * 100.0);
+            eprintln!(
+                "{name}: {:.2} ms/frame, {:.1}% of screen",
+                t.elapsed().as_secs_f64() * 1e3 / 50.0,
+                px as f64 / 50.0 / (3840.0 * 2160.0) * 100.0
+            );
         };
-        run("hover (crosshair+loupe)", &mut ed, &|e, i| { e.pointer_motion((1000.0 + i as f32 * 7.0, 800.0 + i as f32 * 3.0), m); });
+        run("hover (crosshair+loupe)", &mut ed, &|e, i| {
+            e.pointer_motion((1000.0 + i as f32 * 7.0, 800.0 + i as f32 * 3.0), m);
+        });
         ed.button_press((500.0, 400.0), true, m);
-        run("drag selection", &mut ed, &|e, i| { e.pointer_motion((900.0 + i as f32 * 20.0, 700.0 + i as f32 * 12.0), m); });
+        run("drag selection", &mut ed, &|e, i| {
+            e.pointer_motion((900.0 + i as f32 * 20.0, 700.0 + i as f32 * 12.0), m);
+        });
         ed.button_release((1900.0, 1300.0), true);
         ed.tool = Tool::Pen;
         ed.button_press((800.0, 800.0), true, m);
-        run("pen stroke", &mut ed, &|e, i| { e.pointer_motion((800.0 + i as f32 * 15.0, 800.0 + (i % 5) as f32 * 10.0), m); });
+        run("pen stroke", &mut ed, &|e, i| {
+            e.pointer_motion((800.0 + i as f32 * 15.0, 800.0 + (i % 5) as f32 * 10.0), m);
+        });
         ed.button_release((1500.0, 800.0), true);
-        run("hover toolbar area", &mut ed, &|e, i| { e.pointer_motion((1100.0 + i as f32 * 4.0, 1340.0), m); });
+        run("hover toolbar area", &mut ed, &|e, i| {
+            e.pointer_motion((1100.0 + i as f32 * 4.0, 1340.0), m);
+        });
     }
 }

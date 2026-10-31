@@ -7,11 +7,10 @@ use anyhow::{Context, Result};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
     data_device_manager::{
-        DataDeviceManagerState,
+        DataDeviceManagerState, WritePipe,
         data_device::{DataDevice, DataDeviceHandler},
         data_offer::{DataOfferHandler, DragOffer},
         data_source::{CopyPasteSource, DataSourceHandler},
-        WritePipe,
     },
     delegate_registry,
     output::{OutputHandler, OutputState},
@@ -20,7 +19,7 @@ use smithay_client_toolkit::{
     seat::{
         Capability, SeatHandler, SeatState,
         keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers},
-        pointer::{CursorIcon, PointerEvent, PointerEventKind, PointerHandler, ThemeSpec, ThemedPointer, BTN_LEFT},
+        pointer::{BTN_LEFT, CursorIcon, PointerEvent, PointerEventKind, PointerHandler, ThemeSpec, ThemedPointer},
     },
     shell::{
         WaylandSurface,
@@ -37,7 +36,10 @@ use std::sync::Arc;
 use wayland_client::{
     Connection, QueueHandle,
     globals::registry_queue_init,
-    protocol::{wl_data_device_manager::DndAction, wl_data_source::WlDataSource, wl_data_device::WlDataDevice, wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+    protocol::{
+        wl_data_device::WlDataDevice, wl_data_device_manager::DndAction, wl_data_source::WlDataSource, wl_keyboard, wl_output, wl_pointer,
+        wl_seat, wl_shm, wl_surface,
+    },
 };
 use wayland_protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter};
 
@@ -200,7 +202,11 @@ impl Session {
         let compositor = CompositorState::bind(&globals, &qh).context("wl_compositor missing")?;
         let shm = Shm::bind(&globals, &qh).context("wl_shm missing")?;
         let layer_shell = LayerShell::bind(&globals, &qh).ok();
-        let xdg = if layer_shell.is_none() { Some(XdgShell::bind(&globals, &qh).context("neither layer-shell nor xdg-shell available")?) } else { None };
+        let xdg = if layer_shell.is_none() {
+            Some(XdgShell::bind(&globals, &qh).context("neither layer-shell nor xdg-shell available")?)
+        } else {
+            None
+        };
         let mut ov = Overlay {
             registry: RegistryState::new(&globals),
             seats: SeatState::new(&globals, &qh),
@@ -442,7 +448,11 @@ impl Overlay {
         s.frame_pending = true;
         if debug() {
             let since = crate::START.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1e3);
-            eprintln!("glint: {since:7.1} ms  {} buf{idx} painted {:.1}% in {render_ms:.2} ms", out.name, painted as f64 * 100.0 / full_area as f64);
+            eprintln!(
+                "glint: {since:7.1} ms  {} buf{idx} painted {:.1}% in {render_ms:.2} ms",
+                out.name,
+                painted as f64 * 100.0 / full_area as f64
+            );
         }
     }
 
@@ -586,7 +596,16 @@ impl SeatHandler for Overlay {
 }
 
 impl KeyboardHandler for Overlay {
-    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, serial: u32, _: &[u32], _: &[Keysym]) {
+    fn enter(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: &wl_surface::WlSurface,
+        serial: u32,
+        _: &[u32],
+        _: &[Keysym],
+    ) {
         self.serial = serial;
         if debug() {
             eprintln!("glint: keyboard focus");
@@ -608,7 +627,16 @@ impl KeyboardHandler for Overlay {
         self.press_key(c, qh, k, serial, ev);
     }
     fn release_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, _: KeyEvent) {}
-    fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, m: Modifiers, _: RawModifiers, _: u32) {
+    fn update_modifiers(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        m: Modifiers,
+        _: RawModifiers,
+        _: u32,
+    ) {
         self.mods = Mods { ctrl: m.ctrl, shift: m.shift, alt: m.alt };
     }
 }

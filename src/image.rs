@@ -15,14 +15,7 @@ impl Image {
 
     /// Build from rows with an arbitrary stride, converting each pixel with `f`.
     /// `bpp` is the source bytes per pixel.
-    pub fn from_rows(
-        width: u32,
-        height: u32,
-        stride: usize,
-        bpp: usize,
-        src: &[u8],
-        f: impl Fn(&[u8]) -> [u8; 4],
-    ) -> anyhow::Result<Self> {
+    pub fn from_rows(width: u32, height: u32, stride: usize, bpp: usize, src: &[u8], f: impl Fn(&[u8]) -> [u8; 4]) -> anyhow::Result<Self> {
         let need = stride * (height as usize - 1) + width as usize * bpp;
         anyhow::ensure!(src.len() >= need, "short image buffer: {} < {}", src.len(), need);
         let mut img = Self::new(width, height);
@@ -205,11 +198,22 @@ mod bench {
             let rgb: Vec<u8> = img.data.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
             let t = std::time::Instant::now();
             let chosen = img.encode_png().unwrap();
-            eprintln!("{f} ({}x{}): encode_png {:.1} ms {:.0} KB", img.width, img.height, t.elapsed().as_secs_f64() * 1e3, chosen.len() as f64 / 1024.0);
+            eprintln!(
+                "{f} ({}x{}): encode_png {:.1} ms {:.0} KB",
+                img.width,
+                img.height,
+                t.elapsed().as_secs_f64() * 1e3,
+                chosen.len() as f64 / 1024.0
+            );
             if std::env::var_os("GLINT_BENCH_ALL").is_none() {
                 continue;
             }
-            for (cname, c) in [("Fastest", png::Compression::Fastest), ("Fast", png::Compression::Fast), ("Balanced", png::Compression::Balanced), ("High", png::Compression::High)] {
+            for (cname, c) in [
+                ("Fastest", png::Compression::Fastest),
+                ("Fast", png::Compression::Fast),
+                ("Balanced", png::Compression::Balanced),
+                ("High", png::Compression::High),
+            ] {
                 for (chan, data, ct) in [("RGBA", &img.data, png::ColorType::Rgba), ("RGB", &rgb, png::ColorType::Rgb)] {
                     let mut best = f64::MAX;
                     let mut size = 0;

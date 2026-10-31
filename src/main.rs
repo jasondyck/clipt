@@ -108,7 +108,11 @@ pub static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock:
 fn run() -> Result<()> {
     let t0 = *START.get_or_init(std::time::Instant::now);
     let dbg = std::env::var_os("GLINT_DEBUG").is_some();
-    let lap = |what: &str| if dbg { eprintln!("glint: {:>7.1} ms  {what}", t0.elapsed().as_secs_f64() * 1e3) };
+    let lap = |what: &str| {
+        if dbg {
+            eprintln!("glint: {:>7.1} ms  {what}", t0.elapsed().as_secs_f64() * 1e3)
+        }
+    };
     let args = parse_args()?;
     let cfg = Config::load()?;
     let backend = match args.backend.as_deref().unwrap_or(&cfg.backend) {
@@ -152,7 +156,12 @@ fn run() -> Result<()> {
                 let (x, y, w, h) = parse_geometry(g)?;
                 let hit: Vec<Output> = outputs
                     .iter()
-                    .filter(|o| (o.x as f64) < x + w && x < (o.x + o.width as i32) as f64 && (o.y as f64) < y + h && y < (o.y + o.height as i32) as f64)
+                    .filter(|o| {
+                        (o.x as f64) < x + w
+                            && x < (o.x + o.width as i32) as f64
+                            && (o.y as f64) < y + h
+                            && y < (o.y + o.height as i32) as f64
+                    })
                     .cloned()
                     .collect();
                 anyhow::ensure!(!hit.is_empty(), "geometry '{g}' is outside every output");
@@ -208,22 +217,14 @@ fn gui(cfg: &Config, args: &Args, shots: Vec<Shot>, fonts: text::Fonts, lap: &dy
     // away, and only then encode: the encode can take ~100 ms and the screen
     // shouldn't stay frozen for it. Early paste requests wait for the PNG.
     let want_copy = outcome == Outcome::Copy || cfg.copy_on_save;
-    let clip = if want_copy {
-        session.claim_clipboard().map_err(|e| eprintln!("glint: {e:#}")).ok()
-    } else {
-        None
-    };
+    let clip = if want_copy { session.claim_clipboard().map_err(|e| eprintln!("glint: {e:#}")).ok() } else { None };
     session.hide()?;
     let png = img.encode_png()?;
     if let Some(c) = &clip {
         c.set(png.clone());
     }
 
-    let saved = if outcome == Outcome::Save || args.output.is_some() {
-        Some(write_png(cfg, args.output.as_deref(), &png)?)
-    } else {
-        None
-    };
+    let saved = if outcome == Outcome::Save || args.output.is_some() { Some(write_png(cfg, args.output.as_deref(), &png)?) } else { None };
     if cfg.notify {
         match (&saved, want_copy) {
             (Some(Some(p)), true) => notify::send("Screenshot saved and copied", &p.display().to_string(), Some(p)),
@@ -304,7 +305,8 @@ fn stitch(shots: &[Shot]) -> image::Image {
     let h = ((maxy - miny) as f64 * scale).round() as u32;
     let mut pm = tiny_skia::Pixmap::new(w, h).unwrap();
     for s in shots {
-        let src = tiny_skia::Pixmap::from_vec(s.image.data.clone(), tiny_skia::IntSize::from_wh(s.image.width, s.image.height).unwrap()).unwrap();
+        let src =
+            tiny_skia::Pixmap::from_vec(s.image.data.clone(), tiny_skia::IntSize::from_wh(s.image.width, s.image.height).unwrap()).unwrap();
         let k = (scale / s.scale()) as f32;
         let tx = ((s.output.x - minx) as f64 * scale).round() as f32;
         let ty = ((s.output.y - miny) as f64 * scale).round() as f32;

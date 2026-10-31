@@ -31,12 +31,14 @@ fn keycode(name: &str) -> Option<(u32, bool)> {
         if c.is_ascii_uppercase() {
             return keycode(&c.to_ascii_lowercase().to_string()).map(|(k, _)| (k, true));
         }
-        return row("qwertyuiop", 16).or_else(|| row("asdfghjkl", 30)).or_else(|| row("zxcvbnm", 44)).or_else(|| row("1234567890", 2)).or(match c {
-            ' ' => Some((57, false)),
-            '[' => Some((26, false)),
-            ']' => Some((27, false)),
-            _ => None,
-        });
+        return row("qwertyuiop", 16).or_else(|| row("asdfghjkl", 30)).or_else(|| row("zxcvbnm", 44)).or_else(|| row("1234567890", 2)).or(
+            match c {
+                ' ' => Some((57, false)),
+                '[' => Some((26, false)),
+                ']' => Some((27, false)),
+                _ => None,
+            },
+        );
     }
     Some((
         match name {
@@ -141,7 +143,15 @@ fn main() {
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for S {
-    fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 wayland_client::delegate_noop!(S: ignore wl_seat::WlSeat);
 wayland_client::delegate_noop!(S: ZwlrVirtualPointerManagerV1);

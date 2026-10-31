@@ -191,7 +191,9 @@ impl Shape {
             Rect::from_ltrb(l, t, r.max(l + 1.0), b.max(t + 1.0))
         };
         match self {
-            Shape::Rect { a, b, width, .. } | Shape::Ellipse { a, b, width, .. } | Shape::Line { a, b, width, .. } => pad(of_pts(&[*a, *b]), width + 2.0),
+            Shape::Rect { a, b, width, .. } | Shape::Ellipse { a, b, width, .. } | Shape::Line { a, b, width, .. } => {
+                pad(of_pts(&[*a, *b]), width + 2.0)
+            }
             Shape::Arrow { a, b, width, .. } => pad(of_pts(&[*a, *b]), width * 3.0 + 12.0),
             Shape::Pixelate { a, b, block } => pad(of_pts(&[*a, *b]), block + 2.0),
             Shape::Pen { pts, width, .. } | Shape::Marker { pts, width, .. } => pad(of_pts(pts), width + 2.0),

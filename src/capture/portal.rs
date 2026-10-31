@@ -22,9 +22,7 @@ pub fn register(conn: &zbus::blocking::Connection) {
 }
 
 pub fn available(conn: &zbus::blocking::Connection) -> bool {
-    zbus::blocking::Proxy::new(conn, DEST, PATH, "org.freedesktop.portal.Screenshot")
-        .and_then(|p| p.get_property::<u32>("version"))
-        .is_ok()
+    zbus::blocking::Proxy::new(conn, DEST, PATH, "org.freedesktop.portal.Screenshot").and_then(|p| p.get_property::<u32>("version")).is_ok()
 }
 
 pub fn capture(conn: &zbus::blocking::Connection, outputs: &[Output]) -> Result<Vec<Shot>> {

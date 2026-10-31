@@ -105,6 +105,14 @@ pub fn copy_and_serve(png: Vec<u8>, before_serving: impl FnOnce()) -> Result<()>
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
-    fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 wayland_client::delegate_noop!(State: ignore wl_seat::WlSeat);

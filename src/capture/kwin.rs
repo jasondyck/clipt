@@ -14,10 +14,7 @@ const DEST: &str = "org.kde.KWin.ScreenShot2";
 const PATH: &str = "/org/kde/KWin/ScreenShot2";
 
 pub fn available(conn: &zbus::blocking::Connection) -> bool {
-    zbus::blocking::fdo::DBusProxy::new(conn)
-        .ok()
-        .and_then(|p| p.name_has_owner(DEST.try_into().unwrap()).ok())
-        .unwrap_or(false)
+    zbus::blocking::fdo::DBusProxy::new(conn).ok().and_then(|p| p.name_has_owner(DEST.try_into().unwrap()).ok()).unwrap_or(false)
 }
 
 pub fn capture(conn: &zbus::blocking::Connection, outputs: &[Output], cursor: bool) -> Result<Vec<Shot>> {
@@ -48,9 +45,8 @@ fn capture_screen(proxy: &zbus::blocking::Proxy, name: &str, cursor: bool) -> Re
     };
     let data = reader.join().map_err(|_| anyhow::anyhow!("pipe reader panicked"))??;
 
-    let get = |k: &str| -> Result<u32> {
-        reply.get(k).and_then(|v| u32::try_from(v).ok()).with_context(|| format!("missing '{k}' in reply"))
-    };
+    let get =
+        |k: &str| -> Result<u32> { reply.get(k).and_then(|v| u32::try_from(v).ok()).with_context(|| format!("missing '{k}' in reply")) };
     if let Some(t) = reply.get("type") {
         let t: &str = t.downcast_ref().unwrap_or("?");
         if t != "raw" {
