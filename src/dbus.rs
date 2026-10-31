@@ -7,8 +7,19 @@ use zbus::zvariant::DynamicType;
 
 pub use zbus::Connection;
 
+/// How long any method call may take. Every call clipt makes answers at once
+/// (slow user interaction arrives later as signals), so a call that hasn't is
+/// a hung service, such as a wedged xdg-desktop-portal; give up and let the
+/// caller fall back rather than freezing.
+pub const CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A session-bus connection builder with [`CALL_TIMEOUT`] applied.
+pub fn builder() -> zbus::connection::Builder<'static> {
+    zbus::connection::Builder::session().method_timeout(CALL_TIMEOUT)
+}
+
 pub fn session() -> zbus::Result<Connection> {
-    zbus::block_on(Connection::session())
+    zbus::block_on(builder().build())
 }
 
 /// Fire a method call and wait for the reply.
@@ -34,8 +45,16 @@ pub fn name_has_owner(conn: &Connection, name: &str) -> bool {
 pub struct Proxy<'a>(zbus::Proxy<'a>);
 
 impl<'a> Proxy<'a> {
+    /// Properties aren't cached: clipt reads each one once, and a cache fill
+    /// waits for its GetAll outside [`CALL_TIMEOUT`], so a hung service would
+    /// hang the read.
     pub fn new(conn: &Connection, dest: &'a str, path: &'a str, iface: &'a str) -> zbus::Result<Self> {
-        zbus::block_on(zbus::Proxy::new(conn, dest, path, iface)).map(Self)
+        let b = zbus::proxy::Builder::<zbus::Proxy>::new(conn)
+            .destination(dest)
+            .path(path)
+            .interface(iface)
+            .cache_properties(zbus::proxy::CacheProperties::No);
+        zbus::block_on(b.build()).map(Self)
     }
 
     pub fn call<B, R>(&self, method: &str, body: &B) -> zbus::Result<R>
@@ -44,6 +63,14 @@ impl<'a> Proxy<'a> {
         R: for<'d> zbus::zvariant::DynamicDeserialize<'d>,
     {
         zbus::block_on(self.0.call(method, body))
+    }
+
+    /// Send without waiting for (or getting) a reply.
+    pub fn call_noreply<B>(&self, method: &str, body: &B) -> zbus::Result<()>
+    where
+        B: serde::Serialize + DynamicType,
+    {
+        zbus::block_on(self.0.call_noreply(method, body))
     }
 
     pub fn get_property<T>(&self, name: &str) -> zbus::Result<T>

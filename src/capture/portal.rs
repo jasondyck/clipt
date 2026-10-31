@@ -15,10 +15,16 @@ const PATH: &str = "/org/freedesktop/portal/desktop";
 /// Unsandboxed apps have no app ID unless they register one, and GNOME then
 /// re-asks screenshot permission every time; registering as "clipt" lets
 /// "Allow" stick. Must precede any other portal call on this connection and
-/// needs xdg-desktop-portal 1.19+, so failure is ignored.
+/// needs xdg-desktop-portal 1.19+, so failure is ignored. Sent without
+/// waiting for the reply (the bus keeps it ahead of later calls), so a slow
+/// portal doesn't hold up startup. Flatpak apps already have an app ID, and
+/// the Registry is only for host apps.
 pub fn register(conn: &crate::dbus::Connection) {
+    if crate::update::flatpak() {
+        return;
+    }
     let _ = crate::dbus::Proxy::new(conn, DEST, PATH, "org.freedesktop.host.portal.Registry")
-        .and_then(|p| p.call::<_, ()>("Register", &("clipt", HashMap::<&str, Value>::new())));
+        .and_then(|p| p.call_noreply("Register", &("clipt", HashMap::<&str, Value>::new())));
 }
 
 pub fn available(conn: &crate::dbus::Connection) -> bool {

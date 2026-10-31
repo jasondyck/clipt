@@ -419,7 +419,7 @@ pub fn run(save_dir: String, check_updates: bool) -> Result<()> {
     unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) };
 
     zbus::block_on(async move {
-        let conn = zbus::connection::Builder::session()
+        let conn = crate::dbus::builder()
             .serve_at(ITEM_PATH, Item { save_dir: save_dir.clone(), pixmaps: pixmaps() })
             .serve_at(MENU_PATH, Menu { save_dir })
             .build()
