@@ -1,0 +1,3 @@
+[default]
+# "PNGs" gets split into "PN" + "Gs".
+extend-ignore-re = ["PNGs"]

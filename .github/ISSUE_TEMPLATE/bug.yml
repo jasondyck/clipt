@@ -1,0 +1,31 @@
+name: Bug report
+description: Something captures wrong, crashes, or misbehaves
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations: { required: true }
+  - type: input
+    id: compositor
+    attributes:
+      label: Compositor and version
+      placeholder: KDE Plasma 6.8 / GNOME 51 / Sway 1.12 / Hyprland 0.52 / niri …
+    validations: { required: true }
+  - type: textarea
+    id: list
+    attributes:
+      label: Output of `glint list`
+      description: Monitors, their layout and scale, and the capture backends glint sees.
+      render: text
+    validations: { required: true }
+  - type: textarea
+    id: debug
+    attributes:
+      label: Output of the failing command with `GLINT_DEBUG=1`
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: glint version (`glint --version`)

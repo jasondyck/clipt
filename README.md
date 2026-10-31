@@ -17,11 +17,18 @@ Capture backend is picked automatically (override with `-b` or `backend =`):
 
 The editor overlay uses wlr-layer-shell where available (KDE, wlroots,
 Hyprland, niri, COSMIC) and falls back to a fullscreen window on GNOME.
-Multiple monitors and fractional scaling are handled: the overlay shows each
-output at native resolution, and exports are at native resolution.
+### Multiple monitors
+
+There is no "pick a monitor" step: every monitor gets its own overlay at the
+same time, each drawn at that monitor's native resolution, and you can drag a
+selection on any of them, or across two. Mixed resolutions, fractional scaling
+(1.25×, 1.5×), offset layouts and rotated portrait monitors are all covered by
+the end-to-end tests, and saved images keep the native pixel size of the
+monitor they came from.
 
 Tested on KDE Plasma 6.8 (by hand), and end-to-end in containers on Sway 1.12
-(single, 1.5× fractional and mixed-DPI dual output) and GNOME Shell 51.
+and GNOME Shell 51 across single, fractional-scale, mixed-DPI and
+three-monitor (offset + rotated) layouts.
 
 ## Usage
 
@@ -60,10 +67,25 @@ cursor = false
 # font = "/usr/share/fonts/TTF/Inter-Regular.ttf"
 ```
 
+## Performance
+
+Measured on a 4K KDE Plasma 6.8 desktop:
+
+|                          | glint  | Spectacle 6.8 | Flameshot 14 |
+|--------------------------|--------|---------------|--------------|
+| Full-screen capture to PNG | ~100 ms | 388 ms      | 593 ms       |
+| Region overlay memory    | 71 MB  | 337 MB        | 126 MB       |
+| CPU to open the overlay  | 50 ms  | 570 ms        | 140 ms       |
+
+Redraws are damage-tracked: moving the pointer or drawing touches only the
+changed pixels (0.5-5 ms per frame at 4K).
+
 ## Install
 
+From a release tarball or a checkout:
+
 ```
-./install.sh        # ~/.local/bin/glint + desktop entry
+./install.sh        # builds if needed; ~/.local/bin/glint + desktop entry
 ```
 
 On KDE the desktop entry carries `X-KDE-DBUS-Restricted-Interfaces` so KWin
@@ -82,10 +104,12 @@ gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore \
   screenshot true screenshot glint "['yes']"
 ```
 
-## Tests
+## Development
 
-```
-cargo test                                   # editor logic + partial-repaint equivalence
-cargo test --release bench_4k -- --ignored --nocapture
-tests/e2e.sh                                 # headless Sway (3 layouts) + GNOME in Docker
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the checks CI runs, the
+containerised Sway/GNOME end-to-end suites and the benchmarks.
+
+## Licence
+
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at
+your option.

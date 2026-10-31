@@ -1,0 +1,55 @@
+name: release
+
+# Push a tag like v0.2.0: builds static-ish binaries for x86_64 and aarch64,
+# packs them with the desktop entry and licences, and drafts a GitHub release
+# whose notes are that version's CHANGELOG section.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { runner: ubuntu-22.04, arch: x86_64 }
+          - { runner: ubuntu-22.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Built on the oldest supported Ubuntu so the glibc requirement stays low.
+      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
+      - run: cargo build --release --locked
+      - name: pack
+        run: |
+          name="glint-${GITHUB_REF_NAME}-${{ matrix.arch }}-linux"
+          mkdir -p "$name"
+          cp target/release/glint data/glint.desktop install.sh README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "$name/"
+          tar czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.arch }}
+          path: glint-*.tar.gz*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: notes from CHANGELOG
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          awk -v v="$v" '/^## \[/{p = index($0, "[" v "]") > 0; next} p' CHANGELOG.md > notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          body_path: notes.md
+          files: glint-*.tar.gz*
