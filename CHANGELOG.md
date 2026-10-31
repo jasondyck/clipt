@@ -10,6 +10,8 @@ All notable changes are listed here. The format follows
 - clipt hung at startup, before showing anything, when xdg-desktop-portal had
   stopped answering, even on KDE where the portal isn't used to capture. D-Bus
   calls now give up after 5 seconds and clipt carries on without that backend.
+- A faint one-pixel seam could flash along the window highlight while it
+  glided between windows; the highlight now moves in whole pixels.
 
 ## [0.1.0] - 2026-10-31
 
