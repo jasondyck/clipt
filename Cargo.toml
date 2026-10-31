@@ -1,6 +1,6 @@
 [package]
 name = "clipt"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Fast, lightweight screenshot tool for Wayland and X11 with region select and annotation"
 license = "MIT OR Apache-2.0"

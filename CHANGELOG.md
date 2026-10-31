@@ -6,6 +6,8 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-31
+
 ### Fixed
 - clipt hung at startup, before showing anything, when xdg-desktop-portal had
   stopped answering, even on KDE where the portal isn't used to capture. D-Bus
