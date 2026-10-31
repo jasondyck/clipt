@@ -1094,27 +1094,27 @@
  {
   "type": "archive",
   "archive-type": "tar-gzip",
-  "url": "https://static.crates.io/crates/toml/toml-0.9.12+spec-1.1.0.crate",
-  "sha256": "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863",
-  "dest": "cargo/vendor/toml-0.9.12+spec-1.1.0"
+  "url": "https://static.crates.io/crates/toml/toml-1.1.8+spec-1.1.0.crate",
+  "sha256": "20489e00e4d8741d6be680764cc12e270655e375a20d1011e844a9c3379e678d",
+  "dest": "cargo/vendor/toml-1.1.8+spec-1.1.0"
  },
  {
   "type": "inline",
-  "contents": "{\"package\": \"cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863\", \"files\": {}}",
-  "dest": "cargo/vendor/toml-0.9.12+spec-1.1.0",
+  "contents": "{\"package\": \"20489e00e4d8741d6be680764cc12e270655e375a20d1011e844a9c3379e678d\", \"files\": {}}",
+  "dest": "cargo/vendor/toml-1.1.8+spec-1.1.0",
   "dest-filename": ".cargo-checksum.json"
  },
  {
   "type": "archive",
   "archive-type": "tar-gzip",
-  "url": "https://static.crates.io/crates/toml_datetime/toml_datetime-0.7.5+spec-1.1.0.crate",
-  "sha256": "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347",
-  "dest": "cargo/vendor/toml_datetime-0.7.5+spec-1.1.0"
+  "url": "https://static.crates.io/crates/toml_datetime/toml_datetime-1.1.2+spec-1.1.0.crate",
+  "sha256": "2b86d767906c6c42421dcba507eb9d203e779497710a47782a224bb871653053",
+  "dest": "cargo/vendor/toml_datetime-1.1.2+spec-1.1.0"
  },
  {
   "type": "inline",
-  "contents": "{\"package\": \"92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347\", \"files\": {}}",
-  "dest": "cargo/vendor/toml_datetime-0.7.5+spec-1.1.0",
+  "contents": "{\"package\": \"2b86d767906c6c42421dcba507eb9d203e779497710a47782a224bb871653053\", \"files\": {}}",
+  "dest": "cargo/vendor/toml_datetime-1.1.2+spec-1.1.0",
   "dest-filename": ".cargo-checksum.json"
  },
  {
@@ -1414,19 +1414,6 @@
   "type": "inline",
   "contents": "{\"package\": \"ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc\", \"files\": {}}",
   "dest": "cargo/vendor/windows-sys-0.61.2",
-  "dest-filename": ".cargo-checksum.json"
- },
- {
-  "type": "archive",
-  "archive-type": "tar-gzip",
-  "url": "https://static.crates.io/crates/winnow/winnow-0.7.15.crate",
-  "sha256": "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945",
-  "dest": "cargo/vendor/winnow-0.7.15"
- },
- {
-  "type": "inline",
-  "contents": "{\"package\": \"df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945\", \"files\": {}}",
-  "dest": "cargo/vendor/winnow-0.7.15",
   "dest-filename": ".cargo-checksum.json"
  },
  {
