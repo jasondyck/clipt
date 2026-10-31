@@ -14,44 +14,50 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # A stalled Ubuntu mirror once hung jobs on apt for an hour: fail fast instead.
+  APT_OPTS: -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
+      - run: sudo apt-get $APT_OPTS update && sudo apt-get $APT_OPTS install -y libxkbcommon-dev
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev fonts-dejavu-core
+      - run: sudo apt-get $APT_OPTS update && sudo apt-get $APT_OPTS install -y libxkbcommon-dev fonts-dejavu-core
       - run: cargo test --locked
 
   msrv:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.89
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
+      - run: sudo apt-get $APT_OPTS update && sudo apt-get $APT_OPTS install -y libxkbcommon-dev
       - run: cargo check --all-targets --locked
 
   # Compile for every target we ship or expect distros to build, so libc and
   # platform differences surface in CI rather than in a packager's bug report.
   targets:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -70,7 +76,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
+      - run: sudo apt-get $APT_OPTS update && sudo apt-get $APT_OPTS install -y libxkbcommon-dev
       # Type-check only (no linking), so host pkg-config is fine.
       - run: cargo clippy --locked --target ${{ matrix.target }} -- -D warnings
         env:
@@ -78,6 +84,7 @@ jobs:
 
   nix:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: cachix/install-nix-action@v31
@@ -86,12 +93,14 @@ jobs:
 
   deny:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
 
   typos:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: crate-ci/typos@v1
@@ -101,6 +110,7 @@ jobs:
   e2e:
     needs: [test]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -120,7 +130,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
+      - run: sudo apt-get $APT_OPTS update && sudo apt-get $APT_OPTS install -y libxkbcommon-dev
       - run: cargo build --release --locked --bin clipt --example vinput
       - uses: docker/setup-buildx-action@v4
       - uses: docker/build-push-action@v7
