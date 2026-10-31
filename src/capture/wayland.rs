@@ -120,6 +120,7 @@ impl Wayland {
                     y: ly,
                     width: lw.max(1) as u32,
                     height: lh.max(1) as u32,
+                    native: (mode.0.max(0) as u32, mode.1.max(0) as u32),
                 }
             })
             .collect()
@@ -270,13 +271,15 @@ impl ShmBuffer {
 fn apply_transform(img: Image, t: wl_output::Transform) -> Image {
     use wl_output::Transform as T;
     // The buffer is in the output's native orientation; rotate it into the
-    // orientation the user sees.
+    // orientation the user sees. Verified against grim for all eight
+    // transforms on both protocols (tests/sway, "triple" layout).
     match t {
         T::Normal => img,
-        T::_90 => img.rotate(270),
+        T::_90 => img.rotate(90),
         T::_180 => img.rotate(180),
-        T::_270 => img.rotate(90),
+        T::_270 => img.rotate(270),
         T::Flipped => img.flip_horizontal(),
+        // Mirroring first reverses the sense of the rotation that follows.
         T::Flipped90 => img.flip_horizontal().rotate(270),
         T::Flipped180 => img.flip_horizontal().rotate(180),
         T::Flipped270 => img.flip_horizontal().rotate(90),

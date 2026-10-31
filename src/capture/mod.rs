@@ -24,6 +24,9 @@ pub struct Output {
     pub y: i32,
     pub width: u32,
     pub height: u32,
+    /// Physical pixel size as the user sees it (current mode, rotated).
+    /// `(0, 0)` when unknown.
+    pub native: (u32, u32),
 }
 
 /// One output's pixels. `image` is at native resolution, so its size may be
@@ -116,7 +119,7 @@ impl Capturer {
                     None => Err(anyhow::anyhow!("no session bus")),
                 },
                 Backend::Portal => match &self.bus {
-                    Some(bus) => portal::capture(bus, outputs),
+                    Some(bus) => portal::capture(bus, &self.wl.outputs(), outputs),
                     None => Err(anyhow::anyhow!("no session bus")),
                 },
             };

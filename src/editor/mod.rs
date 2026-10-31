@@ -707,7 +707,19 @@ mod tests {
         for p in image.data.chunks_exact_mut(4) {
             p.copy_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
         }
-        Shot { output: Output { index: 0, name: name.into(), description: String::new(), x, y: 0, width: w, height: h }, image }
+        Shot {
+            output: Output {
+                index: 0,
+                name: name.into(),
+                description: String::new(),
+                x,
+                y: 0,
+                width: w,
+                height: h,
+                native: (w * scale, h * scale),
+            },
+            image,
+        }
     }
 
     fn editor(shots: Vec<Shot>, swap: bool) -> Editor {
@@ -811,7 +823,8 @@ mod tests {
             let (x, y) = (i % 640, i / 640);
             p.copy_from_slice(&[(x * 7 % 256) as u8, (y * 5 % 256) as u8, ((x ^ y) % 256) as u8, 255]);
         }
-        let out = Output { index: 0, name: "A".into(), description: String::new(), x: 0, y: 0, width: 640, height: 400 };
+        let out =
+            Output { index: 0, name: "A".into(), description: String::new(), x: 0, y: 0, width: 640, height: 400, native: (640, 400) };
         let mut ed = editor(vec![Shot { output: out, image: img }], true);
         let mut buf = Pixmap::new(640, 400).unwrap();
         let m = Mods::default();
@@ -981,7 +994,8 @@ mod tests {
     #[ignore]
     fn bench_4k() {
         let img = Image::new(3840, 2160);
-        let out = Output { index: 0, name: "A".into(), description: String::new(), x: 0, y: 0, width: 3840, height: 2160 };
+        let out =
+            Output { index: 0, name: "A".into(), description: String::new(), x: 0, y: 0, width: 3840, height: 2160, native: (3840, 2160) };
         let t = std::time::Instant::now();
         let mut ed = editor(vec![Shot { output: out, image: img }], true);
         eprintln!("editor new: {:?}", t.elapsed());

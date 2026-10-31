@@ -25,7 +25,9 @@ pub fn available(conn: &crate::dbus::Connection) -> bool {
     crate::dbus::Proxy::new(conn, DEST, PATH, "org.freedesktop.portal.Screenshot").and_then(|p| p.get_property::<u32>("version")).is_ok()
 }
 
-pub fn capture(conn: &crate::dbus::Connection, outputs: &[Output]) -> Result<Vec<Shot>> {
+/// `all` is every output (the portal image covers the whole desktop);
+/// `targets` are the ones to return.
+pub fn capture(conn: &crate::dbus::Connection, all: &[Output], targets: &[Output]) -> Result<Vec<Shot>> {
     let token = format!("glint{}", std::process::id());
     let sender = conn.unique_name().context("no unique bus name")?.trim_start_matches(':').replace('.', "_");
     let req_path = format!("{PATH}/request/{sender}/{token}");
@@ -58,20 +60,28 @@ pub fn capture(conn: &crate::dbus::Connection, outputs: &[Output]) -> Result<Vec
     // The portal drops a file in ~/Pictures; it's ours to clean up.
     let _ = std::fs::remove_file(&path);
     let full = Image::decode_png(&bytes)?;
-    Ok(split(&full, outputs))
+    Ok(split(&full, all, targets))
 }
 
-/// Slice a whole-desktop image into per-output images using logical geometry.
-pub fn split(full: &Image, outputs: &[Output]) -> Vec<Shot> {
-    let minx = outputs.iter().map(|o| o.x).min().unwrap_or(0);
-    let miny = outputs.iter().map(|o| o.y).min().unwrap_or(0);
-    let maxx = outputs.iter().map(|o| o.x + o.width as i32).max().unwrap_or(full.width as i32);
+/// Slice a whole-desktop image into per-output images. The portal renders the
+/// whole desktop at one scale (GNOME uses the highest monitor scale), so the
+/// scale comes from the full layout, and each slice is then resampled to its
+/// monitor's native resolution: a 1x monitor next to a 2x one yields its own
+/// 1280x720, not a 2560x1440 upscale.
+pub fn split(full: &Image, all: &[Output], targets: &[Output]) -> Vec<Shot> {
+    let minx = all.iter().map(|o| o.x).min().unwrap_or(0);
+    let miny = all.iter().map(|o| o.y).min().unwrap_or(0);
+    let maxx = all.iter().map(|o| o.x + o.width as i32).max().unwrap_or(full.width as i32);
     let scale = full.width as f64 / (maxx - minx).max(1) as f64;
-    outputs
+    targets
         .iter()
         .map(|o| {
             let px = |v: i32| (v as f64 * scale).round() as u32;
-            let image = full.crop(px(o.x - minx), px(o.y - miny), px(o.width as i32), px(o.height as i32));
+            let mut image = full.crop(px(o.x - minx), px(o.y - miny), px(o.width as i32), px(o.height as i32));
+            let (nw, nh) = o.native;
+            if nw > 0 && nh > 0 && (nw, nh) != (image.width, image.height) {
+                image = image.resize(nw, nh);
+            }
             Shot { output: o.clone(), image }
         })
         .collect()

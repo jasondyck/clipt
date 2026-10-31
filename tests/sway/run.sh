@@ -25,12 +25,16 @@ case $LAYOUT in
   single) echo 'output HEADLESS-1 mode 1280x720 scale 1 position 0 0' >> /tmp/sway.conf ;;
   frac)   echo 'output HEADLESS-1 mode 1920x1080 scale 1.5 position 0 0' >> /tmp/sway.conf ;;
   dual)   printf 'output HEADLESS-1 mode 1280x720 scale 1 position 0 0\noutput HEADLESS-2 mode 1920x1080 scale 2 position 1280 0\n' >> /tmp/sway.conf ;;
+  # A typical messy office desk: 1080p, a 1440p panel at 1.25x sitting
+  # 200px lower, and a portrait (rotated) monitor underneath the first.
+  triple) printf 'output HEADLESS-1 mode 1920x1080 scale 1 position 0 0\noutput HEADLESS-2 mode 2560x1440 scale 1.25 position 1920 200\noutput HEADLESS-3 mode 1280x1024 scale 1 transform 90 position 0 1080\n' >> /tmp/sway.conf ;;
 esac
 sway -c /tmp/sway.conf >/tmp/sway.log 2>&1 &
 for _ in $(seq 50); do ls $XDG_RUNTIME_DIR/wayland-* >/dev/null 2>&1 && break; sleep 0.1; done
 export WAYLAND_DISPLAY=$(basename $(ls $XDG_RUNTIME_DIR/wayland-? | head -1))
 export SWAYSOCK=$(ls $XDG_RUNTIME_DIR/sway-ipc.* | head -1)
 [ "$LAYOUT" = dual ] && swaymsg create_output >/dev/null && swaymsg reload >/dev/null
+[ "$LAYOUT" = triple ] && swaymsg create_output >/dev/null && swaymsg create_output >/dev/null && swaymsg reload >/dev/null
 sleep 1
 echo "== layout $LAYOUT"
 /glint list | sed 's/^/  /'
@@ -157,6 +161,56 @@ if [ "$LAYOUT" = dual ]; then
   act "key Return"; sleep 0.8
   check "selection on HEADLESS-2 is 2x (400x300)" '[ "$(wl-paste -t image/png 2>/dev/null | magick identify -format %wx%h - 2>/dev/null)" = 400x300 ]'
 fi
+if [ "$LAYOUT" = triple ]; then
+  echo "-- triple: per-output captures (rotation, fractional scale)"
+  for o in HEADLESS-1 HEADLESS-2 HEADLESS-3; do
+    /glint screen $o -o /tmp/s-$o.png; grim -o $o /tmp/g-$o.png 2>/tmp/grim.err || echo "  (grim -o $o: $(cat /tmp/grim.err))"
+    [ -d /out ] && cp /tmp/s-$o.png /out/glint-$o.png && cp /tmp/g-$o.png /out/grim-$o.png 2>/dev/null
+    d=$(magick compare -metric AE /tmp/s-$o.png /tmp/g-$o.png null: 2>&1 | cut -d" " -f1)
+    check "screen $o $(size /tmp/s-$o.png) matches grim $(size /tmp/g-$o.png) (AE=$d)" '[ "$(size /tmp/s-$o.png)" = "$(size /tmp/g-$o.png)" ] && [ "${d%.*}" -lt 100 ]'
+  done
+
+  echo "-- triple: every output transform, both protocols, vs grim"
+  for t in 90 180 270 flipped flipped-90 flipped-180 flipped-270 normal; do
+    swaymsg -q output HEADLESS-3 transform $t; sleep 0.3
+    grim -o HEADLESS-3 /tmp/gt.png
+    for b in ext wlr; do
+      /glint screen HEADLESS-3 -b $b -o /tmp/st.png
+      d=$(magick compare -metric AE /tmp/st.png /tmp/gt.png null: 2>&1 | cut -d" " -f1)
+      check "transform $t via $b: $(size /tmp/st.png) (AE=$d)" '[ "$(size /tmp/st.png)" = "$(size /tmp/gt.png)" ] && [ "${d%.*}" -lt 100 ]'
+    done
+  done
+  swaymsg -q output HEADLESS-3 transform 90; sleep 0.3
+
+  echo "-- triple: no monitor picker: drag directly on any output"
+  # HEADLESS-2 spans logical x 1920..3968, y 200..1352 at 1.25x
+  gui
+  drag 2100 400 2500 700
+  act "key Return"; sleep 0.8
+  wl-paste -t image/png > /tmp/t2.png 2>/dev/null
+  check "drag on the 1.25x output copies 500x375 (got $(size /tmp/t2.png))" '[ "$(size /tmp/t2.png)" = 500x375 ]'
+  d=$(magick compare -metric AE /tmp/t2.png <(grim -g "2100,400 400x300" -) null: 2>&1 | cut -d" " -f1)
+  check "pixels match grim for that region (AE=$d)" '[ "${d%.*}" -lt 100 ]'
+
+  # HEADLESS-3 is portrait: logical 1024x1280 at y 1080
+  gui
+  act "move 500 1700" click; sleep 0.3
+  act "key Return"; sleep 0.8
+  wl-paste -t image/png > /tmp/t3.png 2>/dev/null
+  check "click on the portrait output copies it upright (1024x1280, got $(size /tmp/t3.png))" '[ "$(size /tmp/t3.png)" = 1024x1280 ]'
+  d=$(magick compare -metric AE /tmp/t3.png /tmp/g-HEADLESS-3.png null: 2>&1 | cut -d" " -f1)
+  check "portrait copy matches grim -o HEADLESS-3 (AE=$d)" '[ "${d%.*}" -lt 100 ]'
+
+  echo "-- triple: selection across the offset 1x/1.25x boundary"
+  gui
+  drag 1800 300 2040 500
+  act "key Return"; sleep 0.8
+  wl-paste -t image/png > /tmp/tx.png 2>/dev/null
+  # centre (1920,400) is on the boundary; either scale is acceptable, but
+  # the image must be the selection at one consistent scale
+  check "spanning copy is 240x200 at 1x or 300x250 at 1.25x (got $(size /tmp/tx.png))" '[ "$(size /tmp/tx.png)" = 240x200 ] || [ "$(size /tmp/tx.png)" = 300x250 ]'
+fi
 exec 3>&-
+[ -d /out ] && cp /tmp/sway.log /out/sway.log
 pkill glint; echo "== $LAYOUT: $pass passed, $fail failed"
 [ $fail -eq 0 ]

@@ -43,12 +43,51 @@ impl Image {
         out
     }
 
+    /// High-quality resample (bicubic, or area-averaged when shrinking by
+    /// 2x or more, which bicubic alone would alias).
+    pub fn resize(&self, w: u32, h: u32) -> Self {
+        let mut src = self.clone();
+        // Halve with a box filter while that still stays above the target.
+        while src.width >= w * 2 && src.height >= h * 2 {
+            src = src.half();
+        }
+        if (src.width, src.height) == (w, h) {
+            return src;
+        }
+        let pm = tiny_skia::Pixmap::from_vec(src.data, tiny_skia::IntSize::from_wh(src.width, src.height).unwrap()).unwrap();
+        let mut out = tiny_skia::Pixmap::new(w, h).unwrap();
+        let (sx, sy) = (w as f32 / pm.width() as f32, h as f32 / pm.height() as f32);
+        let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bicubic, ..Default::default() };
+        out.draw_pixmap(0, 0, pm.as_ref(), &paint, tiny_skia::Transform::from_scale(sx, sy), None);
+        Self { width: w, height: h, data: out.take() }
+    }
+
+    /// 2x2 box downsample.
+    fn half(&self) -> Self {
+        let (w, h) = (self.width / 2, self.height / 2);
+        let mut out = Self::new(w, h);
+        let s = self.width as usize * 4;
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                let i = (y * 2) * s + x * 8;
+                for c in 0..4 {
+                    let sum = self.data[i + c] as u32
+                        + self.data[i + 4 + c] as u32
+                        + self.data[i + s + c] as u32
+                        + self.data[i + s + 4 + c] as u32;
+                    out.data[(y * w as usize + x) * 4 + c] = ((sum + 2) / 4) as u8;
+                }
+            }
+        }
+        out
+    }
+
     /// PNG encode tuned for screenshots (see `bench_png`):
     /// * opaque images are written as RGB: ~20% smaller and faster;
     /// * fdeflate's `Fast` first (4K desktop ~30 ms); when that shows the
-    ///   content compresses well (text, flat UI, gradients: under 10% of raw) it is
-    ///   re-encoded with
-    ///   `Balanced`, which for such content is cheap (70-140 ms) and 1.7-4x smaller.
+    ///   content compresses well (text, flat UI, gradients: under 10% of raw)
+    ///   it is re-encoded with `Balanced`, which for such content is cheap
+    ///   (70-140 ms) and 1.7-4x smaller.
     pub fn encode_png(&self) -> anyhow::Result<Vec<u8>> {
         let rgb = self.to_rgb_if_opaque();
         let (data, color) = match &rgb {
