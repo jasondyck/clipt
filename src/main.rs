@@ -143,14 +143,27 @@ fn run() -> Result<()> {
                     None => &outputs[0],
                 };
                 vec![o.clone()]
+            } else if let Some(g) = &args.geometry {
+                // Like grim: only the outputs the region touches, so the
+                // result is at the highest scale among *those*.
+                let (x, y, w, h) = parse_geometry(g)?;
+                let hit: Vec<Output> = outputs
+                    .iter()
+                    .filter(|o| (o.x as f64) < x + w && x < (o.x + o.width as i32) as f64 && (o.y as f64) < y + h && y < (o.y + o.height as i32) as f64)
+                    .cloned()
+                    .collect();
+                anyhow::ensure!(!hit.is_empty(), "geometry '{g}' is outside every output");
+                hit
             } else {
                 outputs.clone()
             };
             let (_, shots) = cap.capture(&targets, cursor, backend)?;
+            drop(cap);
             let mut img = stitch(&shots);
             if let Some(g) = &args.geometry {
                 img = crop_geometry(&img, &shots, g)?;
             }
+            drop(shots);
             deliver(&cfg, &args, img)
         }
         "gui" => {
@@ -223,6 +236,8 @@ fn gui(cfg: &Config, args: &Args, shots: Vec<Shot>, fonts: text::Fonts, lap: &dy
 
 fn deliver(cfg: &Config, args: &Args, img: image::Image) -> Result<()> {
     let png = img.encode_png()?;
+    let (iw, ih) = (img.width, img.height);
+    drop(img);
     let path = if args.output.is_some() || !args.clipboard { write_png(cfg, args.output.as_deref(), &png)? } else { None };
     if let Some(p) = &path {
         if args.output.is_none() {
@@ -231,8 +246,10 @@ fn deliver(cfg: &Config, args: &Args, img: image::Image) -> Result<()> {
     }
     if args.clipboard {
         if cfg.notify {
-            notify::send("Screenshot copied", &format!("{} × {}", img.width, img.height), path.as_deref());
+            notify::send("Screenshot copied", &format!("{iw} × {ih}"), path.as_deref());
         }
+        // Hand freed pages back before lingering as the clipboard owner.
+        unsafe { libc::malloc_trim(0) };
         clipboard::copy_and_serve(png, daemonize)?;
     } else if let (true, Some(p)) = (cfg.notify && args.output.is_none(), &path) {
         notify::send("Screenshot saved", &p.display().to_string(), Some(p));
@@ -289,14 +306,21 @@ fn stitch(shots: &[Shot]) -> image::Image {
     image::Image { width: w, height: h, data: pm.take() }
 }
 
-/// Crop a stitched image to slurp-style "X,Y WxH" logical geometry.
-fn crop_geometry(img: &image::Image, shots: &[Shot], g: &str) -> Result<image::Image> {
+/// Parse slurp-style "X,Y WxH" logical geometry.
+fn parse_geometry(g: &str) -> Result<(f64, f64, f64, f64)> {
     let bad = || anyhow::anyhow!("bad geometry '{g}', expected \"X,Y WxH\"");
     let (pos, size) = g.trim().split_once(' ').ok_or_else(bad)?;
     let (x, y) = pos.split_once(',').ok_or_else(bad)?;
     let (w, h) = size.split_once('x').ok_or_else(bad)?;
     let p = |s: &str| s.trim().parse::<f64>().map_err(|_| bad());
-    let (x, y, w, h) = (p(x)?, p(y)?, p(w)?, p(h)?);
+    let r = (p(x)?, p(y)?, p(w)?, p(h)?);
+    anyhow::ensure!(r.2 > 0.0 && r.3 > 0.0, bad());
+    Ok(r)
+}
+
+/// Crop a stitched image to slurp-style geometry.
+fn crop_geometry(img: &image::Image, shots: &[Shot], g: &str) -> Result<image::Image> {
+    let (x, y, w, h) = parse_geometry(g)?;
     let scale = shots.iter().map(|s| s.scale()).fold(1.0f64, f64::max);
     let minx = shots.iter().map(|s| s.output.x).min().unwrap_or(0) as f64;
     let miny = shots.iter().map(|s| s.output.y).min().unwrap_or(0) as f64;

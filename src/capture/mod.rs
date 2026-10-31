@@ -76,10 +76,11 @@ impl Capturer {
 
     pub fn available(&self) -> Vec<Backend> {
         let mut v = Vec::new();
-        match self.wl.protocol() {
-            Some(wayland::Protocol::ExtImageCopy) => v.push(Backend::Ext),
-            Some(wayland::Protocol::WlrScreencopy) => v.push(Backend::Wlr),
-            None => {}
+        for p in self.wl.protocols() {
+            v.push(match p {
+                wayland::Protocol::ExtImageCopy => Backend::Ext,
+                wayland::Protocol::WlrScreencopy => Backend::Wlr,
+            });
         }
         if let Some(bus) = &self.bus {
             if kwin::available(bus) {
@@ -104,7 +105,8 @@ impl Capturer {
         let mut errors = Vec::new();
         for b in order {
             let r = match b {
-                Backend::Ext | Backend::Wlr => self.wl.capture(outputs, cursor),
+                Backend::Ext => self.wl.capture(outputs, cursor, wayland::Protocol::ExtImageCopy),
+                Backend::Wlr => self.wl.capture(outputs, cursor, wayland::Protocol::WlrScreencopy),
                 Backend::Kwin => match &self.bus {
                     Some(bus) => kwin::capture(bus, outputs, cursor),
                     None => Err(anyhow::anyhow!("no session bus")),
@@ -115,7 +117,12 @@ impl Capturer {
                 },
             };
             match r {
-                Ok(shots) => return Ok((b, shots)),
+                Ok(shots) => {
+                    if std::env::var_os("GLINT_DEBUG").is_some() {
+                        eprintln!("glint: captured with {b:?}");
+                    }
+                    return Ok((b, shots));
+                }
                 Err(e) => errors.push(format!("{b:?}: {e:#}")),
             }
         }

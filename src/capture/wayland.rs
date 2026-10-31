@@ -67,6 +67,7 @@ pub struct Wayland {
     state: State,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Protocol {
     ExtImageCopy,
     WlrScreencopy,
@@ -121,19 +122,21 @@ impl Wayland {
             .collect()
     }
 
-    pub fn protocol(&self) -> Option<Protocol> {
+    /// Screencopy protocols the compositor offers, preferred first.
+    pub fn protocols(&self) -> Vec<Protocol> {
         let has = |n: &str| self.globals.contents().with_list(|l| l.iter().any(|g| g.interface == n));
+        let mut v = Vec::new();
         if has("ext_image_copy_capture_manager_v1") && has("ext_output_image_capture_source_manager_v1") {
-            Some(Protocol::ExtImageCopy)
-        } else if has("zwlr_screencopy_manager_v1") {
-            Some(Protocol::WlrScreencopy)
-        } else {
-            None
+            v.push(Protocol::ExtImageCopy);
         }
+        if has("zwlr_screencopy_manager_v1") {
+            v.push(Protocol::WlrScreencopy);
+        }
+        v
     }
 
-    pub fn capture(&mut self, outputs: &[Output], cursor: bool) -> Result<Vec<Shot>> {
-        let proto = self.protocol().context("compositor offers no screencopy protocol")?;
+    pub fn capture(&mut self, outputs: &[Output], cursor: bool, proto: Protocol) -> Result<Vec<Shot>> {
+        anyhow::ensure!(self.protocols().contains(&proto), "compositor doesn't offer {proto:?}");
         let qh = self.queue.handle();
         let shm: wl_shm::WlShm = self.globals.bind(&qh, 1..=1, ())?;
         let mut shots = Vec::new();

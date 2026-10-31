@@ -411,7 +411,7 @@ impl Overlay {
         let _ = s.bufs[idx].buffer.attach_to(surface);
         surface.commit();
         s.frame_pending = true;
-        if std::env::var_os("GLINT_DEBUG").is_some() {
+        if debug() {
             eprintln!("glint: {} buf{idx} painted {:.1}% in {render_ms:.2} ms", out.name, painted as f64 * 100.0 / full_area as f64);
         }
     }
@@ -448,6 +448,10 @@ impl Overlay {
             }
         }
     }
+}
+
+fn debug() -> bool {
+    std::env::var_os("GLINT_DEBUG").is_some()
 }
 
 fn map_key(ev: &KeyEvent, ctrl: bool) -> Option<Key> {
@@ -527,6 +531,9 @@ impl SeatHandler for Overlay {
         if self.data_device.is_none() {
             self.data_device = self.data_mgr.as_ref().map(|m| m.get_data_device(qh, &seat));
         }
+        if debug() {
+            eprintln!("glint: seat capability {cap:?}");
+        }
         if cap == Capability::Keyboard && self.keyboard.is_none() {
             self.keyboard = self.seats.get_keyboard(qh, &seat, None).ok();
         }
@@ -551,10 +558,16 @@ impl SeatHandler for Overlay {
 impl KeyboardHandler for Overlay {
     fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, serial: u32, _: &[u32], _: &[Keysym]) {
         self.serial = serial;
+        if debug() {
+            eprintln!("glint: keyboard focus");
+        }
     }
     fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32) {}
     fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, serial: u32, ev: KeyEvent) {
         self.serial = serial;
+        if debug() {
+            eprintln!("glint: key {:?} utf8 {:?} mods {:?}", ev.keysym, ev.utf8, self.mods);
+        }
         if let Some(k) = map_key(&ev, self.mods.ctrl) {
             if self.editor.key(k, self.mods) {
                 self.mark_all();
@@ -574,6 +587,9 @@ impl PointerHandler for Overlay {
     fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, events: &[PointerEvent]) {
         let mut dirty = false;
         for ev in events {
+            if debug() && !matches!(ev.kind, PointerEventKind::Motion { .. }) {
+                eprintln!("glint: pointer {:?} at {:?}", ev.kind, ev.position);
+            }
             let Some(p) = self.global(&ev.surface, ev.position) else { continue };
             dirty |= match ev.kind {
                 PointerEventKind::Enter { serial } => {
