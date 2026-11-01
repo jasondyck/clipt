@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Prepare a release: set the version in Cargo.toml and date the CHANGELOG.
+"""Prepare a release: set the version in Cargo.toml, date the CHANGELOG and
+list the release in the Flatpak metainfo.
 
     prepare-release.py 0.2.0          # bump + changelog, for the Release workflow
     prepare-release.py --verify 0.2.0 # only check Cargo.toml/CHANGELOG agree
@@ -7,6 +8,8 @@
 The [Unreleased] section's entries move into a new "## [X] - YYYY-MM-DD"
 section. If the CHANGELOG already has "## [X] - unreleased" (written ahead
 of time), the [Unreleased] entries are merged into it and it gets the date.
+Prereleases (X.Y.Z-rc1) aren't added to the metainfo, which lists only
+releases software centres should show.
 """
 
 import datetime
@@ -14,6 +17,7 @@ import re
 import sys
 from pathlib import Path
 
+METAINFO = Path("packaging/flatpak/io.github.jasondyck.clipt.metainfo.xml")
 SEMVER = re.compile(r"^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$")
 
 
@@ -69,6 +73,18 @@ def merge_bodies(a, b):
     return out
 
 
+def add_metainfo_release(text, version, date):
+    """Add <release version date/> as the newest release, once."""
+    if f'<release version="{version}"' in text:
+        return text
+    m = re.search(r"(?m)^(\s*)<releases>\n", text)
+    if not m:
+        die(f"{METAINFO} has no <releases>")
+    indent = m.group(1) + "  "
+    line = f'{indent}<release version="{version}" date="{date}"/>\n'
+    return text[: m.end()] + line + text[m.end() :]
+
+
 def main():
     args = sys.argv[1:]
     verify = "--verify" in args
@@ -118,6 +134,8 @@ def main():
     if not placed:
         die("couldn't place the release section")
     log.write_text("\n".join(out).rstrip() + "\n")
+    if "-" not in version:
+        METAINFO.write_text(add_metainfo_release(METAINFO.read_text(), version, today))
     print(f"prepared {version} ({today})")
 
 
