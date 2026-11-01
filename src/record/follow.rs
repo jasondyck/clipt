@@ -1,5 +1,6 @@
 //! Following a window by cropping its output, where the compositor can't
-//! capture single windows but says where they are (Sway and Hyprland IPC).
+//! capture single windows but says where they are (Sway and Hyprland IPC,
+//! the EWMH window list on X11).
 //! Polled ten times a second; the camera smooths the steps. Unlike window
 //! capture, whatever covers the window is recorded too.
 
@@ -16,9 +17,9 @@ pub fn supported() -> bool {
 
 /// Keep `crop` on window `id` (clipped to `out`) until the recording stops.
 /// A window that closes or leaves the output keeps its last crop.
-pub fn run(id: &str, out: &Output, crop: &Arc<Mutex<Option<LogicalRect>>>) {
+pub fn run(id: &str, out: &Output, crop: &Arc<Mutex<Option<LogicalRect>>>, x11: bool) {
     while !STOP.load(Ordering::SeqCst) {
-        if let Some(w) = crate::windows::list(false).into_iter().find(|w| w.id == id)
+        if let Some(w) = crate::windows::list(x11).into_iter().find(|w| w.id == id)
             && let Some(r) = clip(out, (w.x as f64, w.y as f64, w.width as f64, w.height as f64))
         {
             *crop.lock().unwrap() = Some(r);

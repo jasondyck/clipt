@@ -43,13 +43,14 @@ USAGE:
 
 OPTIONS:
     -o, --output PATH     Write the PNG to PATH ('-' for stdout) instead of the save dir
-                          (record: the .mp4/.mkv/.mov file)
+                          (record: the .mp4/.mkv/.mov/.gif file)
     -c, --clipboard       Copy to the clipboard (full/screen)
     -g, --geometry GEOM   Crop to \"X,Y WxH\" in logical pixels (slurp format)
     -d, --delay SECS      Wait before capturing
     -b, --backend NAME    Force a backend: ext, wlr, kwin, portal, x11
         --cursor          Include the pointer
         --fps N           Recording frame rate (default 30)
+        --gif             Save the recording as a GIF (at most 15 fps)
     -h, --help            Show this help
     -V, --version         Show the version
 
@@ -64,8 +65,8 @@ EDITOR KEYS:
 
 Config: ~/.config/clipt/config.toml (save_dir, filename, color, width,
 copy_on_save, notify, backend, cursor, font, video_dir, video_filename,
-record_fps, record_codec, max_duration). Recording needs ffmpeg and, for now,
-a wlroots-family compositor (Sway, Hyprland, niri, labwc, river, COSMIC).
+record_fps, record_codec, record_format, max_duration). Recording needs
+ffmpeg; on KDE and GNOME also PipeWire.
 ";
 
 #[derive(Default)]
@@ -83,6 +84,7 @@ struct Args {
     fps: Option<u32>,
     stop: bool,
     pause: Option<record::PauseCmd>,
+    gif: bool,
 }
 
 fn parse_args() -> Result<Args> {
@@ -100,6 +102,7 @@ fn parse_args() -> Result<Args> {
             Long("cursor") => a.cursor = true,
             Long("check") => a.check = true,
             Long("fps") => a.fps = Some(p.value()?.parse()?),
+            Long("gif") => a.gif = true,
             Long("stop") => a.stop = true,
             Long("pause") => a.pause = Some(record::PauseCmd::Pause),
             Long("resume") => a.pause = Some(record::PauseCmd::Resume),
@@ -207,7 +210,7 @@ fn run() -> Result<()> {
             },
             (Some(m), None) => bail!("unknown recording mode '{m}' (screen, region, or -g GEOM)"),
         };
-        let opts = record::Options { target, output: args.output.clone(), fps: args.fps, cursor, backend };
+        let opts = record::Options { target, output: args.output.clone(), fps: args.fps, cursor, backend, gif: args.gif };
         return record::run(&cfg, opts);
     }
 

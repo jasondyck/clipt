@@ -66,6 +66,27 @@ clipt record -g "100,50 301x200" -o /tmp/rec-g.mp4 2>/tmp/rec.err & rp=$!; sleep
 check "record -g records the area (302x200, got $(vsize /tmp/rec-g.mp4))" '[ "$(vsize /tmp/rec-g.mp4)" = 302x200 ]'
 
 mkfifo /tmp/rin; python3 /rdinput.py < /tmp/rin 2>/tmp/rd.err & exec 3>/tmp/rin
+
+if [ "$LAYOUT" = single ]; then
+# With one monitor GNOME's share dialog has it selected, so clicking Share
+# answers it; with two, nothing is preselected and the dialog can come up
+# inside the overview, which coordinate clicks can't drive reliably. The
+# portal code is the same either way; the dual layout's Mutter recordings
+# cover two monitors.
+echo "-- recording through the ScreenCast portal (-b portal)"
+# The first time, GNOME asks which screen to share; answer by clicking Share.
+CLIPT_DEBUG=1 clipt record screen -b portal -o /tmp/portal.mp4 2>/tmp/rec.err & rp=$!
+sleep 3; echo "move 925 148" >&3; sleep 0.3; echo click >&3; sleep 2.5
+clipt record --stop 2>/dev/null; wait $rp; rc=$?
+check "portal recording after Share exits cleanly (rc=$rc)" '[ $rc = 0 ]'
+check "it went through the portal" 'grep -q "portal screencast node" /tmp/rec.err'
+check "it's the first monitor at native size (1280x720, got $(vsize /tmp/portal.mp4))" '[ "$(vsize /tmp/portal.mp4)" = 1280x720 ]'
+check "the choice is remembered (restore token saved)" '[ -s $HOME/.local/state/clipt/screencast-restore-token ]'
+# The second time there's no dialog: the restore token answers it.
+clipt record -g "100,50 301x200" -b portal -o /tmp/portal-g.mp4 2>/tmp/rec.err & rp=$!
+sleep 3; clipt record --stop 2>/dev/null; wait $rp
+check "with the token, a region records without the dialog, cropped (302x200, got $(vsize /tmp/portal-g.mp4))" '[ "$(vsize /tmp/portal-g.mp4)" = 302x200 ]'
+fi
 act() { for a in "$@"; do echo "$a" >&3; done; }
 drag() { act "move $1 $2" down "move $(( ($1+$3)/2 )) $(( ($2+$4)/2 ))" "move $3 $4" up; sleep 0.5; }
 gui() { CLIPT_DEBUG=1 clipt gui 2>/tmp/gui.err & sleep 1.5; }

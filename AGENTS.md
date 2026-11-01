@@ -29,6 +29,7 @@ green. Locally, run what the change can break:
 | Any Rust | `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` |
 | Capture, overlay, editor input, recording, clipboard | also the matching `tests/e2e.sh IMAGE LAYOUT` suite (needs Docker), e.g. `tests/e2e.sh sway single` |
 | Dependencies (`Cargo.toml`, `Cargo.lock`) | also `cargo deny check` and `packaging/flatpak/cargo-sources.py` (commit the regenerated `cargo-sources.json`) |
+| Code behind the `pipewire` feature, or `#[cfg]`s | also `cargo clippy --no-default-features --all-targets -- -D warnings` |
 
 Notes:
 - CI's clippy is the latest stable toolchain, which has lints older local
@@ -37,7 +38,8 @@ Notes:
 - The minimum supported Rust is 1.89 (`rust-version` in `Cargo.toml`); don't
   use newer standard-library APIs without checking.
 - Don't link new C libraries: clipt must start on machines without them.
-  Load optional system libraries at runtime (`dlopen`) instead.
+  Load optional system libraries at runtime (`dlopen`) instead, as
+  `src/capture/pipewire.rs` does for libpipewire.
 
 ## Style
 

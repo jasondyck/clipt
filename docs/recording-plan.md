@@ -1,6 +1,6 @@
 # Video recording: implementation plan
 
-Status: phases 0–4 done (spike; pipeline and screen/region on wlroots; overlay, frame, tray, pause; window recording and the camera; KDE and GNOME over PipeWire), 2026-11-01.
+Status: phases 0–4 done, phase 5 done except recording in the Flatpak (X11, GIF, ScreenCast portal), 2026-11-01.
 
 ## Goal
 
@@ -207,13 +207,30 @@ GNOME and Flatpak with a restore token so the dialog appears once. CI:
 GNOME e2e (add PipeWire to its container); KDE checked with
 `kwin_wayland --virtual` and on a real Plasma session.
 
-**5. X11, GIF, portal + Flatpak, polish (about 1 week).** Adds the ScreenCast
-portal (restore token) for the Flatpak and desktops with neither wlroots
-capture nor KWin/Mutter screencasts. X11 source, GIF via ffmpeg's
-`palettegen`/`paletteuse`, config keys, README and CHANGELOG, Flatpak
-manifest (ffmpeg from the `org.freedesktop.Platform.ffmpeg-full`
-extension), and cross-target CI with `--no-default-features` where PipeWire
-can't build.
+**5. X11, GIF, portal (done 2026-11-01; Flatpak recording open).**
+- X11 (`x11/record.rs`): MIT-SHM `GetImage` into shared memory, taken only
+  on DAMAGE events (with the pointer included, every frame interval, since
+  the hardware cursor moving doesn't damage the screen); windows followed by
+  position through the EWMH list (`record/follow.rs`). No red frame on X11:
+  its override-redirect windows would be captured whenever the region
+  touches them.
+- GIF: the recording is made as a hidden MP4 and converted at stop with
+  `palettegen`/`paletteuse` (at most 15 fps), because a single-pass palette
+  makes ffmpeg hold every frame in memory.
+- ScreenCast portal (`capture/portal_cast.rs`): CreateSession,
+  SelectSources (persist_mode 2, restore token in
+  `~/.local/state/clipt`), Start, OpenPipeWireRemote; regions are cropped
+  inside the monitor the user shares. Tested in the GNOME suite by clicking
+  Share, then recording again with the token and no dialog.
+- Found on the way: libx264's B-frames gave sparse VFR recordings a short
+  MP4 duration too (as h264_vaapi's had), so every encoder now runs with
+  `-bf 0`.
+- Open: **recording in the Flatpak.** The plan said ffmpeg would come from
+  the `org.freedesktop.Platform.ffmpeg-full` extension, but that extension
+  provides ffmpeg's libraries, not the `ffmpeg` program clipt runs. Options:
+  build ffmpeg as a module of the Flatpak (simple, slow builds, larger
+  download), or encode through libavcodec directly (no subprocess, more
+  code).
 
 ## Spike results (2026-10-31)
 

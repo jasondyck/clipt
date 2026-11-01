@@ -99,6 +99,17 @@ check "--stop with nothing running fails" '! /clipt record --stop 2>/dev/null'
 /clipt record -g "-50,0 100x100" -o /tmp/rec-x.mp4 2>/tmp/rec.err
 check "a region outside every output is refused" 'grep -q "within one output" /tmp/rec.err'
 
+echo "-- recording to a GIF"
+/clipt record -g "100,50 301x200" --gif -o /tmp/rec.gif 2>/tmp/rec.err & rp=$!
+sleep 1; swaymsg -q 'output * bg #20c040 solid_color'; sleep 1
+/clipt record --stop; wait $rp
+swaymsg -q 'output * bg /tmp/bg.png stretch'; sleep 0.3
+check "--gif writes a GIF ($(file -b /tmp/rec.gif 2>/dev/null | cut -c1-30))" '[ "$(head -c 6 /tmp/rec.gif)" = GIF89a ]'
+gs=$(magick identify -format "%wx%h\n" /tmp/rec.gif 2>/dev/null | head -1)
+check "the GIF is the same size as the MP4 of that region ($(vsize /tmp/rec-g.mp4), got $gs)" '[ "$gs" = "$(vsize /tmp/rec-g.mp4)" ]'
+check "it has the change as a later frame ($(magick identify /tmp/rec.gif 2>/dev/null | wc -l) frames)" '[ "$(magick identify /tmp/rec.gif 2>/dev/null | wc -l)" -ge 2 ]'
+check "the intermediate MP4 is gone" '[ -z "$(ls /tmp/.rec.recording.mp4 2>/dev/null)" ]'
+
 echo "-- recording: pause/resume, frame colour"
 # Region recording shows a frame just outside the region: red, amber while paused.
 /clipt record -g "200,150 300x200" -o /tmp/rec-p.mp4 2>/tmp/rec.err &
