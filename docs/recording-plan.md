@@ -23,8 +23,8 @@ and handle resizes smoothly instead of jumping. No audio in the first version.
 
 ```
  capture source ──frames──▶ camera ──canvas frames──▶ writer ──▶ ffmpeg stdin ──▶ file.mp4
- (ext / wlr / PipeWire /    (crop, fit,              (constant fps,
-  X11, own thread)           ease, pad)               change; drops)  
+ (ext / wlr / PipeWire /    (crop, fit,              (on change,
+  X11, own thread)           ease, pad)               ≤ fps, drops)
 ```
 
 - **Source** (`src/record/source/*.rs`): one trait, `next_frame() -> Frame`
