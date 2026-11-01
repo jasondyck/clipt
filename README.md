@@ -11,6 +11,12 @@ Qt/GTK, CPU-rendered with tiny-skia.
 ![clipt's editor: a selection with its size label, a rectangle, an arrow,
 numbered counters, a highlighter, text and the toolbar](docs/screenshot.png)
 
+## Quick start
+
+- `clipt` — select a region and annotate it
+- `clipt full -c` — whole desktop to the clipboard
+- `clipt screen` — one output, saved to the save dir
+
 ## Desktop support
 
 | Desktop | Capture | Overlay | Tested in CI |
