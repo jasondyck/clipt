@@ -240,11 +240,11 @@ GNOME e2e (add PipeWire to its container); KDE checked with
   provides ffmpeg's libraries, not the `ffmpeg` program clipt runs. So the
   manifest builds ffmpeg 9.0.2 (static, with x264 and nv-codec-headers,
   and only the components clipt's command lines use: 6.9 MB, against 33 MB
-  with everything) rather than encoding through
-  libavcodec, which would have meant more code for the same result. Also
-  added: `--device=dri` and `--filesystem=xdg-videos`. Tested through the
-  Flatpak against headless Sway via `clipt-launch`: record, pause, resume
-  and stop from separate instances, MP4 (VA-API) and GIF.
+  with everything) rather than encoding through libavcodec, which would
+  have meant more code for the same result. Also added: `--device=dri` and
+  `--filesystem=xdg-videos`. Tested through the Flatpak against headless
+  Sway via `clipt-launch`: record, pause, resume and stop from separate
+  instances; .mp4, .mkv, .mov and .gif with VA-API, and libx264.
 
 ## Spike results (2026-10-31)
 
