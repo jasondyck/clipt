@@ -34,13 +34,20 @@ and handle resizes smoothly instead of jumping. No audio in the first version.
 - **Camera** (`src/record/camera.rs`): pure function of (frame size, canvas
   size, time) → transform, so it's unit-testable. See below.
 - **Writer** (`src/record/mod.rs`): hands the newest frame to ffmpeg at most
-  `fps` times a second, only when the screen changed. ffmpeg stamps frames
-  with their arrival time (`-use_wallclock_as_timestamps`) and keeps those
-  times (`-fps_mode passthrough`), so the output is variable frame rate: a
-  still screen costs nothing, and a slow encoder drops frames instead of
-  slowing the video. (Constant frame rate was the first plan; ffmpeg's cfr
-  mode padded the end of each recording by over a second.) At stop the last
-  frame is sent twice, a frame apart, so a still ending isn't cut short.
+  `fps` times a second, only when the screen changed, stamped with its
+  capture time minus any paused time. Frames travel in a minimal Matroska
+  stream (`record/mkv.rs`: `V_UNCOMPRESSED`, one cluster per frame) so the
+  timestamps are clipt's own, and the output keeps them (`-fps_mode
+  passthrough`, `-enc_time_base 1/1000`): variable frame rate, so a still
+  screen costs nothing and a slow encoder drops frames instead of slowing
+  the video. At stop the last frame is sent again so a still ending isn't
+  cut short; the track's DefaultDuration gives it one frame interval.
+  What didn't work, in order: constant frame rate (ffmpeg's cfr mode padded
+  each recording's end by over a second); raw frames stamped on arrival
+  (`-use_wallclock_as_timestamps`: frames read late during input probing or
+  under load were stamped late, up to a second around sparse frames); and
+  ffmpeg's own time base (picked from its frame-rate guess, it snapped
+  sparse timestamps to a 0.48 s grid).
 - **Encoder** (`src/record/encode.rs`): builds the ffmpeg command line,
   probes it once at start and falls back step by step:
   1. `h264_vaapi` (AMD, Intel): `-vaapi_device /dev/dri/renderD128 -vf
@@ -141,8 +148,10 @@ decoded frame shows the test pattern.
 **2. Selection UI, indicator, tray, pause (done 2026-11-01).** Record mode
 in the editor (`Editor::record`), `record/indicator.rs` (raw layer-shell
 strips), tray state from the pidfile. Pause/resume added on request:
-SIGUSR1/SIGUSR2, one ffmpeg segment per stretch, joined with the concat
-demuxer (`-c copy`). The `--delay` countdown was left out: the tray already
+SIGUSR1/SIGUSR2; the signal handler notes the time, and paused time is
+subtracted from later timestamps, so one ffmpeg runs throughout. (The first
+version used one ffmpeg segment per stretch, joined with the concat
+demuxer, until timestamps became clipt's own.) The `--delay` countdown was left out: the tray already
 waits for its menu to close, and a countdown needs text on the frame.
 Original scope: Record mode in the
 overlay, the border indicator, tray items and red icon, `--delay`

@@ -17,8 +17,7 @@ All notable changes are listed here. The format follows
   mode (no annotation tools; Enter records). A red frame outside the area
   marks a region recording.
 - Pausing: `clipt record --pause`, `--resume`, `--toggle-pause`. Paused time
-  is left out of the video (each stretch is its own segment, joined without
-  re-encoding at the end); the frame turns amber.
+  is left out of the video; the frame turns amber.
 - Tray: *Record region…*, *Record screen*, *Pause/Resume/Stop recording* and
   *Open recordings folder*; the icon gets a red (paused: amber) dot while
   recording, and clicking it stops.

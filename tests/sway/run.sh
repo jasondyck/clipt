@@ -102,21 +102,25 @@ check "a region outside every output is refused" 'grep -q "within one output" /t
 echo "-- recording: pause/resume, frame colour"
 # Region recording shows a frame just outside the region: red, amber while paused.
 /clipt record -g "200,150 300x200" -o /tmp/rec-p.mp4 2>/tmp/rec.err &
-rp=$!; sleep 1
+rp=$!; t_start=$(date +%s.%N); sleep 1
 f=$(grim -g "198,250 1x1" -t ppm - | magick - -format "%[pixel:p{0,0}]" info:)
 check "a red frame surrounds the region while recording ($f)" 'echo "$f" | grep -Eq "srgba?\(2[0-9][0-9],[0-9]{1,2},[0-9]{1,2}"'
 i=$(grim -g "201,250 1x1" -t ppm - | magick - -format "%[pixel:p{0,0}]" info:)
 check "the frame stays outside the region ($i)" '! echo "$i" | grep -Eq "srgba?\(2[0-9][0-9],[0-9]{1,2},[0-9]{1,2}"'
-/clipt record --pause; sleep 0.6
+/clipt record --pause; t_pause=$(date +%s.%N); sleep 0.6
 check "the pidfile says paused" '[ "$(sed -n 2p $XDG_RUNTIME_DIR/clipt-record.pid)" = paused ]'
 f=$(grim -g "198,250 1x1" -t ppm - | magick - -format "%[pixel:p{0,0}]" info:)
 check "the frame turns amber while paused ($f)" 'echo "$f" | grep -Eq "srgba?\(2[0-9][0-9],1[2-9][0-9],[0-9]{1,2}"'
 sleep 2
-/clipt record --toggle-pause; sleep 1
+/clipt record --toggle-pause; t_resume=$(date +%s.%N); sleep 1
 check "the pidfile says recording again" '[ "$(sed -n 2p $XDG_RUNTIME_DIR/clipt-record.pid)" = recording ]'
-/clipt record --stop; wait $rp
+t_stop=$(date +%s.%N); /clipt record --stop; wait $rp
 d=$(dur /tmp/rec-p.mp4)
-check "the 2.6 s pause is left out (${d:-none} s of ~4.6 s wall time)" 'awk "BEGIN{exit !(\"$d\"+0 > 1.4 && \"$d\"+0 < 2.6)}"'
+# Recorded time should be the wall time minus the pause; a little less is
+# fine (the recording starts after the encoder check).
+want=$(awk "BEGIN{printf \"%.2f\", ($t_stop - $t_start) - ($t_resume - $t_pause)}")
+paused=$(awk "BEGIN{printf \"%.2f\", $t_resume - $t_pause}")
+check "the ${paused} s pause is left out (${d:-none} s recorded, ${want} s expected)" 'awk "BEGIN{exit !(\"$d\"+0 > $want - 1.2 && \"$d\"+0 < $want + 0.3)}"'
 check "the parts were joined and cleaned up" '[ -z "$(ls /tmp/.rec-p.part* 2>/dev/null)" ]'
 check "--pause with nothing running fails" '! /clipt record --pause 2>/dev/null'
 

@@ -47,21 +47,12 @@ impl Shot {
 /// A rectangle in logical coordinates: x, y, width, height.
 pub type LogicalRect = (f64, f64, f64, f64);
 
-/// Byte order of a video frame's pixels, named the way ffmpeg names them.
+/// Byte order of a video frame's pixels.
 /// The fourth byte is padding (alpha, when present, is ignored).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PixelOrder {
     Bgrx,
     Rgbx,
-}
-
-impl PixelOrder {
-    pub fn ffmpeg(self) -> &'static str {
-        match self {
-            Self::Bgrx => "bgr0",
-            Self::Rgbx => "rgb0",
-        }
-    }
 }
 
 /// One frame of a recording: packed rows (stride = width * 4), in whatever
