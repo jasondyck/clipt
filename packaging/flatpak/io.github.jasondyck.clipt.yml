@@ -38,15 +38,20 @@ build-options:
     CARGO_HOME: /run/build/clipt/cargo
 modules:
   # `clipt record` runs the ffmpeg program. The ffmpeg extensions only
-  # provide its libraries, so it's built here, linked statically, with the
-  # encoders clipt picks between: VA-API, NVENC (loaded from the NVIDIA
-  # driver at run time) and libx264.
+  # provide its libraries, so it's built here, linked statically, with only
+  # what src/record/encode.rs asks of it: the encoders it picks between
+  # (VA-API, NVENC loaded from the NVIDIA driver at run time, libx264), the
+  # Matroska stream it's fed, the containers clipt accepts (.mp4 .mkv .mov
+  # .gif) and the filters in its command lines.
   - name: x264
     buildsystem: autotools
     config-opts:
       - --enable-static
       - --enable-pic
       - --disable-cli
+      - --disable-opencl
+      - --bit-depth=8
+      - --chroma-format=420
     cleanup:
       - '*'
     sources:
@@ -68,18 +73,30 @@ modules:
     buildsystem: autotools
     config-opts:
       - --disable-autodetect
+      - --disable-everything
       - --disable-doc
       - --disable-debug
       - --disable-ffplay
       - --disable-ffprobe
+      - --disable-network
+      - --disable-swresample
       - --disable-shared
       - --enable-static
       - --enable-gpl
       - --enable-libx264
       - --enable-vaapi
-      - --enable-libdrm
       - --enable-ffnvcodec
       - --enable-nvenc
+      - --enable-protocol=file,pipe
+      # The encoder probe's test frame (handed over as wrapped_avframe).
+      - --enable-indev=lavfi
+      # Frames arrive as Matroska; a GIF is made from the finished MP4.
+      - --enable-demuxer=matroska,mov
+      - --enable-decoder=rawvideo,h264,wrapped_avframe
+      - --enable-parser=h264
+      - --enable-encoder=libx264,h264_vaapi,h264_nvenc,gif
+      - --enable-muxer=mp4,mov,matroska,gif,null
+      - --enable-filter=color,format,pad,scale,hwupload,scale_vaapi,fps,split,palettegen,paletteuse,null
     cleanup:
       - /include
       - /lib
