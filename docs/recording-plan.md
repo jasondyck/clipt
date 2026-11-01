@@ -1,6 +1,6 @@
 # Video recording: implementation plan
 
-Status: phases 0–3 done (spike; pipeline and screen/region on wlroots; overlay, frame, tray, pause; window recording and the camera), 2026-11-01.
+Status: phases 0–4 done (spike; pipeline and screen/region on wlroots; overlay, frame, tray, pause; window recording and the camera; KDE and GNOME over PipeWire), 2026-11-01.
 
 ## Goal
 
@@ -176,14 +176,40 @@ spring and the fit maths. CI: Sway e2e resizes the test window mid-recording
 (`swaymsg resize`); `ffprobe` shows a constant size and decoded frames show
 the window shrinking smoothly over several frames, not in one.
 
-**4. PipeWire: KDE and GNOME (about 1–2 weeks).** `pipewire` feature, a
+**4. PipeWire: KDE and GNOME (done 2026-11-01).** `capture/pipewire.rs`
+reads a PipeWire node into `VideoFrame`s; `capture/kwin_cast.rs`
+(zkde_screencast: output, region via `stream_region`, window by KWin's
+internal id) and `capture/mutter_cast.rs` (org.gnome.Mutter.ScreenCast:
+RecordMonitor, RecordArea) get the nodes. Changes from the plan:
+- **libpipewire is dlopen'ed, not linked.** The first version used the
+  `pipewire` crate; the e2e suites showed that a linked libpipewire stops
+  clipt from starting at all (screenshots included) where it's missing. So
+  `pipewire.rs` has its own small FFI (18 functions) and a minimal SPA pod
+  encoder/parser for format negotiation, with struct layouts checked
+  against the 0.3 headers. Side effect: no PipeWire headers, clang or
+  bindgen at build time.
+- **GNOME uses Mutter's ScreenCast directly**, not the portal: no dialog,
+  and RecordArea crops for us. The portal (with a restore token) moves to
+  phase 5, where the Flatpak needs it.
+- GPU encoders run without B-frames: with VFR, h264_vaapi's reordered
+  timestamps gave MP4s a wrong duration (0.13 s for a 1.8 s recording).
+- `clipt record window APP` picks a window by app id without the overlay
+  (scripts, hotkeys, and testing KDE).
+Tested live on Plasma 6.8 (screen, region, window, through PipeWire with
+BGRx memfd buffers) and in the GNOME suite (PipeWire and WirePlumber added
+to its image: screen and area recordings, first frame against a
+screenshot, a window opened mid-recording). Not yet measured: KDE frame
+rates (the test session's display was asleep).
+Original scope: `pipewire` feature, a
 shared PipeWire stream reader (SHM/memfd buffers first, DMA-BUF later),
 KDE `zkde_screencast` for screen/region/window, the ScreenCast portal for
 GNOME and Flatpak with a restore token so the dialog appears once. CI:
 GNOME e2e (add PipeWire to its container); KDE checked with
 `kwin_wayland --virtual` and on a real Plasma session.
 
-**5. X11, GIF, polish (about 1 week).** X11 source, GIF via ffmpeg's
+**5. X11, GIF, portal + Flatpak, polish (about 1 week).** Adds the ScreenCast
+portal (restore token) for the Flatpak and desktops with neither wlroots
+capture nor KWin/Mutter screencasts. X11 source, GIF via ffmpeg's
 `palettegen`/`paletteuse`, config keys, README and CHANGELOG, Flatpak
 manifest (ffmpeg from the `org.freedesktop.Platform.ffmpeg-full`
 extension), and cross-target CI with `--no-default-features` where PipeWire

@@ -21,7 +21,7 @@ run() {
   case $1 in
     sway) docker run --rm --shm-size=512m -v $B/clipt:/clipt:ro -v $B/examples/vinput:/vinput:ro -v $B/examples/testwin:/testwin:ro \
             -v $PWD/tests/sway/run.sh:/run.sh:ro clipt-sway /run.sh $2 ;;
-    gnome) docker run --rm --shm-size=512m -v $B/clipt:/clipt:ro -v $PWD/data/clipt.desktop:/clipt.desktop:ro \
+    gnome) docker run --rm --shm-size=512m -v $B/clipt:/clipt:ro -v $B/examples/testwin:/testwin:ro -v $PWD/data/clipt.desktop:/clipt.desktop:ro \
             -v $PWD/tests/gnome:/t:ro -v $PWD/tests/gnome/rdinput.py:/rdinput.py:ro clipt-gnome /t/gstart.sh /t/run.sh $2 ;;
     x11) docker run --rm --shm-size=512m -v $B/clipt:/clipt:ro -v $PWD/tests/x11/run.sh:/run.sh:ro \
             -v $PWD/tests/x11/xorg-dummy.conf:/etc/X11/xorg-dummy.conf:ro clipt-x11 /run.sh $2 ;;

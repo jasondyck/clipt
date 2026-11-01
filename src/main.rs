@@ -34,6 +34,7 @@ USAGE:
     clipt list            Show outputs and available capture backends
     clipt record          Pick an area to record (Enter starts), saved as MP4
     clipt record screen [NAME]  Record one output (default: the first)
+    clipt record window [APP]   Record a window (APP: the topmost with that app id)
     clipt record -g GEOM  Record a region (within one output)
     clipt record --stop   Stop the running recording
     clipt record --pause / --resume / --toggle-pause
@@ -123,7 +124,7 @@ fn parse_args() -> Result<Args> {
                 a.record_mode = Some(v.string()?);
                 positional += 1;
             }
-            Value(v) if positional == 2 && a.record_mode.as_deref() == Some("screen") => {
+            Value(v) if positional == 2 && matches!(a.record_mode.as_deref(), Some("screen" | "window")) => {
                 a.screen = Some(v.string()?);
                 positional += 1;
             }
@@ -191,6 +192,15 @@ fn run() -> Result<()> {
         let target = match (args.record_mode.as_deref(), &args.geometry) {
             (_, Some(g)) => record::Target::Geometry(g.clone()),
             (Some("screen"), None) => record::Target::Screen(args.screen.clone()),
+            (Some("window"), None) if args.screen.is_some() => {
+                let app = args.screen.as_deref().unwrap_or_default();
+                let x11 = capture::wayland::connection().is_err();
+                let w = windows::list(x11)
+                    .into_iter()
+                    .find(|w| w.app.eq_ignore_ascii_case(app))
+                    .with_context(|| format!("no window with app id '{app}'"))?;
+                record::Target::Window(w)
+            }
             (None | Some("region" | "window"), None) => match pick_recording_area(&cfg, cursor, backend)? {
                 Some(t) => t,
                 None => return Ok(()), // cancelled

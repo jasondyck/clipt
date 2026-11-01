@@ -4,3 +4,5 @@ extend-ignore-re = ["PNGs"]
 
 [default.extend-words]
 clipt = "clipt"
+# struct spa_buffer's field names, kept so the FFI reads like the C header.
+datas = "datas"

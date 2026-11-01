@@ -11,6 +11,12 @@ categories = ["command-line-utilities", "multimedia::images"]
 rust-version = "1.89"
 exclude = ["/tests", "/.github", "/docs", "/packaging", "/flake.nix", "/flake.lock"]
 
+[features]
+default = ["pipewire"]
+# Recording on KDE and GNOME: frames come over PipeWire (libpipewire is
+# loaded at runtime, not linked) and KDE's screencast protocol.
+pipewire = ["dep:wayland-protocols-plasma"]
+
 [dependencies]
 anyhow = "1"
 futures-core = { version = "0.3", default-features = false }
@@ -28,6 +34,7 @@ toml = { version = "1.1", default-features = false, features = ["parse", "serde"
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wayland-protocols-plasma = { version = "0.3", features = ["client"], optional = true }
 x11rb = { version = "0.14", default-features = false, features = ["randr", "shm", "xfixes", "xinerama"] }
 xkeysym = "0.2"
 zbus = { version = "6", default-features = false, features = ["default-rt", "proxy", "service"] }
@@ -58,6 +65,8 @@ compositors (Sway, Hyprland, niri, ...) and X11, with correct handling of \
 multiple monitors at different resolutions and scales."""
 # Explicit so a missing dpkg-shlibdeps can never produce an empty list.
 depends = "libc6 (>= 2.35), libxkbcommon0"
+# Recording: ffmpeg encodes; libpipewire (loaded when needed) on KDE and GNOME.
+recommends = "ffmpeg, libpipewire-0.3-0t64 | libpipewire-0.3-0"
 assets = [
     ["target/release/clipt", "usr/bin/", "755"],
     ["data/clipt.desktop", "usr/share/applications/", "644"],
@@ -79,3 +88,6 @@ assets = [
 ]
 [package.metadata.generate-rpm.requires]
 libxkbcommon = "*"
+[package.metadata.generate-rpm.recommends]
+ffmpeg = "*"
+pipewire-libs = "*"

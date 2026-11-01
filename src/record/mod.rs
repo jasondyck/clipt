@@ -47,6 +47,21 @@ enum Source {
     Output { out: Output, crop: Arc<Mutex<Option<LogicalRect>>> },
     /// One window, captured by the compositor itself.
     Window { app: String, title: String },
+    /// KDE: a screencast from KWin over PipeWire.
+    #[cfg(feature = "pipewire")]
+    Kde(crate::capture::kwin_cast::Target),
+    /// GNOME: a screencast from Mutter over PipeWire.
+    #[cfg(feature = "pipewire")]
+    Gnome(crate::capture::mutter_cast::Target),
+}
+
+/// How this desktop lets us record.
+enum Method {
+    Wlroots(Protocol),
+    #[cfg(feature = "pipewire")]
+    Kde,
+    #[cfg(feature = "pipewire")]
+    Gnome,
 }
 
 pub struct Options {
@@ -204,31 +219,27 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
     let fps = opts.fps.unwrap_or(cfg.record_fps).clamp(1, 240);
     let codec = encode::choose(&cfg.record_codec)?;
 
-    let mut wl = Wayland::connect()
-        .map_err(|e| e.context("recording works on wlroots-family Wayland compositors for now (X11, KDE and GNOME are planned)"))?;
-    let proto = pick_protocol(&wl, opts.backend)?;
+    let mut wl = Wayland::connect().map_err(|e| e.context("recording needs a Wayland session for now (X11 is planned)"))?;
     let outputs = wl.outputs();
     anyhow::ensure!(!outputs.is_empty(), "no outputs found");
+    let wlroots = wl.protocols();
     // `zoom`: frames change size, so they go through the camera.
-    let (source, zoom, follow) = match &opts.target {
-        Target::Window(w) if wl.can_capture_windows() && proto == Protocol::ExtImageCopy && !w.app.is_empty() => {
-            debug(&format!("recording window '{}' by window capture", w.app));
-            (Source::Window { app: w.app.clone(), title: w.title.clone() }, true, None)
-        }
-        Target::Window(w) if follow::supported() && !w.id.is_empty() => {
-            let (out, crop) = resolve_target(&outputs, &Target::Rect((w.x as f64, w.y as f64, w.width as f64, w.height as f64)))?;
-            debug("following the window by cropping its output");
-            (Source::Output { out: out.clone(), crop: Arc::new(Mutex::new(crop)) }, true, Some((w.id.clone(), out)))
-        }
-        Target::Window(w) => {
-            eprintln!("clipt: this compositor can't follow a window; recording the area it covers now");
-            let (out, crop) = resolve_target(&outputs, &Target::Rect((w.x as f64, w.y as f64, w.width as f64, w.height as f64)))?;
-            (Source::Output { out, crop: Arc::new(Mutex::new(crop)) }, false, None)
-        }
-        t => {
-            let (out, crop) = resolve_target(&outputs, t)?;
-            (Source::Output { out, crop: Arc::new(Mutex::new(crop)) }, false, None)
-        }
+    let method = pick_method(&wl, &wlroots, opts.backend)?;
+    #[cfg(feature = "pipewire")]
+    if matches!(method, Method::Kde | Method::Gnome) {
+        crate::capture::pipewire::check()?;
+    }
+    let proto = match method {
+        Method::Wlroots(p) => p,
+        #[allow(unreachable_patterns)]
+        _ => Protocol::ExtImageCopy,
+    };
+    let (source, zoom, follow, frame) = match method {
+        Method::Wlroots(p) => wlroots_source(&wl, p, &outputs, &opts.target)?,
+        #[cfg(feature = "pipewire")]
+        Method::Kde => kde_source(&outputs, &opts.target)?,
+        #[cfg(feature = "pipewire")]
+        Method::Gnome => gnome_source(&outputs, &opts.target)?,
     };
 
     let path = match &opts.output {
@@ -247,22 +258,16 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         }
     }
 
-    match (&source, &follow) {
-        (Source::Output { out, crop }, None) => {
-            if let Some(c) = *crop.lock().unwrap() {
-                let out = out.clone();
-                std::thread::spawn(move || {
-                    if let Err(e) = indicator::run(&out, c) {
-                        eprintln!("clipt: no recording frame: {e:#}");
-                    }
-                });
+    if let Some((out, c)) = frame {
+        std::thread::spawn(move || {
+            if let Err(e) = indicator::run(&out, c) {
+                eprintln!("clipt: no recording frame: {e:#}");
             }
-        }
-        (Source::Output { crop, .. }, Some((id, out))) => {
-            let (crop, id, out) = (crop.clone(), id.clone(), out.clone());
-            std::thread::spawn(move || follow::run(&id, &out, &crop));
-        }
-        _ => {}
+        });
+    }
+    if let (Source::Output { crop, .. }, Some((id, out))) = (&source, &follow) {
+        let (crop, id, out) = (crop.clone(), id.clone(), out.clone());
+        std::thread::spawn(move || follow::run(&id, &out, &crop));
     }
 
     let slot = Arc::new((Mutex::new(Slot::default()), Condvar::new()));
@@ -272,9 +277,10 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         // The thread may still be blocked waiting for the screen to change
         // when we finish; process exit ends it.
         std::thread::spawn(move || {
-            let mut sink = |f: VideoFrame| {
+            let frames = slot.clone();
+            let mut sink = move |f: VideoFrame| {
                 captured.fetch_add(1, Ordering::Relaxed);
-                let (m, cv) = &*slot;
+                let (m, cv) = &*frames;
                 m.lock().unwrap().frame = Some((f, Instant::now()));
                 cv.notify_one();
                 !STOP.load(Ordering::SeqCst)
@@ -282,6 +288,10 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
             let r = match &source {
                 Source::Output { out, crop } => wl.stream(out, cursor, proto, &|| *crop.lock().unwrap(), &mut sink),
                 Source::Window { app, title } => wl.stream_window(app, title, cursor, &mut sink),
+                #[cfg(feature = "pipewire")]
+                Source::Kde(t) => crate::capture::kwin_cast::stream(t.clone(), cursor, Box::new(|_, _| None), Box::new(sink)),
+                #[cfg(feature = "pipewire")]
+                Source::Gnome(t) => crate::capture::mutter_cast::stream(t.clone(), cursor, Box::new(|_, _| None), Box::new(sink)),
             };
             let (m, cv) = &*slot;
             let mut s = m.lock().unwrap();
@@ -307,21 +317,121 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
     result.map(|_| ())
 }
 
-fn pick_protocol(wl: &Wayland, forced: Option<Backend>) -> Result<Protocol> {
-    let have = wl.protocols();
-    let want = match forced {
-        None => {
-            return have
-                .first()
-                .copied()
-                .context("this compositor offers no screencopy protocol; recording on KDE and GNOME (PipeWire) is planned");
+/// How to record here: a wlroots capture protocol where the compositor has
+/// one, else KWin's screencast (KDE), else Mutter's (GNOME).
+fn pick_method(wl: &Wayland, wlroots: &[Protocol], forced: Option<Backend>) -> Result<Method> {
+    #[cfg(feature = "pipewire")]
+    let (kde, gnome) = (
+        || crate::capture::kwin_cast::available(wl.connection()),
+        || crate::dbus::session().is_ok_and(|c| crate::capture::mutter_cast::available(&c)),
+    );
+    let _ = wl;
+    let ext = wlroots.contains(&Protocol::ExtImageCopy);
+    Ok(match forced {
+        Some(Backend::Ext) => {
+            anyhow::ensure!(ext, "compositor doesn't offer ext-image-copy-capture");
+            Method::Wlroots(Protocol::ExtImageCopy)
         }
-        Some(Backend::Ext) => Protocol::ExtImageCopy,
-        Some(Backend::Wlr) => Protocol::WlrScreencopy,
-        Some(b) => bail!("recording doesn't support the {b:?} backend yet (ext or wlr)"),
-    };
-    anyhow::ensure!(have.contains(&want), "compositor doesn't offer {want:?}");
-    Ok(want)
+        Some(Backend::Wlr) => {
+            anyhow::ensure!(wlroots.contains(&Protocol::WlrScreencopy), "compositor doesn't offer wlr-screencopy");
+            Method::Wlroots(Protocol::WlrScreencopy)
+        }
+        #[cfg(feature = "pipewire")]
+        Some(Backend::Kwin) => {
+            anyhow::ensure!(kde(), "KWin's screencast isn't available here");
+            Method::Kde
+        }
+        #[cfg(feature = "pipewire")]
+        Some(Backend::Portal) => {
+            anyhow::ensure!(gnome(), "Mutter's screencast isn't available here (the ScreenCast portal is planned)");
+            Method::Gnome
+        }
+        Some(b) => bail!("recording doesn't support the {b:?} backend (ext, wlr, kwin or portal)"),
+        None if ext => Method::Wlroots(Protocol::ExtImageCopy),
+        None if !wlroots.is_empty() => Method::Wlroots(Protocol::WlrScreencopy),
+        #[cfg(feature = "pipewire")]
+        None if kde() => Method::Kde,
+        #[cfg(feature = "pipewire")]
+        None if gnome() => Method::Gnome,
+        None if cfg!(feature = "pipewire") => {
+            bail!("this desktop offers no way to record: no wlroots capture protocol, no KWin or Mutter screencast")
+        }
+        None => bail!("this desktop needs PipeWire to record, and this clipt was built without it"),
+    })
+}
+
+/// (source, zoom, window to follow, red frame to draw: output + crop)
+type Picked = (Source, bool, Option<(String, Output)>, Option<(Output, LogicalRect)>);
+
+/// wlroots compositors: capture the output (cropped) or the window directly.
+fn wlroots_source(wl: &Wayland, proto: Protocol, outputs: &[Output], target: &Target) -> Result<Picked> {
+    let rect = |w: &crate::windows::Window| Target::Rect((w.x as f64, w.y as f64, w.width as f64, w.height as f64));
+    Ok(match target {
+        Target::Window(w) if wl.can_capture_windows() && proto == Protocol::ExtImageCopy && !w.app.is_empty() => {
+            debug(&format!("recording window '{}' by window capture", w.app));
+            (Source::Window { app: w.app.clone(), title: w.title.clone() }, true, None, None)
+        }
+        Target::Window(w) if follow::supported() && !w.id.is_empty() => {
+            let (out, crop) = resolve_target(outputs, &rect(w))?;
+            debug("following the window by cropping its output");
+            (Source::Output { out: out.clone(), crop: Arc::new(Mutex::new(crop)) }, true, Some((w.id.clone(), out)), None)
+        }
+        Target::Window(w) => {
+            eprintln!("clipt: this compositor can't follow a window; recording the area it covers now");
+            let (out, crop) = resolve_target(outputs, &rect(w))?;
+            let frame = crop.map(|c| (out.clone(), c));
+            (Source::Output { out, crop: Arc::new(Mutex::new(crop)) }, false, None, frame)
+        }
+        t => {
+            let (out, crop) = resolve_target(outputs, t)?;
+            let frame = crop.map(|c| (out.clone(), c));
+            (Source::Output { out, crop: Arc::new(Mutex::new(crop)) }, false, None, frame)
+        }
+    })
+}
+
+/// GNOME: Mutter records the monitor or area and hands it over by PipeWire.
+/// GNOME doesn't say where windows are, so there are no window targets.
+#[cfg(feature = "pipewire")]
+fn gnome_source(outputs: &[Output], target: &Target) -> Result<Picked> {
+    use crate::capture::mutter_cast::Target as G;
+    Ok(match target {
+        Target::Screen(None) => (Source::Gnome(G::Monitor(outputs[0].name.clone())), false, None, None),
+        Target::Screen(Some(n)) => {
+            anyhow::ensure!(outputs.iter().any(|o| &o.name == n), "no output named '{n}'");
+            (Source::Gnome(G::Monitor(n.clone())), false, None, None)
+        }
+        t => {
+            let (o, crop) = resolve_target(outputs, t)?;
+            let c = crop.unwrap_or((0.0, 0.0, o.width as f64, o.height as f64));
+            // No frame: GNOME has no layer-shell to draw it with.
+            (Source::Gnome(G::Area((c.0 + o.x as f64, c.1 + o.y as f64, c.2, c.3))), false, None, None)
+        }
+    })
+}
+
+/// KDE: KWin records the output, region or window and hands it over by PipeWire.
+#[cfg(feature = "pipewire")]
+fn kde_source(outputs: &[Output], target: &Target) -> Result<Picked> {
+    use crate::capture::kwin_cast::Target as K;
+    let scale = |o: &Output| if o.native.0 > 0 { o.native.0 as f64 / o.width as f64 } else { 1.0 };
+    Ok(match target {
+        Target::Screen(None) => (Source::Kde(K::Output(outputs[0].name.clone())), false, None, None),
+        Target::Screen(Some(n)) => {
+            anyhow::ensure!(outputs.iter().any(|o| &o.name == n), "no output named '{n}'");
+            (Source::Kde(K::Output(n.clone())), false, None, None)
+        }
+        Target::Window(w) if !w.id.is_empty() => {
+            debug(&format!("recording window '{}' by KWin screencast", w.app));
+            (Source::Kde(K::Window(w.id.clone())), true, None, None)
+        }
+        t => {
+            let (o, crop) = resolve_target(outputs, t)?;
+            let c = crop.unwrap_or((0.0, 0.0, o.width as f64, o.height as f64));
+            let source = Source::Kde(K::Region((c.0 + o.x as f64, c.1 + o.y as f64, c.2, c.3), scale(&o)));
+            (source, false, None, Some((o, c)))
+        }
+    })
 }
 
 /// The output to capture and the crop within it (output-logical coordinates).

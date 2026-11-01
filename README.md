@@ -75,9 +75,12 @@ without a gap in the video (the frame turns amber); `--stop`, Ctrl-C or
 `max_duration` (1 h) end it. The tray menu has the same controls, and its icon
 shows a red dot while recording. Files go to `~/Videos/Screencasts` as MP4.
 It needs `ffmpeg` and uses the GPU encoder when there is one (VA-API on AMD
-and Intel, NVENC on NVIDIA), libx264 otherwise. For now it works on
-wlroots-family compositors (Sway, Hyprland, niri, labwc, river, COSMIC);
-KDE, GNOME and X11 are planned (see
+and Intel, NVENC on NVIDIA), libx264 otherwise. It works on wlroots-family
+compositors (Sway, Hyprland, niri, labwc, river, COSMIC) directly, and on KDE
+Plasma and GNOME through PipeWire (KWin's and Mutter's own screencasts, so
+no permission dialog); libpipewire is loaded only when recording there.
+`clipt record window APP` records the topmost window with that app id. X11
+and the Flatpak are planned (see
 [docs/recording-plan.md](docs/recording-plan.md)).
 
 Before you select anything, clipt highlights what a click would take: the
