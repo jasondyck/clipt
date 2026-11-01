@@ -10,6 +10,10 @@ license=('MIT OR Apache-2.0')
 # fontconfig: fc-match is run (not linked) to find the UI font
 depends=('glibc' 'libgcc' 'libxkbcommon' 'fontconfig')
 options=('!debug')  # release builds are stripped
+optdepends=('xdg-desktop-portal: capture on GNOME'
+            'ffmpeg: screen recording'
+            'libpipewire: screen recording on KDE and GNOME'
+            'noto-fonts: default UI font')
 provides=("$_pkgname")
 conflicts=("$_pkgname")
 source_x86_64=("$url/releases/download/v$pkgver/$_pkgname-v$pkgver-x86_64-linux.tar.gz")

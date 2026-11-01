@@ -11,6 +11,8 @@ depends=('glibc' 'libgcc' 'libxkbcommon' 'fontconfig')
 options=('!debug')  # release builds are stripped
 makedepends=('cargo')
 optdepends=('xdg-desktop-portal: capture on GNOME'
+            'ffmpeg: screen recording'
+            'libpipewire: screen recording on KDE and GNOME'
             'noto-fonts: default UI font')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('cc603c85137b582909a15435597ed7b8ca05afb28e1c8ef2dc415c78b48e2e0e')
