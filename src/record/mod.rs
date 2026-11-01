@@ -12,6 +12,7 @@
 //! PipeWire for KDE/GNOME, X11).
 
 mod encode;
+mod indicator;
 
 use crate::capture::wayland::{Protocol, Wayland};
 use crate::capture::{Backend, LogicalRect, Output, VideoFrame};
@@ -25,8 +26,12 @@ use std::time::{Duration, Instant};
 pub enum Target {
     /// One output, by name (default: the first).
     Screen(Option<String>),
-    /// Slurp-style "X,Y WxH" in logical desktop coordinates.
+    /// Slurp-style "X,Y WxH" in logical desktop coordinates; must lie
+    /// within one output.
     Geometry(String),
+    /// A selection from the overlay, in logical desktop coordinates. Trimmed
+    /// to the output under its centre.
+    Rect(LogicalRect),
 }
 
 pub struct Options {
@@ -42,9 +47,14 @@ pub struct Options {
 const MIN_FREE_BYTES: u64 = 500 << 20;
 
 static STOP: AtomicBool = AtomicBool::new(false);
+static PAUSED: AtomicBool = AtomicBool::new(false);
 
-extern "C" fn on_signal(_: libc::c_int) {
-    STOP.store(true, Ordering::SeqCst);
+extern "C" fn on_signal(sig: libc::c_int) {
+    match sig {
+        libc::SIGUSR1 => PAUSED.store(true, Ordering::SeqCst),
+        libc::SIGUSR2 => PAUSED.store(false, Ordering::SeqCst),
+        _ => STOP.store(true, Ordering::SeqCst),
+    }
 }
 
 fn pidfile() -> PathBuf {
@@ -56,9 +66,14 @@ fn alive(pid: i32) -> bool {
     pid > 0 && unsafe { libc::kill(pid, 0) } == 0
 }
 
-fn running_pid() -> Option<i32> {
-    let pid = std::fs::read_to_string(pidfile()).ok()?.trim().parse().ok()?;
-    alive(pid).then_some(pid)
+/// The running recording, if any: its pid and whether it's paused. The
+/// pidfile holds the pid on the first line and "paused" or "recording" on
+/// the second.
+pub fn status() -> Option<(i32, bool)> {
+    let s = std::fs::read_to_string(pidfile()).ok()?;
+    let mut lines = s.lines();
+    let pid = lines.next()?.trim().parse().ok()?;
+    alive(pid).then(|| (pid, lines.next() == Some("paused")))
 }
 
 /// Holds the pidfile for as long as the recording runs.
@@ -67,15 +82,21 @@ struct Lock(PathBuf);
 impl Lock {
     fn take() -> Result<Self> {
         let p = pidfile();
-        if let Some(pid) = running_pid() {
+        if let Some((pid, _)) = status() {
             bail!("already recording (pid {pid}); stop it with 'clipt record --stop'");
         }
         let _ = std::fs::remove_file(&p); // stale
-        let mut f =
-            std::fs::OpenOptions::new().write(true).create_new(true).open(&p).with_context(|| format!("creating {}", p.display()))?;
-        use std::io::Write;
-        writeln!(f, "{}", std::process::id())?;
-        Ok(Self(p))
+        std::fs::OpenOptions::new().write(true).create_new(true).open(&p).with_context(|| format!("creating {}", p.display()))?;
+        let lock = Self(p);
+        lock.set(false)?;
+        Ok(lock)
+    }
+
+    fn set(&self, paused: bool) -> Result<()> {
+        let tmp = self.0.with_extension("tmp");
+        std::fs::write(&tmp, format!("{}\n{}\n", std::process::id(), if paused { "paused" } else { "recording" }))?;
+        std::fs::rename(&tmp, &self.0)?;
+        Ok(())
     }
 }
 
@@ -85,16 +106,42 @@ impl Drop for Lock {
     }
 }
 
+/// Fail early, before the overlay opens, if a recording is already running.
+pub fn ensure_idle() -> Result<()> {
+    match status() {
+        Some((pid, _)) => bail!("already recording (pid {pid}); stop it with 'clipt record --stop'"),
+        None => Ok(()),
+    }
+}
+
 /// `clipt record --stop`: signal the running recording and wait for it to
 /// finish writing.
 pub fn stop() -> Result<()> {
-    let Some(pid) = running_pid() else { bail!("no recording is running") };
+    let Some((pid, _)) = status() else { bail!("no recording is running") };
     unsafe { libc::kill(pid, libc::SIGINT) };
     let deadline = Instant::now() + Duration::from_secs(30);
     while alive(pid) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
     anyhow::ensure!(!alive(pid), "recording (pid {pid}) didn't stop within 30 s");
+    Ok(())
+}
+
+pub enum PauseCmd {
+    Pause,
+    Resume,
+    Toggle,
+}
+
+/// `clipt record --pause / --resume / --toggle-pause`.
+pub fn pause(cmd: PauseCmd) -> Result<()> {
+    let Some((pid, paused)) = status() else { bail!("no recording is running") };
+    let pause = match cmd {
+        PauseCmd::Pause => true,
+        PauseCmd::Resume => false,
+        PauseCmd::Toggle => !paused,
+    };
+    unsafe { libc::kill(pid, if pause { libc::SIGUSR1 } else { libc::SIGUSR2 }) };
     Ok(())
 }
 
@@ -126,10 +173,20 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         std::fs::create_dir_all(d).with_context(|| format!("creating {}", d.display()))?;
     }
 
-    let _lock = Lock::take()?;
+    let lock = Lock::take()?;
     unsafe {
-        libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
+        for sig in [libc::SIGINT, libc::SIGTERM, libc::SIGUSR1, libc::SIGUSR2] {
+            libc::signal(sig, on_signal as *const () as libc::sighandler_t);
+        }
+    }
+
+    if let Some(c) = crop {
+        let out = out.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = indicator::run(&out, c) {
+                eprintln!("clipt: no recording frame: {e:#}");
+            }
+        });
     }
 
     let slot = Arc::new((Mutex::new(Slot::default()), Condvar::new()));
@@ -157,7 +214,7 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         });
     }
 
-    let result = write_loop(cfg, &slot, &codec, fps, &path, &captured);
+    let result = write_loop(cfg, &lock, &slot, &codec, fps, &path, &captured);
     match &result {
         Ok(stats) => {
             println!("{}", path.display());
@@ -206,6 +263,21 @@ fn resolve_target(outputs: &[Output], target: &Target) -> Result<(Output, Option
             };
             Ok((o.clone(), Some((x - o.x as f64, y - o.y as f64, w, h))))
         }
+        &Target::Rect((x, y, w, h)) => {
+            let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+            let o = outputs
+                .iter()
+                .find(|o| {
+                    let (ox, oy) = (o.x as f64, o.y as f64);
+                    cx >= ox && cy >= oy && cx < ox + o.width as f64 && cy < oy + o.height as f64
+                })
+                .context("the selection's centre isn't on any output")?;
+            let (ox, oy) = (o.x as f64, o.y as f64);
+            let (l, t) = (x.max(ox), y.max(oy));
+            let (r, b) = ((x + w).min(ox + o.width as f64), (y + h).min(oy + o.height as f64));
+            anyhow::ensure!(r - l >= 1.0 && b - t >= 1.0, "the selection is empty");
+            Ok((o.clone(), Some((l - ox, t - oy, r - l, b - t))))
+        }
     }
 }
 
@@ -216,9 +288,25 @@ fn check_extension(path: &Path) -> Result<()> {
     }
 }
 
+/// One stretch of recording between pauses: its own ffmpeg and file.
+/// Pausing ends a segment; resuming starts the next. At the end they're
+/// joined without re-encoding, so paused time is simply left out.
+struct Segment {
+    enc: encode::Encoder,
+    started: Instant,
+}
+
+/// `.Recording_….part2.mp4` next to the final file.
+fn part_path(path: &Path, n: usize) -> PathBuf {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("recording");
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("mp4");
+    path.with_file_name(format!(".{stem}.part{n}.{ext}"))
+}
+
 /// Feed frames to ffmpeg until stopped; returns a short summary.
 fn write_loop(
     cfg: &Config,
+    lock: &Lock,
     slot: &Arc<(Mutex<Slot>, Condvar)>,
     codec: &encode::Codec,
     fps: u32,
@@ -229,12 +317,31 @@ fn write_loop(
     let interval = Duration::from_secs_f64(1.0 / fps as f64);
     let started = Instant::now();
     let max = (cfg.max_duration > 0).then(|| Duration::from_secs(cfg.max_duration));
-    let mut enc: Option<encode::Encoder> = None;
+    let mut seg: Option<Segment> = None;
+    let mut parts: Vec<PathBuf> = Vec::new();
+    let mut size: Option<(u32, u32)> = None;
     let mut last: Option<VideoFrame> = None;
-    let mut last_write = Instant::now() - interval;
+    // `last` arrived after the most recent write and still needs sending.
+    let mut fresh = false;
+    let mut last_write = Instant::now();
+    let mut active = Duration::ZERO;
     let mut written = 0u64;
     let mut last_disk_check = Instant::now();
+    let mut shown_paused = false;
     let mut stop_reason: Option<String> = None;
+
+    let close = |seg: Segment, last: &Option<VideoFrame>, active: &mut Duration| -> Result<()> {
+        let mut seg = seg;
+        // Stamp the last picture again at the end so a still screen isn't cut
+        // off, and once more a frame later to give it a duration.
+        if let Some(f) = last {
+            seg.enc.write(&f.data)?;
+            std::thread::sleep(interval);
+            seg.enc.write(&f.data)?;
+        }
+        *active += seg.started.elapsed();
+        seg.enc.finish()
+    };
 
     loop {
         if STOP.load(Ordering::SeqCst) {
@@ -251,73 +358,115 @@ fn write_loop(
                 break;
             }
         }
-        // Wait for a new frame, but no sooner than the frame interval.
-        let wait = interval.saturating_sub(last_write.elapsed());
-        if !wait.is_zero() {
-            std::thread::sleep(wait.min(Duration::from_millis(100)));
-            continue;
+        let paused = PAUSED.load(Ordering::SeqCst);
+        if paused != shown_paused {
+            let _ = lock.set(paused);
+            shown_paused = paused;
         }
-        let frame = {
+
+        // Take the newest frame. While one is waiting to be sent, wait no
+        // longer than the rest of the frame interval.
+        let wait = if fresh { interval.saturating_sub(last_write.elapsed()) } else { Duration::from_millis(100) };
+        {
             let mut s = m.lock().unwrap();
-            if s.frame.is_none() && !s.done {
-                s = cv.wait_timeout(s, Duration::from_millis(100)).unwrap().0;
+            if s.frame.is_none() && !s.done && !wait.is_zero() {
+                s = cv.wait_timeout(s, wait).unwrap().0;
             }
             if let Some(e) = s.error.take() {
                 drop(s);
-                if let Some(e2) = enc.take() {
-                    let _ = e2.finish();
+                if let Some(sg) = seg.take() {
+                    let _ = sg.enc.finish();
                 }
                 bail!("capture failed: {e}");
             }
             if s.done && s.frame.is_none() {
                 break;
             }
-            s.frame.take()
-        };
-        let Some(frame) = frame else {
-            if enc.is_none() && started.elapsed() > Duration::from_secs(5) {
+            if let Some(f) = s.frame.take() {
+                last = Some(f);
+                fresh = true;
+            }
+        }
+        let Some(frame) = &last else {
+            if started.elapsed() > Duration::from_secs(5) {
                 bail!("no frames from the compositor after 5 s");
             }
             continue;
         };
-        let e = match &mut enc {
-            Some(e) => e,
-            None => enc.insert(encode::Encoder::spawn(codec, frame.width, frame.height, frame.order, path)?),
-        };
-        if (frame.width, frame.height) != (e.width, e.height) {
-            stop_reason = Some(format!(
-                "the output changed size ({}x{} → {}x{}); recording stopped there",
-                e.width, e.height, frame.width, frame.height
-            ));
+        if let Some((w, h)) = size
+            && (frame.width, frame.height) != (w, h)
+        {
+            stop_reason = Some(format!("the output changed size ({w}x{h} → {}x{}); recording stopped there", frame.width, frame.height));
+            last = None;
             break;
         }
-        e.write(&frame.data)?;
-        written += 1;
-        last_write = Instant::now();
-        last = Some(frame);
+
+        if paused {
+            if let Some(sg) = seg.take() {
+                close(sg, &last, &mut active)?;
+            }
+            continue;
+        }
+        let sg = match &mut seg {
+            Some(sg) => sg,
+            None => {
+                // Starting or resuming: open the next segment with whatever
+                // is on screen now.
+                let part = part_path(path, parts.len() + 1);
+                let enc = encode::Encoder::spawn(codec, frame.width, frame.height, frame.order, &part)?;
+                parts.push(part);
+                size = Some((frame.width, frame.height));
+                fresh = true;
+                seg.insert(Segment { enc, started: Instant::now() })
+            }
+        };
+        if fresh && last_write.elapsed() >= interval {
+            sg.enc.write(&frame.data)?;
+            written += 1;
+            last_write = Instant::now();
+            fresh = false;
+        }
     }
 
-    let Some(mut e) = enc else { bail!("stopped before the first frame arrived") };
-    // Stamp the last picture again at the stop time so a still screen at the
-    // end isn't cut off, and once more a frame later to give it a duration.
-    if let Some(f) = &last
-        && (f.width, f.height) == (e.width, e.height)
-    {
-        e.write(&f.data)?;
-        std::thread::sleep(interval);
-        e.write(&f.data)?;
+    if let Some(sg) = seg.take() {
+        close(sg, &last, &mut active)?;
     }
-    e.finish()?;
+    anyhow::ensure!(!parts.is_empty(), "stopped before the first frame arrived");
+    join(&parts, path)?;
     if let Some(r) = stop_reason {
         eprintln!("clipt: {r}");
     }
-    let secs = started.elapsed().as_secs_f64();
-    let summary = format!("{:.0} s, {}", secs, codec.name());
+    let secs = active.as_secs_f64();
+    let pauses = if parts.len() > 1 { format!(", {} parts", parts.len()) } else { String::new() };
     if std::env::var_os("CLIPT_DEBUG").is_some() {
         let c = captured.load(Ordering::Relaxed);
-        eprintln!("clipt: recorded {secs:.1} s: {c} frames captured ({:.1}/s), {written} sent to ffmpeg", c as f64 / secs);
+        let wall = started.elapsed().as_secs_f64();
+        eprintln!(
+            "clipt: recorded {secs:.1} s of {wall:.1} s: {c} frames captured ({:.1}/s), {written} sent to ffmpeg{pauses}",
+            c as f64 / wall
+        );
     }
-    Ok(summary)
+    Ok(format!("{secs:.0} s, {}", codec.name()))
+}
+
+/// Turn the segment files into the final recording.
+fn join(parts: &[PathBuf], path: &Path) -> Result<()> {
+    if let [only] = parts {
+        return std::fs::rename(only, path).with_context(|| format!("writing {}", path.display()));
+    }
+    let list = path.with_file_name(format!(".{}.parts.txt", path.file_name().and_then(|n| n.to_str()).unwrap_or("recording")));
+    let quote = |p: &Path| format!("file '{}'\n", p.display().to_string().replace('\'', "'\\''"));
+    std::fs::write(&list, parts.iter().map(|p| quote(p)).collect::<String>())?;
+    let r = encode::concat(&list, path);
+    let _ = std::fs::remove_file(&list);
+    if r.is_ok() {
+        for p in parts {
+            let _ = std::fs::remove_file(p);
+        }
+    } else {
+        eprintln!("clipt: the recorded parts are kept: {}", parts.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "));
+    }
+    r
 }
 
 fn free_bytes(path: &Path) -> Option<u64> {
@@ -343,6 +492,15 @@ mod tests {
         assert!(resolve_target(&outs, &Target::Geometry("1200,10 200x100".into())).is_err(), "spans both");
         assert!(resolve_target(&outs, &Target::Screen(Some("C".into()))).is_err());
         assert_eq!(resolve_target(&outs, &Target::Screen(None)).unwrap().0.name, "A");
+    }
+
+    #[test]
+    fn overlay_selection_is_trimmed_to_its_centre_output() {
+        let outs = [out("A", 0, 1280), out("B", 1280, 1920)];
+        // centre at x=1340, on B: the part on A is dropped
+        let (o, crop) = resolve_target(&outs, &Target::Rect((1200.0, 10.0, 280.0, 100.0))).unwrap();
+        assert_eq!(o.name, "B");
+        assert_eq!(crop, Some((0.0, 10.0, 200.0, 100.0)));
     }
 
     #[test]

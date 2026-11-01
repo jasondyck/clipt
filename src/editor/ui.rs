@@ -16,6 +16,7 @@ pub enum Button {
     Save,
     Copy,
     Close,
+    Record,
 }
 
 impl Button {
@@ -27,6 +28,7 @@ impl Button {
             Button::Save => 3,
             Button::Copy => 4,
             Button::Close => 5,
+            Button::Record => 6,
         }
     }
 }
@@ -63,7 +65,10 @@ enum Item {
     Sep,
 }
 
-fn items() -> Vec<Item> {
+fn items(ed: &Editor) -> Vec<Item> {
+    if ed.record {
+        return vec![Item::Btn(Button::Record), Item::Btn(Button::Close)];
+    }
     let mut v = vec![Item::Btn(Button::Tool(Tool::Select))];
     v.extend(Tool::DRAWING.iter().map(|&t| Item::Btn(Button::Tool(t))));
     v.push(Item::Sep);
@@ -80,7 +85,7 @@ pub fn toolbar_layout(ed: &Editor) -> Option<(Rect, Vec<(Rect, Button)>)> {
     if ed.is_adjusting() {
         return None;
     }
-    let its = items();
+    let its = items(ed);
     let width: f32 = PAD * 2.0
         + its
             .iter()
@@ -222,7 +227,7 @@ pub fn dynamic_layers(ed: &Editor, frame: u64) -> Vec<Layer> {
     } else {
         Vec::new()
     };
-    layers.push(Layer { key: hint as u64 + 2 * !ed.windows.is_empty() as u64, rects: grow(rects) });
+    layers.push(Layer { key: hint as u64 + 2 * !ed.windows.is_empty() as u64 + 4 * ed.record as u64, rects: grow(rects) });
 
     // toolbar + tooltip
     let tb = toolbar_layout(ed).map(|(panel, _)| panel);
@@ -484,6 +489,13 @@ fn draw_hover(ed: &Editor, pm: &mut PixmapMut, view: &View, h: &super::Hover) {
 
 /// (key cap, what it does) for the hint bar.
 fn hint_items(ed: &Editor) -> Vec<(&'static str, &'static str)> {
+    if ed.record {
+        return if ed.windows.is_empty() {
+            vec![("Drag", "Area to record"), ("Click", "Screen"), ("Enter", "Record"), ("Esc", "Cancel")]
+        } else {
+            vec![("Drag", "Area to record"), ("Click", "Window"), ("Tab", "Screen"), ("Enter", "Record"), ("Esc", "Cancel")]
+        };
+    }
     if ed.windows.is_empty() {
         vec![("Drag", "Select area"), ("Click", "Screen"), ("Esc", "Cancel")]
     } else {
@@ -701,6 +713,7 @@ fn tooltip(b: Button) -> String {
         Button::Save => "Save  Ctrl+S".into(),
         Button::Copy => "Copy  Enter".into(),
         Button::Close => "Cancel  Esc".into(),
+        Button::Record => "Record  Enter".into(),
     }
 }
 
@@ -808,6 +821,12 @@ fn icon(ed: &Editor, pm: &mut PixmapMut, view: &View, r: Rect, b: Button, fg: Co
         Button::Copy => {
             line(&mut pb, &[(8.0, 8.0), (20.0, 8.0), (20.0, 20.0), (8.0, 20.0), (8.0, 8.0)]);
             line(&mut pb, &[(16.0, 8.0), (16.0, 4.0), (4.0, 4.0), (4.0, 16.0), (8.0, 16.0)]);
+        }
+        Button::Record => {
+            let c = g(12.0, 12.0);
+            if let Some(p) = PathBuilder::from_circle(c.0, c.1, 7.0 * k * s) {
+                pm.fill_path(&p, &view.paint(Color::from_rgba8(0xef, 0x44, 0x44, 255)), FillRule::Winding, id, None);
+            }
         }
         Button::Close => {
             line(&mut pb, &[(6.0, 6.0), (18.0, 18.0)]);

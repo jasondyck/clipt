@@ -52,17 +52,23 @@ clipt full -g "$(slurp)" -o -   # slurp region to stdout
 clipt list          # outputs and available backends
 clipt tray          # tray icon: click = region, right-click = menu
 clipt update        # update to the latest release (--check: just check)
-clipt record screen # record the first output to ~/Videos/Screencasts
-clipt record --stop # ...and stop it (or Ctrl-C)
+clipt record        # pick an area to record, Enter starts
+clipt record --stop # ...and stop it (or Ctrl-C, or click the tray icon)
 ```
 
-**Recording (early):** `clipt record screen [NAME]` or `clipt record -g
-"X,Y WxH"` records to MP4 until `clipt record --stop`, Ctrl-C or
-`max_duration` (1 h). It needs `ffmpeg` and uses the GPU encoder when there
-is one (VA-API on AMD and Intel, NVENC on NVIDIA), libx264 otherwise. For now
-it works on wlroots-family compositors (Sway, Hyprland, niri, labwc, river,
-COSMIC); window recording, the selection overlay, KDE, GNOME and X11 are
-planned (see [docs/recording-plan.md](docs/recording-plan.md)).
+**Recording (early):** `clipt record` opens the selection overlay without the
+annotation tools: drag an area (or click a window or screen) and press
+**Enter**. A red frame marks the area while it records, outside it so it's
+not in the video. `clipt record screen [NAME]` and `clipt record -g "X,Y
+WxH"` skip the overlay. `--pause`, `--resume` and `--toggle-pause` pause
+without a gap in the video (the frame turns amber); `--stop`, Ctrl-C or
+`max_duration` (1 h) end it. The tray menu has the same controls, and its icon
+shows a red dot while recording. Files go to `~/Videos/Screencasts` as MP4.
+It needs `ffmpeg` and uses the GPU encoder when there is one (VA-API on AMD
+and Intel, NVENC on NVIDIA), libx264 otherwise. For now it works on
+wlroots-family compositors (Sway, Hyprland, niri, labwc, river, COSMIC);
+following a window as it moves, KDE, GNOME and X11 are planned (see
+[docs/recording-plan.md](docs/recording-plan.md)).
 
 Before you select anything, clipt highlights what a click would take: the
 window under the pointer (KDE, Sway, Hyprland and X11), or the whole screen

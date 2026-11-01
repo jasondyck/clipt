@@ -1,6 +1,6 @@
 # Video recording: implementation plan
 
-Status: phase 0 (spike) and phase 1 (pipeline, screen/region on wlroots) done, 2026-11-01.
+Status: phases 0–2 done (spike; pipeline and screen/region on wlroots; overlay, frame, tray, pause), 2026-11-01.
 
 ## Goal
 
@@ -138,7 +138,13 @@ pidfile control, `clipt record screen` and `-g`. Notification on finish.
 CI: Sway e2e records 3 s, `ffprobe` checks duration, fps and size, and a
 decoded frame shows the test pattern.
 
-**2. Selection UI, indicator, tray (about 1 week).** Record mode in the
+**2. Selection UI, indicator, tray, pause (done 2026-11-01).** Record mode
+in the editor (`Editor::record`), `record/indicator.rs` (raw layer-shell
+strips), tray state from the pidfile. Pause/resume added on request:
+SIGUSR1/SIGUSR2, one ffmpeg segment per stretch, joined with the concat
+demuxer (`-c copy`). The `--delay` countdown was left out: the tray already
+waits for its menu to close, and a countdown needs text on the frame.
+Original scope: Record mode in the
 overlay, the border indicator, tray items and red icon, `--delay`
 countdown. CI: overlay record mode driven by the existing e2e input.
 
@@ -213,6 +219,6 @@ previous row should roughly halve it.
 
 ## Not in this plan
 
-Audio, webcam overlay, pause/resume, the studio mode, editing or trimming,
+Audio, webcam overlay, the studio mode, editing or trimming,
 QSV/AMF-specific encoders (VA-API covers Intel and AMD), and recording that keeps
 running after clipt's process exits.

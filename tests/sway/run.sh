@@ -99,6 +99,27 @@ check "--stop with nothing running fails" '! /clipt record --stop 2>/dev/null'
 /clipt record -g "-50,0 100x100" -o /tmp/rec-x.mp4 2>/tmp/rec.err
 check "a region outside every output is refused" 'grep -q "within one output" /tmp/rec.err'
 
+echo "-- recording: pause/resume, frame colour"
+# Region recording shows a frame just outside the region: red, amber while paused.
+/clipt record -g "200,150 300x200" -o /tmp/rec-p.mp4 2>/tmp/rec.err &
+rp=$!; sleep 1
+f=$(grim -g "198,250 1x1" -t ppm - | magick - -format "%[pixel:p{0,0}]" info:)
+check "a red frame surrounds the region while recording ($f)" 'echo "$f" | grep -Eq "srgba?\(2[0-9][0-9],[0-9]{1,2},[0-9]{1,2}"'
+i=$(grim -g "201,250 1x1" -t ppm - | magick - -format "%[pixel:p{0,0}]" info:)
+check "the frame stays outside the region ($i)" '! echo "$i" | grep -Eq "srgba?\(2[0-9][0-9],[0-9]{1,2},[0-9]{1,2}"'
+/clipt record --pause; sleep 0.6
+check "the pidfile says paused" '[ "$(sed -n 2p $XDG_RUNTIME_DIR/clipt-record.pid)" = paused ]'
+f=$(grim -g "198,250 1x1" -t ppm - | magick - -format "%[pixel:p{0,0}]" info:)
+check "the frame turns amber while paused ($f)" 'echo "$f" | grep -Eq "srgba?\(2[0-9][0-9],1[2-9][0-9],[0-9]{1,2}"'
+sleep 2
+/clipt record --toggle-pause; sleep 1
+check "the pidfile says recording again" '[ "$(sed -n 2p $XDG_RUNTIME_DIR/clipt-record.pid)" = recording ]'
+/clipt record --stop; wait $rp
+d=$(dur /tmp/rec-p.mp4)
+check "the 2.6 s pause is left out (${d:-none} s of ~4.6 s wall time)" 'awk "BEGIN{exit !(\"$d\"+0 > 1.4 && \"$d\"+0 < 2.6)}"'
+check "the parts were joined and cleaned up" '[ -z "$(ls /tmp/.rec-p.part* 2>/dev/null)" ]'
+check "--pause with nothing running fails" '! /clipt record --pause 2>/dev/null'
+
 echo "-- headless clipboard (data-control)"
 /clipt full -c
 sleep 0.5
@@ -175,6 +196,21 @@ act "ctrl z"; sleep 0.2
 # toolbar sits centred under the selection; its copy button is second from the right
 act "key Return"; sleep 0.8
 check "copy after text+undo produced an image" '[ "$(wl-paste -t image/png 2>/dev/null | magick identify -format %wx%h - 2>/dev/null)" = "$(logical 400 300)" ]'
+gerr
+
+echo "-- interactive: record mode (clipt record)"
+/clipt record -o /tmp/rec-ov.mp4 2>/tmp/rec.err & rp=$!; sleep 1
+drag 100 100 400 300
+act "key r" "key 1"            # annotation keys do nothing here
+act "key Return"; sleep 2
+check "Enter in the overlay starts recording" '[ -s $XDG_RUNTIME_DIR/clipt-record.pid ]'
+/clipt record --stop 2>/dev/null; wait $rp
+check "the selection was recorded at native size ($(even $(logical 300 200 | tr x " ")), got $(vsize /tmp/rec-ov.mp4))" '[ "$(vsize /tmp/rec-ov.mp4)" = "$(even $(logical 300 200 | tr x " "))" ]'
+d=$(magick compare -fuzz 12% -metric AE <(ffmpeg -v error -i /tmp/rec-ov.mp4 -frames:v 1 -vf "crop=$(logical 300 200 | tr x :):0:0" -f image2pipe -vcodec png -) <(grim -g "100,100 300x200" -) null: 2>&1 | cut -d" " -f1)
+check "the recording shows the desktop, not the overlay (AE=$d)" '[ "${d%.*}" -lt 2000 ]'
+/clipt record -o /tmp/rec-esc.mp4 2>/dev/null & rp=$!; sleep 1
+act "key Escape"; wait $rp
+check "Esc in record mode records nothing" '[ ! -e /tmp/rec-esc.mp4 ] && [ ! -e $XDG_RUNTIME_DIR/clipt-record.pid ]'
 gerr
 
 echo "-- interactive: double-click copies"

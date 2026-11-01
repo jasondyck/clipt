@@ -133,8 +133,6 @@ pub struct Encoder {
     child: Child,
     stdin: Option<ChildStdin>,
     stderr: Option<std::thread::JoinHandle<String>>,
-    pub width: u32,
-    pub height: u32,
 }
 
 impl Encoder {
@@ -164,7 +162,7 @@ impl Encoder {
             let _ = err.read_to_string(&mut s);
             s
         });
-        Ok(Self { child, stdin, stderr: Some(stderr), width: w, height: h })
+        Ok(Self { child, stdin, stderr: Some(stderr) })
     }
 
     pub fn write(&mut self, frame: &[u8]) -> Result<()> {
@@ -193,6 +191,20 @@ impl Encoder {
         let s = s.trim();
         if s.is_empty() { "no error output".into() } else { s.lines().last().unwrap_or(s).to_string() }
     }
+}
+
+/// Join recordings of the same format end to end without re-encoding.
+pub fn concat(list: &Path, out: &Path) -> Result<()> {
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(["-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i"]).arg(list).args(["-c", "copy"]);
+    if matches!(out.extension().and_then(|e| e.to_str()), Some("mp4" | "mov")) {
+        cmd.args(["-movflags", "+faststart"]);
+    }
+    let r = cmd.arg(out).stdin(Stdio::null()).output().context("running ffmpeg")?;
+    if !r.status.success() {
+        bail!("joining the recorded parts failed: {}", String::from_utf8_lossy(&r.stderr).trim());
+    }
+    Ok(())
 }
 
 fn debug(msg: &str) {

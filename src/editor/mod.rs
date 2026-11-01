@@ -27,6 +27,8 @@ pub enum Outcome {
     Copy,
     Save,
     Cancel,
+    /// Record mode: start recording the selection.
+    Record,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,6 +155,8 @@ pub struct Editor {
     hover_t0: std::time::Instant,
     hover_shown: Option<Rect>,
     pub outcome: Option<Outcome>,
+    /// Picking a region to record: no annotation tools, and Enter records.
+    pub record: bool,
     last_click: Option<(std::time::Instant, Pt)>,
     /// Show the size/width hint pill until the next pointer move.
     pub width_hint: bool,
@@ -197,6 +201,7 @@ impl Editor {
             hover_t0: std::time::Instant::now(),
             hover_shown: None,
             outcome: None,
+            record: false,
             last_click: None,
             width_hint: false,
             revision: 0,
@@ -516,7 +521,7 @@ impl Editor {
             self.last_click.is_some_and(|(t, q)| now.duration_since(t).as_millis() < 400 && (q.0 - p.0).hypot(q.1 - p.1) < CLICK_SLOP);
         self.last_click = Some((now, p));
         if double && self.tool == Tool::Select && self.sel.is_some_and(|r| r.contains(p.0, p.1)) {
-            self.outcome = Some(Outcome::Copy);
+            self.outcome = Some(self.accept());
             return true;
         }
 
@@ -605,6 +610,9 @@ impl Editor {
     }
 
     pub fn scroll(&mut self, dy: f32) -> bool {
+        if self.record {
+            return false;
+        }
         let step = if dy > 0.0 { -1.0 } else { 1.0 };
         self.width = (self.width + step).clamp(1.0, 40.0);
         self.width_hint = true;
@@ -627,6 +635,9 @@ impl Editor {
             return true;
         }
 
+        if self.record {
+            return self.record_key(key, mods);
+        }
         if mods.ctrl {
             match key {
                 Key::Char('c') | Key::Char('C') => self.outcome = Some(Outcome::Copy),
@@ -681,8 +692,32 @@ impl Editor {
         true
     }
 
+    /// What Enter, double-click and the main button do.
+    fn accept(&self) -> Outcome {
+        if self.record { Outcome::Record } else { Outcome::Copy }
+    }
+
+    /// Keys in record mode: selecting and adjusting only.
+    fn record_key(&mut self, key: Key, mods: Mods) -> bool {
+        match key {
+            Key::Escape | Key::Enter | Key::Tab | Key::Left | Key::Right | Key::Up | Key::Down => {}
+            Key::Char('a' | 'A') if mods.ctrl => {}
+            _ => return false,
+        }
+        // Reuse the normal handling for these; Enter is the only one that differs.
+        if key == Key::Enter {
+            self.outcome = Some(Outcome::Record);
+            return true;
+        }
+        self.record = false;
+        let r = self.key(key, mods);
+        self.record = true;
+        r
+    }
+
     fn press_button(&mut self, b: ui::Button) {
         match b {
+            ui::Button::Record => self.outcome = Some(Outcome::Record),
             ui::Button::Tool(t) => self.tool = t,
             ui::Button::Color(i) => self.color = i,
             ui::Button::Undo => self.undo(),
@@ -880,6 +915,32 @@ mod tests {
         ed.key(Key::Tab, Mods::default());
         click(&mut ed, (10.0, 290.0));
         assert_eq!(ed.sel.unwrap().width(), 400.0, "bare desktop selects the screen");
+    }
+
+    #[test]
+    fn record_mode_selects_but_never_annotates() {
+        let mut ed = editor(vec![shot("A", 0, 400, 300, 1, [0, 0, 0])], false);
+        ed.record = true;
+        drag(&mut ed, (100.0, 100.0), (200.0, 200.0));
+        for k in ['r', 'p', 't', '3'] {
+            assert!(!ed.key(Key::Char(k), Mods::default()), "'{k}' is ignored");
+        }
+        assert_eq!(ed.tool, Tool::Select);
+        let ctrl = Mods { ctrl: true, ..Default::default() };
+        ed.key(Key::Char('c'), ctrl);
+        ed.key(Key::Char('s'), ctrl);
+        assert_eq!(ed.outcome, None, "no copy or save while recording");
+        assert!(!ed.scroll(1.0));
+        ed.key(Key::Right, Mods::default());
+        assert_eq!(ed.sel.unwrap().left(), 101.0, "arrows still nudge");
+        let (_, buttons) = ui::toolbar_layout(&ed).unwrap();
+        assert_eq!(buttons.iter().map(|b| b.1).collect::<Vec<_>>(), vec![ui::Button::Record, ui::Button::Close]);
+        ed.key(Key::Enter, Mods::default());
+        assert_eq!(ed.outcome, Some(Outcome::Record));
+        ed.record = true;
+        ed.key(Key::Escape, Mods::default());
+        assert_eq!(ed.outcome, Some(Outcome::Cancel));
+        assert!(ed.record, "record mode survives reused key handling");
     }
 
     #[test]

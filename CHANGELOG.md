@@ -13,6 +13,15 @@ All notable changes are listed here. The format follows
   captured and encoded when the screen changes. wlroots-family compositors
   only for now. New config keys: `video_dir`, `video_filename`, `record_fps`,
   `record_codec`, `max_duration`.
+- `clipt record` with no arguments opens the selection overlay in record
+  mode (no annotation tools; Enter records). A red frame outside the area
+  marks a region recording.
+- Pausing: `clipt record --pause`, `--resume`, `--toggle-pause`. Paused time
+  is left out of the video (each stretch is its own segment, joined without
+  re-encoding at the end); the frame turns amber.
+- Tray: *Record region…*, *Record screen*, *Pause/Resume/Stop recording* and
+  *Open recordings folder*; the icon gets a red (paused: amber) dot while
+  recording, and clicking it stops.
 
 ## [0.1.1] - 2026-10-31
 

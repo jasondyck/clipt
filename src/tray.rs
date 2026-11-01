@@ -8,6 +8,8 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::process::Command;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use std::time::Duration;
 use zbus::object_server::SignalEmitter;
 use zbus::{Connection, OwnedObjectPath, OwnedVariant, Structure, Variant, interface};
@@ -37,7 +39,13 @@ enum Action {
     Region,
     RegionDelayed,
     Full,
+    RecordRegion,
+    RecordScreen,
+    PauseRecording,
+    ResumeRecording,
+    StopRecording,
     OpenFolder,
+    OpenVideos,
     CheckUpdates,
     Quit,
 }
@@ -48,29 +56,73 @@ const MENU: &[(i32, Option<(&str, Action)>)] = &[
     (2, Some(("Capture region in 3 seconds", Action::RegionDelayed))),
     (3, Some(("Copy full desktop", Action::Full))),
     (4, None),
+    (20, Some(("Record region…", Action::RecordRegion))),
+    (21, Some(("Record screen", Action::RecordScreen))),
+    (22, Some(("Pause recording", Action::PauseRecording))),
+    (23, Some(("Resume recording", Action::ResumeRecording))),
+    (24, Some(("Stop recording", Action::StopRecording))),
+    (25, None),
     (5, Some(("Open screenshots folder", Action::OpenFolder))),
+    (26, Some(("Open recordings folder", Action::OpenVideos))),
     (6, None),
     (7, Some(("Check for updates…", Action::CheckUpdates))),
     (8, Some(("Quit", Action::Quit))),
 ];
 
-/// The menu as shown. Flatpak updates clipt itself, and the sandbox has no
-/// network access to check, so the update entry (and its separator) go.
-fn menu() -> impl Iterator<Item = &'static (i32, Option<(&'static str, Action)>)> {
-    let flatpak = crate::update::flatpak();
-    MENU.iter().filter(move |(id, _)| !(flatpak && matches!(id, 6 | 7)))
+/// Recording state as the tray last saw it.
+const IDLE: u8 = 0;
+const RECORDING: u8 = 1;
+const PAUSED: u8 = 2;
+
+fn rec_state() -> u8 {
+    match crate::record::status() {
+        None => IDLE,
+        Some((_, false)) => RECORDING,
+        Some((_, true)) => PAUSED,
+    }
 }
 
-fn run_action(a: Action, save_dir: &str) {
+/// The menu as shown for this recording state. Flatpak updates clipt itself,
+/// and the sandbox has no network access to check, so the update entry (and
+/// its separator) go; recording isn't available there yet either.
+fn menu(rec: u8) -> impl Iterator<Item = &'static (i32, Option<(&'static str, Action)>)> {
+    let flatpak = crate::update::flatpak();
+    MENU.iter().filter(move |(id, _)| {
+        let hidden = match id {
+            6 | 7 => flatpak,
+            20..=26 if flatpak => true,
+            20 | 21 => rec != IDLE,
+            22 => rec != RECORDING,
+            23 => rec != PAUSED,
+            24 => rec == IDLE,
+            _ => false,
+        };
+        !hidden
+    })
+}
+
+struct Dirs {
+    save: String,
+    video: String,
+}
+
+fn run_action(a: Action, dirs: &Dirs) {
     let exe = crate::update::current_exe();
+    let open = |d: &str| {
+        let _ = std::fs::create_dir_all(d);
+        Command::new("xdg-open").arg(d).spawn()
+    };
     let r = match a {
         Action::Region => Command::new(&exe).args(["gui", "-d", CLICK_DELAY]).spawn(),
         Action::RegionDelayed => Command::new(&exe).args(["gui", "-d", "3"]).spawn(),
         Action::Full => Command::new(&exe).args(["full", "-c", "-d", CLICK_DELAY]).spawn(),
-        Action::OpenFolder => {
-            let _ = std::fs::create_dir_all(save_dir);
-            Command::new("xdg-open").arg(save_dir).spawn()
-        }
+        Action::RecordRegion => Command::new(&exe).args(["record", "-d", CLICK_DELAY]).spawn(),
+        Action::RecordScreen => Command::new(&exe).args(["record", "screen", "-d", CLICK_DELAY]).spawn(),
+        Action::PauseRecording => Command::new(&exe).args(["record", "--pause"]).spawn(),
+        Action::ResumeRecording => Command::new(&exe).args(["record", "--resume"]).spawn(),
+        Action::StopRecording => Command::new(&exe).args(["record", "--stop"]).spawn(),
+        Action::OpenFolder => open(&dirs.save),
+        Action::OpenVideos => open(&dirs.video),
         Action::CheckUpdates => {
             std::thread::spawn(|| updates(true));
             return;
@@ -195,23 +247,26 @@ fn notify(summary: &str, body: &str, actions: &[(&str, &str)]) -> Option<String>
 }
 
 struct Item {
-    save_dir: String,
-    /// Drawn once; hosts pick the size closest to their panel.
-    pixmaps: Pixmaps,
+    dirs: Arc<Dirs>,
+    rec: Arc<AtomicU8>,
+    /// Drawn once per recording state; hosts pick the size closest to their panel.
+    pixmaps: [Pixmaps; 3],
 }
 
-fn pixmaps() -> Pixmaps {
-    [16, 22, 24, 32, 48, 64, 128].into_iter().map(|s| (s as i32, s as i32, crate::icon::argb32(s))).collect()
+fn pixmaps(badge: Option<(u8, u8, u8)>) -> Pixmaps {
+    [16, 22, 24, 32, 48, 64, 128].into_iter().map(|s| (s as i32, s as i32, crate::icon::argb32(s, badge))).collect()
 }
 
 #[interface(name = "org.kde.StatusNotifierItem")]
 impl Item {
+    /// Click: capture a region, or stop the recording that's running.
     fn activate(&self, _x: i32, _y: i32) {
-        run_action(Action::Region, &self.save_dir);
+        let a = if self.rec.load(Ordering::SeqCst) == IDLE { Action::Region } else { Action::StopRecording };
+        run_action(a, &self.dirs);
     }
 
     fn secondary_activate(&self, _x: i32, _y: i32) {
-        run_action(Action::Full, &self.save_dir);
+        run_action(Action::Full, &self.dirs);
     }
 
     fn context_menu(&self, _x: i32, _y: i32) {}
@@ -251,7 +306,7 @@ impl Item {
 
     #[zbus(property)]
     fn icon_pixmap(&self) -> Pixmaps {
-        self.pixmaps.clone()
+        self.pixmaps[self.rec.load(Ordering::SeqCst).min(2) as usize].clone()
     }
 
     #[zbus(property)]
@@ -266,7 +321,11 @@ impl Item {
 
     #[zbus(property, name = "ToolTip")]
     fn tool_tip(&self) -> (&str, Pixmaps, &str, &str) {
-        ("", Vec::new(), "clipt — screenshot", "Click: capture a region\nMiddle-click: copy the whole desktop\nRight-click: more")
+        match self.rec.load(Ordering::SeqCst) {
+            RECORDING => ("", Vec::new(), "clipt — recording", "Click: stop recording\nRight-click: pause"),
+            PAUSED => ("", Vec::new(), "clipt — recording paused", "Click: stop recording\nRight-click: resume"),
+            _ => ("", Vec::new(), "clipt — screenshot", "Click: capture a region\nMiddle-click: copy the whole desktop\nRight-click: more"),
+        }
     }
 
     #[zbus(property)]
@@ -281,8 +340,12 @@ impl Item {
 }
 
 struct Menu {
-    save_dir: String,
+    dirs: Arc<Dirs>,
+    rec: Arc<AtomicU8>,
 }
+
+/// Bumped whenever the menu's contents change (recording state).
+static MENU_REVISION: AtomicU32 = AtomicU32::new(1);
 
 type Props = HashMap<String, OwnedVariant>;
 
@@ -320,20 +383,24 @@ fn child_layout(id: i32, props: Props) -> OwnedVariant {
 impl Menu {
     #[zbus(out_args("revision", "layout"))]
     fn get_layout(&self, parent_id: i32, _recursion_depth: i32, _property_names: Vec<String>) -> (u32, (i32, Props, Vec<OwnedVariant>)) {
+        let rev = MENU_REVISION.load(Ordering::SeqCst);
+        let rec = self.rec.load(Ordering::SeqCst);
         if parent_id != 0 {
-            let props = menu().find(|(id, _)| *id == parent_id).map(|(_, e)| item_props(*e)).unwrap_or_default();
-            return (1, (parent_id, props, Vec::new()));
+            let props = menu(rec).find(|(id, _)| *id == parent_id).map(|(_, e)| item_props(*e)).unwrap_or_default();
+            return (rev, (parent_id, props, Vec::new()));
         }
-        let children = menu().map(|(id, e)| child_layout(*id, item_props(*e))).collect();
-        (1, (0, root_props(), children))
+        let children = menu(rec).map(|(id, e)| child_layout(*id, item_props(*e))).collect();
+        (rev, (0, root_props(), children))
     }
 
     fn get_group_properties(&self, ids: Vec<i32>, _property_names: Vec<String>) -> Vec<(i32, Props)> {
-        menu().filter(|(id, _)| ids.is_empty() || ids.contains(id)).map(|(id, e)| (*id, item_props(*e))).collect()
+        let rec = self.rec.load(Ordering::SeqCst);
+        menu(rec).filter(|(id, _)| ids.is_empty() || ids.contains(id)).map(|(id, e)| (*id, item_props(*e))).collect()
     }
 
     fn get_property(&self, id: i32, name: &str) -> zbus::fdo::Result<OwnedVariant> {
-        let props = if id == 0 { root_props() } else { menu().find(|(i, _)| *i == id).map(|(_, e)| item_props(*e)).unwrap_or_default() };
+        let rec = self.rec.load(Ordering::SeqCst);
+        let props = if id == 0 { root_props() } else { menu(rec).find(|(i, _)| *i == id).map(|(_, e)| item_props(*e)).unwrap_or_default() };
         props.get(name).map(|v| v.try_clone().expect("no fds")).ok_or_else(|| zbus::fdo::Error::InvalidArgs(name.into()))
     }
 
@@ -341,8 +408,8 @@ impl Menu {
         if event_id != "clicked" {
             return;
         }
-        if let Some((_, Some((_, a)))) = menu().find(|(i, _)| *i == id) {
-            run_action(*a, &self.save_dir);
+        if let Some((_, Some((_, a)))) = MENU.iter().find(|(i, _)| *i == id) {
+            run_action(*a, &self.dirs);
         }
     }
 
@@ -413,18 +480,45 @@ async fn register(conn: &Connection, name: &str) -> zbus::Result<()> {
     conn.call_method(Some(WATCHER), "/StatusNotifierWatcher", Some(WATCHER), "RegisterStatusNotifierItem", &(name,)).await.map(drop)
 }
 
-pub fn run(save_dir: String, check_updates: bool) -> Result<()> {
+/// Follow the recording state (a pidfile, checked twice a second) and tell
+/// the tray host when it changes, so the icon, tooltip and menu follow.
+fn watch_recording(conn: Connection, rec: Arc<AtomicU8>) {
+    loop {
+        let now = rec_state();
+        if rec.swap(now, Ordering::SeqCst) != now {
+            MENU_REVISION.fetch_add(1, Ordering::SeqCst);
+            let rev = MENU_REVISION.load(Ordering::SeqCst);
+            zbus::block_on(async {
+                let item = "org.kde.StatusNotifierItem";
+                let _ = conn.emit_signal(None::<&str>, ITEM_PATH, item, "NewIcon", &()).await;
+                let _ = conn.emit_signal(None::<&str>, ITEM_PATH, item, "NewToolTip", &()).await;
+                let _ = conn.emit_signal(None::<&str>, MENU_PATH, "com.canonical.dbusmenu", "LayoutUpdated", &(rev, 0i32)).await;
+            });
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+pub fn run(save_dir: String, video_dir: String, check_updates: bool) -> Result<()> {
     // Children are fire-and-forget; let the kernel reap them.
     // SAFETY: setting a signal disposition to SIG_IGN has no handler to race.
     unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) };
 
+    let dirs = Arc::new(Dirs { save: save_dir, video: video_dir });
+    let rec = Arc::new(AtomicU8::new(rec_state()));
+    let red = Some((0xef, 0x44, 0x44));
+    let amber = Some((0xf5, 0x9e, 0x0b));
     zbus::block_on(async move {
         let conn = crate::dbus::builder()
-            .serve_at(ITEM_PATH, Item { save_dir: save_dir.clone(), pixmaps: pixmaps() })
-            .serve_at(MENU_PATH, Menu { save_dir })
+            .serve_at(ITEM_PATH, Item { dirs: dirs.clone(), rec: rec.clone(), pixmaps: [pixmaps(None), pixmaps(red), pixmaps(amber)] })
+            .serve_at(MENU_PATH, Menu { dirs, rec: rec.clone() })
             .build()
             .await
             .context("connecting to the session bus")?;
+        {
+            let (conn, rec) = (conn.clone(), rec.clone());
+            std::thread::spawn(move || watch_recording(conn, rec));
+        }
 
         let dbus = zbus::fdo::DBusProxy::new(&conn).await?;
         use zbus::fdo::{RequestNameFlags, RequestNameReply};
@@ -485,4 +579,34 @@ pub fn run(save_dir: String, check_updates: bool) -> Result<()> {
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn labels(rec: u8) -> Vec<&'static str> {
+        menu(rec).filter_map(|(_, e)| e.map(|(l, _)| l)).collect()
+    }
+
+    #[test]
+    fn menu_follows_the_recording_state() {
+        if crate::update::flatpak() {
+            return;
+        }
+        let idle = labels(IDLE);
+        assert!(idle.contains(&"Record region…") && idle.contains(&"Record screen"));
+        assert!(!idle.iter().any(|l| l.contains("Stop") || l.contains("Pause") || l.contains("Resume")));
+        let rec = labels(RECORDING);
+        assert!(rec.contains(&"Pause recording") && rec.contains(&"Stop recording"));
+        assert!(!rec.contains(&"Record region…") && !rec.contains(&"Resume recording"));
+        let paused = labels(PAUSED);
+        assert!(paused.contains(&"Resume recording") && paused.contains(&"Stop recording"));
+        assert!(!paused.contains(&"Pause recording"));
+        // Menu ids are unique: hosts address items by id.
+        let mut ids: Vec<i32> = MENU.iter().map(|(id, _)| *id).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), MENU.len());
+    }
 }
