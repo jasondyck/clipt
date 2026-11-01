@@ -32,9 +32,11 @@ USAGE:
     clipt full            Capture the whole desktop
     clipt screen [NAME]   Capture one output (default: the first)
     clipt list            Show outputs and available capture backends
-    clipt record screen [NAME]  Record one output to MP4 (default: the first)
+    clipt record          Pick an area to record (Enter starts), saved as MP4
+    clipt record screen [NAME]  Record one output (default: the first)
     clipt record -g GEOM  Record a region (within one output)
     clipt record --stop   Stop the running recording
+    clipt record --pause / --resume / --toggle-pause
     clipt tray            Sit in the system tray (click: region, right-click: menu)
     clipt update          Update to the latest release (--check: only check)
 
@@ -79,6 +81,7 @@ struct Args {
     record_mode: Option<String>,
     fps: Option<u32>,
     stop: bool,
+    pause: Option<record::PauseCmd>,
 }
 
 fn parse_args() -> Result<Args> {
@@ -97,6 +100,9 @@ fn parse_args() -> Result<Args> {
             Long("check") => a.check = true,
             Long("fps") => a.fps = Some(p.value()?.parse()?),
             Long("stop") => a.stop = true,
+            Long("pause") => a.pause = Some(record::PauseCmd::Pause),
+            Long("resume") => a.pause = Some(record::PauseCmd::Resume),
+            Long("toggle-pause") => a.pause = Some(record::PauseCmd::Toggle),
             Short('h') | Long("help") => {
                 print!("{HELP}");
                 std::process::exit(0);
@@ -145,7 +151,7 @@ fn run() -> Result<()> {
             eprintln!("clipt: {:>7.1} ms  {what}", t0.elapsed().as_secs_f64() * 1e3)
         }
     };
-    let args = parse_args()?;
+    let mut args = parse_args()?;
     let cfg = Config::load()?;
     let backend = match args.backend.as_deref().unwrap_or(&cfg.backend) {
         "auto" => None,
@@ -157,13 +163,25 @@ fn run() -> Result<()> {
         return Ok(());
     }
     if args.cmd == "tray" {
-        return tray::run(config::expand(&cfg.save_dir).display().to_string(), cfg.check_updates);
+        return tray::run(
+            config::expand(&cfg.save_dir).display().to_string(),
+            config::expand(&cfg.video_dir).display().to_string(),
+            cfg.check_updates,
+        );
     }
     if args.cmd == "update" {
         return update::cli(args.check);
     }
     if args.cmd == "record" && args.stop {
         return record::stop();
+    }
+    if args.cmd == "record"
+        && let Some(cmd) = args.pause.take()
+    {
+        return record::pause(cmd);
+    }
+    if args.cmd == "record" {
+        record::ensure_idle()?;
     }
     let cursor = args.cursor || cfg.cursor;
     if args.delay > 0.0 {
@@ -173,11 +191,11 @@ fn run() -> Result<()> {
         let target = match (args.record_mode.as_deref(), &args.geometry) {
             (_, Some(g)) => record::Target::Geometry(g.clone()),
             (Some("screen"), None) => record::Target::Screen(args.screen.clone()),
-            (Some(m @ ("region" | "window")), None) => {
-                bail!("'clipt record {m}' needs the selection overlay, which isn't built yet; use -g \"X,Y WxH\"")
-            }
-            (Some(m), None) => bail!("unknown recording mode '{m}' (screen, or -g GEOM)"),
-            (None, None) => bail!("what to record: 'clipt record screen [NAME]' or 'clipt record -g \"X,Y WxH\"'"),
+            (None | Some("region" | "window"), None) => match pick_recording_area(&cfg, cursor, backend)? {
+                Some(r) => record::Target::Rect(r),
+                None => return Ok(()), // cancelled
+            },
+            (Some(m), None) => bail!("unknown recording mode '{m}' (screen, region, or -g GEOM)"),
         };
         let opts = record::Options { target, output: args.output.clone(), fps: args.fps, cursor, backend };
         return record::run(&cfg, opts);
@@ -326,6 +344,35 @@ fn gui(
         session.serve_clipboard()?;
     }
     Ok(())
+}
+
+/// The overlay in record mode: returns the chosen area in logical desktop
+/// coordinates, or None if cancelled.
+fn pick_recording_area(cfg: &Config, cursor: bool, backend: Option<Backend>) -> Result<Option<capture::LogicalRect>> {
+    let font_path = cfg.font.clone();
+    let fonts = std::thread::spawn(move || text::Fonts::load(font_path.as_deref()));
+    let mut cap = Capturer::new()?;
+    let outputs = cap.outputs();
+    anyhow::ensure!(!outputs.is_empty(), "no outputs found");
+    let x11 = cap.kind() == capture::DisplayKind::X11;
+    let wins = std::thread::spawn(move || windows::list(x11));
+    let (_, shots) = cap.capture(&outputs, cursor, backend)?;
+    let fonts = fonts.join().map_err(|_| anyhow::anyhow!("font loader panicked"))??;
+    let kind = cap.kind();
+    drop(cap);
+    let mut ed = Editor::new(shots, fonts, true, cfg.color.saturating_sub(1), cfg.width);
+    ed.record = true;
+    ed.windows = wins.join().unwrap_or_default();
+    let mut session = session::open(ed, kind)?;
+    if session.run()? != Outcome::Record {
+        return Ok(None);
+    }
+    let r = session.editor().final_rect().context("nothing selected")?;
+    session.hide()?;
+    drop(session);
+    // Let the compositor take the overlay down before the first frame.
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    Ok(Some((r.left() as f64, r.top() as f64, r.width() as f64, r.height() as f64)))
 }
 
 fn deliver(cfg: &Config, args: &Args, img: image::Image, kind: capture::DisplayKind) -> Result<()> {

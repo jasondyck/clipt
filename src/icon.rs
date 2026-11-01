@@ -113,8 +113,20 @@ fn egg(cx: f32, cy: f32, rx: f32, ry: f32) -> tiny_skia::Path {
 }
 
 /// StatusNotifierItem pixmap: non-premultiplied ARGB32, network byte order.
-pub fn argb32(size: u32) -> Vec<u8> {
-    let pm = render(size);
+/// `badge` adds a dot in that colour at the bottom right (recording status).
+pub fn argb32(size: u32, badge: Option<(u8, u8, u8)>) -> Vec<u8> {
+    let mut pm = render(size);
+    if let Some((r, g, b)) = badge {
+        let s = size as f32;
+        if let Some(dot) = PathBuilder::from_circle(s * 0.76, s * 0.76, s * 0.22) {
+            let mut paint = tiny_skia::Paint { anti_alias: true, ..Default::default() };
+            paint.set_color_rgba8(r, g, b, 255);
+            pm.fill_path(&dot, &paint, tiny_skia::FillRule::Winding, tiny_skia::Transform::identity(), None);
+            paint.set_color_rgba8(255, 255, 255, 255);
+            let stroke = tiny_skia::Stroke { width: (s / 16.0).max(1.0), ..Default::default() };
+            pm.stroke_path(&dot, &paint, &stroke, tiny_skia::Transform::identity(), None);
+        }
+    }
     let mut out = Vec::with_capacity(pm.data().len());
     for p in pm.pixels() {
         let c = p.demultiply();
@@ -195,7 +207,7 @@ fn rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> tiny_skia::Path {
 mod tests {
     #[test]
     fn argb_layout() {
-        let px = super::argb32(16);
+        let px = super::argb32(16, None);
         assert_eq!(px.len(), 16 * 16 * 4);
         // Centre pixel is on the opaque body.
         let i = (8 * 16 + 8) * 4;

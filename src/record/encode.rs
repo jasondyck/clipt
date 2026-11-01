@@ -7,10 +7,10 @@
 //!   2. h264_nvenc (NVIDIA's driver has no VA-API encoding)
 //!   3. libx264 on the CPU
 //!
-//! Frames are timestamped by when they arrive (`-use_wallclock_as_timestamps`)
-//! and the output keeps those times (variable frame rate), so frames only
-//! need sending when the screen changed, and a slow encoder drops frames
-//! instead of slowing the video down. The caller caps the rate at `fps`.
+//! Frames reach ffmpeg in a minimal Matroska stream (see `mkv.rs`) that
+//! carries each frame's capture time, and the output keeps those times
+//! (variable frame rate): frames only need sending when the screen changed,
+//! and a slow encoder drops frames instead of slowing the video down.
 
 use crate::capture::PixelOrder;
 use anyhow::{Context, Result, bail};
@@ -133,20 +133,18 @@ pub struct Encoder {
     child: Child,
     stdin: Option<ChildStdin>,
     stderr: Option<std::thread::JoinHandle<String>>,
-    pub width: u32,
-    pub height: u32,
 }
 
 impl Encoder {
-    pub fn spawn(codec: &Codec, w: u32, h: u32, order: PixelOrder, path: &Path) -> Result<Self> {
+    pub fn spawn(codec: &Codec, w: u32, h: u32, order: PixelOrder, fps: u32, path: &Path) -> Result<Self> {
         let mut cmd = Command::new("ffmpeg");
         cmd.args(["-hide_banner", "-loglevel", "error", "-y"]).args(codec.global_args());
-        cmd.args(["-use_wallclock_as_timestamps", "1", "-f", "rawvideo", "-pix_fmt", order.ffmpeg()]);
-        cmd.args(["-s", &format!("{w}x{h}"), "-i", "pipe:0"]);
+        cmd.args(["-f", "matroska", "-i", "pipe:0"]);
         cmd.args(codec.output_args(w, h));
-        // Variable frame rate: each frame keeps the time it arrived, so a still
-        // screen costs nothing to encode. (Constant rate would also be fine
-        // for players, but ffmpeg then pads the end by up to the last gap.)
+        // Variable frame rate: each frame keeps its capture time, to the
+        // millisecond (left to itself, ffmpeg picks a time base from its
+        // frame-rate guess, which can snap timestamps to a coarse grid).
+        cmd.args(["-enc_time_base", "1/1000"]);
         cmd.args(["-fps_mode", "passthrough"]);
         if matches!(path.extension().and_then(|e| e.to_str()), Some("mp4" | "mov")) {
             cmd.args(["-movflags", "+faststart"]);
@@ -164,12 +162,21 @@ impl Encoder {
             let _ = err.read_to_string(&mut s);
             s
         });
-        Ok(Self { child, stdin, stderr: Some(stderr), width: w, height: h })
+        let mut enc = Self { child, stdin, stderr: Some(stderr) };
+        enc.send(&super::mkv::header(w, h, order, 1_000_000_000 / fps.max(1) as u64))?;
+        Ok(enc)
     }
 
-    pub fn write(&mut self, frame: &[u8]) -> Result<()> {
+    /// Send a frame to be shown `ts_ms` milliseconds into the video.
+    /// Timestamps must increase.
+    pub fn write(&mut self, frame: &[u8], ts_ms: u64) -> Result<()> {
+        self.send(&super::mkv::frame_prefix(ts_ms, frame.len()))?;
+        self.send(frame)
+    }
+
+    fn send(&mut self, bytes: &[u8]) -> Result<()> {
         let stdin = self.stdin.as_mut().context("encoder already finished")?;
-        if stdin.write_all(frame).is_err() {
+        if stdin.write_all(bytes).is_err() {
             // ffmpeg died; its stderr says why.
             self.stdin = None;
             let _ = self.child.wait();
