@@ -7,48 +7,38 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
-- `clipt record`: record an output (`screen [NAME]`) or a region (`-g`) to
-  MP4, stopped with `clipt record --stop` or Ctrl-C. Encodes with ffmpeg on
-  the GPU where possible (VA-API, NVENC), libx264 otherwise; frames are only
-  captured and encoded when the screen changes. wlroots-family compositors
-  only for now. New config keys: `video_dir`, `video_filename`, `record_fps`,
-  `record_codec`, `max_duration`.
-- `clipt record` with no arguments opens the selection overlay in record
-  mode (no annotation tools; Enter records). A red frame outside the area
-  marks a region recording.
-- Pausing: `clipt record --pause`, `--resume`, `--toggle-pause`. Paused time
-  is left out of the video; the frame turns amber.
-- Window recording: click a window in `clipt record`'s overlay. It's
-  captured on its own where the compositor can (ext-foreign-toplevel image
-  capture: Sway 1.11+, Hyprland 0.50+, COSMIC), or followed by position on
-  Sway and Hyprland otherwise. When it resizes, the video keeps its size and
-  the zoom eases to fit (~200 ms, never past 1:1).
-- Recording on KDE Plasma (KWin's zkde_screencast: screen, region, window)
-  and GNOME (Mutter's ScreenCast: screen, region), with frames over
-  PipeWire. libpipewire is loaded at runtime when recording there, never
-  linked, so clipt still starts without it.
-- `clipt record window APP` records the topmost window with that app id.
-- Recording on X11: frames over MIT-SHM, taken only when the screen changes
-  (DAMAGE extension); windows are followed by position.
-- `--gif` (or `record_format = "gif"`, or an output name ending in `.gif`)
-  saves a GIF, made from the recording when it stops (at most 15 fps).
-- Recording through the ScreenCast portal (`-b portal`, and automatically
-  where nothing better is available); the choice of screen is remembered,
-  so its dialog appears once.
-- Recording in the Flatpak: it now includes its own ffmpeg (VA-API, NVENC
-  and libx264), and can write to `~/Videos` and use the GPU to encode.
-
-### Fixed
-- `clipt record --stop`, `--pause` and the tray found the running recording
-  by its pid, which another Flatpak instance can't see (each has its own
-  PID namespace), and a pidfile left behind could block new recordings if
-  its pid had been reused. They now use a lock and a control FIFO beside it.
-- The Flatpak's desktop entry named its icon `${FLATPAK_ID}` literally.
-- Recordings with few frames (a mostly still screen) could get a wrong,
-  shorter duration in the MP4: encoders now run without B-frames.
-- Tray: *Record region…*, *Record screen*, *Pause/Resume/Stop recording* and
-  *Open recordings folder*; the icon gets a red (paused: amber) dot while
-  recording, and clicking it stops.
+- `clipt record`: record the screen, a region or a window to MP4, MKV, MOV
+  or GIF. With no arguments it opens the selection overlay in record mode
+  (Enter records, click a window to record it); `clipt record screen
+  [NAME]`, `-g GEOM` and `window APP` skip the overlay. Stop with
+  `clipt record --stop`, Ctrl-C or the tray icon; `--pause`, `--resume`
+  and `--toggle-pause` leave paused time out of the video.
+- Recording works on wlroots compositors (Sway, Hyprland, niri, labwc,
+  COSMIC, …), KDE Plasma, GNOME and X11, and through the ScreenCast portal
+  elsewhere (its dialog appears once; the choice is remembered). On KDE and
+  GNOME frames arrive over PipeWire, whose library is loaded only when
+  recording, so clipt still starts without it.
+- Windows are recorded on their own where the compositor can (KDE Plasma,
+  Sway 1.11+, Hyprland 0.50+, COSMIC, or picked in the portal's dialog) and
+  followed by position on older Sway and Hyprland, and on X11. When a
+  recorded window resizes, the video keeps its size and the zoom eases to
+  fit.
+- Encoding runs ffmpeg (needed only for recording) on the GPU where
+  possible (VA-API, NVENC), libx264 otherwise. Frames are only captured and
+  encoded when the screen changes, so a still screen costs almost nothing.
+  GIFs (`--gif`, or an output name ending in `.gif`) are made when the
+  recording stops, at up to 15 fps.
+- On wlroots compositors a red frame outside the area marks a region
+  recording, amber while paused. The tray gains *Record region…*, *Record
+  screen*, *Pause/Resume/Stop recording* and *Open recordings folder*, and
+  its icon shows a red (paused: amber) dot while recording.
+- New config keys: `video_dir` (default `~/Videos/Screencasts`),
+  `video_filename`, `record_fps`, `record_codec`, `record_format` and
+  `max_duration` (default 1 hour).
+- A man page (`man clipt`) and bash, zsh and fish completions, installed by
+  the packages, `install.sh` and the release tarballs.
+- The Flatpak (still a prototype, built from `packaging/flatpak`) records
+  too, with its own ffmpeg.
 
 ## [0.1.1] - 2026-10-31
 

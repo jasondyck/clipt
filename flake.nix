@@ -1,5 +1,5 @@
 {
-  description = "clipt: fast, lightweight screenshot tool for Wayland and X11";
+  description = "clipt: fast, lightweight screenshot and screen-recording tool for Wayland and X11";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -14,7 +14,7 @@
           version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
           src = pkgs.lib.cleanSource ./.;
           cargoLock.lockFile = ./Cargo.lock;
-          nativeBuildInputs = [ pkgs.pkg-config pkgs.makeWrapper ];
+          nativeBuildInputs = [ pkgs.pkg-config pkgs.makeWrapper pkgs.installShellFiles ];
           buildInputs = [ pkgs.libxkbcommon ];
           # The tests load a system font through fontconfig.
           nativeCheckInputs = [ pkgs.fontconfig pkgs.dejavu_fonts ];
@@ -25,13 +25,16 @@
           postInstall = ''
             install -Dm644 data/clipt.desktop -t $out/share/applications
             install -Dm644 data/clipt.svg -t $out/share/icons/hicolor/scalable/apps
+            installManPage data/clipt.1
+            installShellCompletion --bash --name clipt data/completions/clipt.bash \
+              --zsh data/completions/_clipt --fish data/completions/clipt.fish
             # fc-match finds the UI font; make sure it's on PATH.
             # Recording loads libpipewire at runtime (KDE, GNOME) and runs ffmpeg.
             wrapProgram $out/bin/clipt --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.fontconfig pkgs.ffmpeg ]} \
               --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.pipewire ]}
           '';
           meta = {
-            description = "Fast, lightweight screenshot tool for Wayland and X11";
+            description = "Fast, lightweight screenshot and screen-recording tool for Wayland and X11";
             homepage = "https://github.com/jasondyck/clipt";
             license = with pkgs.lib.licenses; [ mit asl20 ];
             mainProgram = "clipt";

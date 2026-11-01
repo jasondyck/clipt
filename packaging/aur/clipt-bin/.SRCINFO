@@ -1,5 +1,5 @@
 pkgbase = clipt-bin
-	pkgdesc = Fast, lightweight screenshot tool for Wayland and X11 (prebuilt binary)
+	pkgdesc = Fast, lightweight screenshot and screen-recording tool for Wayland and X11 (prebuilt binary)
 	pkgver = 0.1.1
 	pkgrel = 1
 	url = https://github.com/jasondyck/clipt
@@ -10,6 +10,10 @@ pkgbase = clipt-bin
 	depends = libgcc
 	depends = libxkbcommon
 	depends = fontconfig
+	optdepends = xdg-desktop-portal: capture on GNOME
+	optdepends = ffmpeg: screen recording
+	optdepends = libpipewire: screen recording on KDE and GNOME
+	optdepends = noto-fonts: default UI font
 	provides = clipt
 	conflicts = clipt
 	options = !debug
