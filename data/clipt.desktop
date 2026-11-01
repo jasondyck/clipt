@@ -10,6 +10,8 @@ Categories=Utility;Graphics;
 Keywords=screenshot;capture;snip;
 # KDE: lets KWin's ScreenShot2 interface answer this binary without a prompt.
 X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
+# KDE: screen recording through KWin's screencast protocol.
+X-KDE-Wayland-Interfaces=zkde_screencast_unstable_v1
 NoDisplay=false
 Actions=Full;
 

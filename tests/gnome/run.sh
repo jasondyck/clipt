@@ -16,6 +16,8 @@ pastesize() { wl-paste -t image/png 2>/dev/null | magick identify -format %wx%h 
 # GLib only accepts the desktop entry if Exec resolves; the portal needs the
 # entry to register the "clipt" app ID.
 ln -sf /clipt /usr/local/bin/clipt; cp /clipt.desktop /usr/share/applications/
+# PipeWire, for screen recording (Mutter's screencasts go out over it).
+pipewire >/tmp/pw.log 2>&1 & sleep 0.5; wireplumber >/tmp/wp.log 2>&1 &
 MON="--virtual-monitor 1280x720"
 [ "$LAYOUT" = dual ] && MON="$MON --virtual-monitor 1920x1080"
 gnome-shell --headless --wayland --no-x11 $MON >/tmp/gs.log 2>&1 &
@@ -36,6 +38,32 @@ s=$(date +%s%N); clipt full -o /tmp/f.png; ms=$(( ($(date +%s%N)-s)/1000000 ))
 want=1280x720; [ "$LAYOUT" = dual ] && want=4480x1440
 check "with permission: captured $(size /tmp/f.png) in ${ms} ms" '[ "$(size /tmp/f.png)" = "$want" ]'
 check "portal file cleaned up from ~/Pictures" '[ -z "$(ls $HOME/Pictures 2>/dev/null)" ]'
+
+echo "-- recording (Mutter screencast over PipeWire)"
+dur()   { ffprobe -v error -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null; }
+vsize() { ffprobe -v error -select_streams v -show_entries stream=width,height -of csv=s=x:p=0 "$1" 2>/dev/null; }
+clipt screen -o /tmp/rec-ref.png 2>/dev/null   # before anything opens
+CLIPT_DEBUG=1 clipt record screen -o /tmp/rec.mp4 2>/tmp/rec.err & rp=$!
+sleep 1.5; [ -x /testwin ] && { /testwin 20c040 400 300 & tw=$!; }; sleep 1.5
+clipt record --stop; wait $rp; rc=$?
+check "record screen exits cleanly (rc=$rc)" '[ $rc = 0 ]'
+check "it went through Mutter's screencast" 'grep -q "Mutter screencast node" /tmp/rec.err'
+d=$(dur /tmp/rec.mp4)
+check "it lasts about 3 s (${d:-none})" 'awk "BEGIN{exit !(\"$d\"+0 > 2.0 && \"$d\"+0 < 3.6)}"'
+want=1280x720
+check "it's the first monitor at native size ($want, got $(vsize /tmp/rec.mp4))" '[ "$(vsize /tmp/rec.mp4)" = "$want" ]'
+ffmpeg -v error -y -i /tmp/rec.mp4 -frames:v 1 /tmp/rec-first.png
+d=$(magick compare -fuzz 12% -metric AE /tmp/rec-first.png <(magick /tmp/rec-ref.png -alpha off png:-) null: 2>&1 | cut -d" " -f1)
+check "the first frame matches a screenshot (AE=$d)" '[ "${d%.*}" -lt 20000 ]'
+if [ -n "${tw:-}" ]; then
+  ffmpeg -v error -y -sseof -0.2 -i /tmp/rec.mp4 -frames:v 1 /tmp/rec-last.png
+  g=$(magick /tmp/rec-last.png -fuzz 15% -fill white -opaque "#20c040" -fill black +opaque white -format "%[fx:mean]" info:)
+  check "a window opened mid-recording shows at the end (green share $g)" 'awk "BEGIN{exit !($g > 0.05)}"'
+  kill $tw 2>/dev/null
+fi
+grep -E "encoder:|recorded" /tmp/rec.err | sed 's/^clipt: /  /'
+clipt record -g "100,50 301x200" -o /tmp/rec-g.mp4 2>/tmp/rec.err & rp=$!; sleep 1.5; clipt record --stop; wait $rp
+check "record -g records the area (302x200, got $(vsize /tmp/rec-g.mp4))" '[ "$(vsize /tmp/rec-g.mp4)" = 302x200 ]'
 
 mkfifo /tmp/rin; python3 /rdinput.py < /tmp/rin 2>/tmp/rd.err & exec 3>/tmp/rin
 act() { for a in "$@"; do echo "$a" >&3; done; }

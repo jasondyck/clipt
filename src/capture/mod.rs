@@ -9,6 +9,12 @@
 //! | `x11`    | X11 sessions (Xfce, Cinnamon, MATE, i3, ...)         |
 
 pub mod kwin;
+#[cfg(feature = "pipewire")]
+pub mod kwin_cast;
+#[cfg(feature = "pipewire")]
+pub mod mutter_cast;
+#[cfg(feature = "pipewire")]
+pub mod pipewire;
 pub mod portal;
 pub mod wayland;
 

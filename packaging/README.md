@@ -12,5 +12,7 @@ Distribution packagers: `cargo build --release --locked`, then install
 `target/release/clipt` to `bin/` and `data/clipt.desktop` to
 `share/applications/`. The desktop entry matters: Plasma 6.0–6.7 only let
 binaries listed in one capture through KWin silently (6.8 dropped that
-check), and GNOME's portal needs it to remember the screenshot permission. Runtime needs: libxkbcommon, fontconfig
-(`fc-match`) and any sans-serif font.
+check), and GNOME's portal needs it to remember the screenshot permission. Runtime needs: libxkbcommon, fontconfig (`fc-match`) and any sans-serif
+font. Recording also wants ffmpeg, and on KDE and GNOME libpipewire-0.3,
+which clipt loads only when it records (it isn't linked, so screenshots
+work without it); worth a recommends/optional dependency.

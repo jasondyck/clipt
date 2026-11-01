@@ -24,7 +24,8 @@ pub struct Window {
     pub app: String,
     pub title: String,
     /// The compositor's own id, for finding the window again while
-    /// recording it: Sway's container id, Hyprland's address. Empty elsewhere.
+    /// recording it: Sway's container id, Hyprland's address, KWin's
+    /// internal id (a UUID). Empty elsewhere.
     pub id: String,
 }
 
@@ -119,19 +120,13 @@ fn kwin() -> Result<Vec<Window>> {
         h: f32,
         app: String,
         title: String,
+        #[serde(default)]
+        id: String,
     }
     let ws: Vec<W> = serde_json::from_str(&result?)?;
     Ok(ws
         .into_iter()
-        .map(|w| Window {
-            x: w.x.round(),
-            y: w.y.round(),
-            width: w.w.round(),
-            height: w.h.round(),
-            app: w.app,
-            title: w.title,
-            id: String::new(),
-        })
+        .map(|w| Window { x: w.x.round(), y: w.y.round(), width: w.w.round(), height: w.h.round(), app: w.app, title: w.title, id: w.id })
         .collect())
 }
 
@@ -146,7 +141,7 @@ for (let i = order.length - 1; i >= 0; i--) {
     if (!w.onAllDesktops && !w.desktops.some(d => d.id === desk.id)) continue;
     if (w.activities.length && w.activities.indexOf(act) < 0) continue;
     const g = w.frameGeometry;
-    out.push({x: g.x, y: g.y, w: g.width, h: g.height, app: w.resourceClass || "", title: w.caption || ""});
+    out.push({x: g.x, y: g.y, w: g.width, h: g.height, app: w.resourceClass || "", title: w.caption || "", id: String(w.internalId)});
 }
 callDBus("@DEST@", "/clipt/Windows", "org.clipt.Windows", "Report", JSON.stringify(out));
 "#;

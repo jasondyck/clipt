@@ -23,6 +23,11 @@ All notable changes are listed here. The format follows
   capture: Sway 1.11+, Hyprland 0.50+, COSMIC), or followed by position on
   Sway and Hyprland otherwise. When it resizes, the video keeps its size and
   the zoom eases to fit (~200 ms, never past 1:1).
+- Recording on KDE Plasma (KWin's zkde_screencast: screen, region, window)
+  and GNOME (Mutter's ScreenCast: screen, region), with frames over
+  PipeWire. libpipewire is loaded at runtime when recording there, never
+  linked, so clipt still starts without it.
+- `clipt record window APP` records the topmost window with that app id.
 - Tray: *Record region…*, *Record screen*, *Pause/Resume/Stop recording* and
   *Open recordings folder*; the icon gets a red (paused: amber) dot while
   recording, and clicking it stops.

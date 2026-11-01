@@ -26,7 +26,9 @@
             install -Dm644 data/clipt.desktop -t $out/share/applications
             install -Dm644 data/clipt.svg -t $out/share/icons/hicolor/scalable/apps
             # fc-match finds the UI font; make sure it's on PATH.
-            wrapProgram $out/bin/clipt --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.fontconfig ]}
+            # Recording loads libpipewire at runtime (KDE, GNOME) and runs ffmpeg.
+            wrapProgram $out/bin/clipt --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.fontconfig pkgs.ffmpeg ]} \
+              --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.pipewire ]}
           '';
           meta = {
             description = "Fast, lightweight screenshot tool for Wayland and X11";

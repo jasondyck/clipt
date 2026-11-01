@@ -49,8 +49,12 @@ impl Codec {
         let pad = "pad=ceil(iw/2)*2:ceil(ih/2)*2";
         let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         match self {
-            Self::Vaapi(_) => v(&["-vf", &format!("{pad},hwupload,scale_vaapi=format=nv12"), "-c:v", "h264_vaapi", "-qp", "24"]),
-            Self::Nvenc => v(&["-vf", pad, "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "24", "-b:v", "0"]),
+            // No B-frames on the GPU encoders: with variable frame rate their
+            // reordered timestamps gave MP4 files a wrong (tiny) duration.
+            Self::Vaapi(_) => {
+                v(&["-vf", &format!("{pad},hwupload,scale_vaapi=format=nv12"), "-c:v", "h264_vaapi", "-qp", "24", "-bf", "0"])
+            }
+            Self::Nvenc => v(&["-vf", pad, "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "24", "-b:v", "0", "-bf", "0"]),
             Self::X264 => {
                 // Above 1440p, veryfast needs several cores to keep up.
                 let preset = if w as u64 * h as u64 > 2560 * 1440 { "ultrafast" } else { "veryfast" };
