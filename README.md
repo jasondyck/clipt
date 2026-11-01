@@ -5,8 +5,9 @@
 # clipt
 
 A lightweight screenshot tool for Wayland and X11, in the spirit of Flameshot: freeze
-the screen, drag a region, annotate it, copy or save. One small Rust binary, no
-Qt/GTK, CPU-rendered with tiny-skia.
+the screen, drag a region, annotate it, copy or save. It also records the screen,
+a region or a window to MP4 or GIF. One small Rust binary, no Qt/GTK,
+CPU-rendered with tiny-skia.
 
 ![clipt's editor: a selection with its size label, a rectangle, an arrow,
 numbered counters, a highlighter, text and the toolbar](docs/screenshot.png)

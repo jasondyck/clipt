@@ -2,7 +2,7 @@
 name = "clipt"
 version = "0.1.1"
 edition = "2024"
-description = "Fast, lightweight screenshot tool for Wayland and X11 with region select and annotation"
+description = "Fast, lightweight screenshot and screen-recording tool for Wayland and X11"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jasondyck/clipt"
 readme = "README.md"
@@ -62,7 +62,8 @@ extended-description = """\
 Freeze the screen, drag a region, annotate it (arrows, boxes, text, \
 pixelate, counters), then copy or save. Works on KDE, GNOME, wlroots \
 compositors (Sway, Hyprland, niri, ...) and X11, with correct handling of \
-multiple monitors at different resolutions and scales."""
+multiple monitors at different resolutions and scales. Also records the \
+screen, a region or a window to MP4 or GIF (with ffmpeg)."""
 # Explicit so a missing dpkg-shlibdeps can never produce an empty list.
 depends = "libc6 (>= 2.35), libxkbcommon0"
 # Recording: ffmpeg encodes; libpipewire (loaded when needed) on KDE and GNOME.

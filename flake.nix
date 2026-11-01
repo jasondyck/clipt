@@ -1,5 +1,5 @@
 {
-  description = "clipt: fast, lightweight screenshot tool for Wayland and X11";
+  description = "clipt: fast, lightweight screenshot and screen-recording tool for Wayland and X11";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -34,7 +34,7 @@
               --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.pipewire ]}
           '';
           meta = {
-            description = "Fast, lightweight screenshot tool for Wayland and X11";
+            description = "Fast, lightweight screenshot and screen-recording tool for Wayland and X11";
             homepage = "https://github.com/jasondyck/clipt";
             license = with pkgs.lib.licenses; [ mit asl20 ];
             mainProgram = "clipt";
