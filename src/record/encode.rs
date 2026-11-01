@@ -49,8 +49,9 @@ impl Codec {
         let pad = "pad=ceil(iw/2)*2:ceil(ih/2)*2";
         let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         match self {
-            // No B-frames on the GPU encoders: with variable frame rate their
-            // reordered timestamps gave MP4 files a wrong (tiny) duration.
+            // No B-frames on any encoder: with variable frame rate and sparse
+            // frames (a still screen) their reordered timestamps gave MP4
+            // files a wrong duration (h264_vaapi on KDE, libx264 on X11).
             Self::Vaapi(_) => {
                 v(&["-vf", &format!("{pad},hwupload,scale_vaapi=format=nv12"), "-c:v", "h264_vaapi", "-qp", "24", "-bf", "0"])
             }
@@ -58,7 +59,7 @@ impl Codec {
             Self::X264 => {
                 // Above 1440p, veryfast needs several cores to keep up.
                 let preset = if w as u64 * h as u64 > 2560 * 1440 { "ultrafast" } else { "veryfast" };
-                v(&["-vf", &format!("{pad},format=yuv420p"), "-c:v", "libx264", "-preset", preset, "-crf", "23"])
+                v(&["-vf", &format!("{pad},format=yuv420p"), "-c:v", "libx264", "-preset", preset, "-crf", "23", "-bf", "0"])
             }
         }
     }
@@ -204,6 +205,25 @@ impl Encoder {
         let s = s.trim();
         if s.is_empty() { "no error output".into() } else { s.lines().last().unwrap_or(s).to_string() }
     }
+}
+
+/// Turn a finished recording into a GIF: a palette made from the whole clip,
+/// then the clip mapped onto it, at most `fps` frames a second.
+pub fn to_gif(mp4: &Path, gif: &Path, fps: u32) -> Result<()> {
+    let filter =
+        format!("fps={fps},split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle");
+    let r = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .arg(mp4)
+        .args(["-vf", &filter, "-loop", "0"])
+        .arg(gif)
+        .stdin(Stdio::null())
+        .output()
+        .context("running ffmpeg")?;
+    if !r.status.success() {
+        bail!("making the GIF failed: {}", String::from_utf8_lossy(&r.stderr).trim());
+    }
+    Ok(())
 }
 
 fn debug(msg: &str) {

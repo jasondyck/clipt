@@ -69,6 +69,53 @@ check "geometry crop matches import (AE=$(ae /tmp/g.png /tmp/gr.png))" '[ "$(ae 
 /clipt full --cursor -o /tmp/cur.png
 check "--cursor capture works" '[ "$(size /tmp/cur.png)" = "$BBOX" ]'
 
+echo "-- recording (MIT-SHM + DAMAGE)"
+dur()   { ffprobe -v error -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null; }
+vsize() { ffprobe -v error -select_streams v -show_entries stream=width,height -of csv=s=x:p=0 "$1" 2>/dev/null; }
+even()  { awk "BEGIN{w=$1; h=$2; printf \"%dx%d\", w+w%2, h+h%2}"; }
+read O1 G1 < <(/clipt list | grep -v backends | head -1 | awk '{print $1, $2}')
+ref "$G1" /tmp/rec-ref.png
+CLIPT_DEBUG=1 /clipt record screen $O1 -o /tmp/rec.mp4 2>/tmp/rec.err & rp=$!
+sleep 1.5; xsetroot -solid '#20c040'; sleep 1.5
+/clipt record --stop; wait $rp; rc=$?
+check "record screen exits cleanly (rc=$rc)" '[ $rc = 0 ]'
+d=$(dur /tmp/rec.mp4)
+check "it lasts about 3 s (${d:-none})" 'awk "BEGIN{exit !(\"$d\"+0 > 2.3 && \"$d\"+0 < 3.5)}"'
+W1=${G1%%x*}; H1=${G1#*x}; H1=${H1%%+*}
+check "it's $O1 at its size ($(even $W1 $H1), got $(vsize /tmp/rec.mp4))" '[ "$(vsize /tmp/rec.mp4)" = "$(even $W1 $H1)" ]'
+ffmpeg -v error -y -i /tmp/rec.mp4 -frames:v 1 /tmp/rec-first.png
+d=$(magick compare -fuzz 12% -metric AE /tmp/rec-first.png <(magick /tmp/rec-ref.png -alpha off png:-) null: 2>&1 | cut -d" " -f1)
+check "the first frame matches import (AE=$d)" '[ "${d%.*}" -lt $((W1 * H1 / 50)) ]'
+ffmpeg -v error -y -sseof -0.2 -i /tmp/rec.mp4 -frames:v 1 /tmp/rec-last.png
+p=$(px /tmp/rec-last.png "$((W1 / 2)),$((H1 / 2))")
+check "the root repainted mid-recording shows at the end ($p)" 'echo "$p" | grep -Eq "srgba?\(([0-9]|[1-5][0-9]),(1[6-9][0-9]|2[0-9][0-9]),([0-9]|[1-9][0-9])"'
+grep -E "encoder:|recorded" /tmp/rec.err | sed 's/^clipt: /  /'
+/clipt record -g "100,50 301x200" -o /tmp/rec-g.mp4 2>/dev/null & rp=$!; sleep 1.5; /clipt record --stop; wait $rp
+check "record -g crops to the region (302x200, got $(vsize /tmp/rec-g.mp4))" '[ "$(vsize /tmp/rec-g.mp4)" = 302x200 ]'
+
+echo "-- recording a window: followed by position, zoom eases on resize"
+xlogo -geometry 400x300+150+150 & xl=$!; sleep 1
+CLIPT_DEBUG=1 /clipt record window xlogo -o /tmp/rec-w.mp4 2>/tmp/rec.err & rp=$!; sleep 1.2
+xdotool search --class xlogo windowsize --sync 800 300 2>/dev/null; sleep 1.2
+xdotool search --class xlogo windowmove 500 400 2>/dev/null; sleep 1
+/clipt record --stop; wait $rp; kill $xl 2>/dev/null
+check "it follows the window by position" 'grep -q "following the X11 window" /tmp/rec.err'
+read VW VH < <(vsize /tmp/rec-w.mp4 | tr x " ")
+check "the video keeps the window's first size (${VW}x${VH}, about 400x300 plus the frame)" '[ "${VW:-0}" -ge 400 ] && [ "${VW:-0}" -le 440 ]'
+heights() {
+  rm -rf /tmp/cols && mkdir /tmp/cols
+  ffmpeg -v error -i "$1" -vf "crop=2:ih:iw/2:0" -fps_mode passthrough /tmp/cols/%04d.png
+  for f in /tmp/cols/*.png; do magick "$f" -fuzz 12% -transparent "#1e1e22" -trim -format "%h\n" info: 2>/dev/null; done
+}
+hs=$(heights /tmp/rec-w.mp4 | sort -un | tr "\n" " ")
+check "the zoom eases through several sizes after the resize (heights: $hs)" '[ "$(echo $hs | wc -w)" -ge 4 ]'
+magick display -window root /tmp/bg.png &
+for _ in $(seq 100); do   # the wallpaper back, as later tests compare with earlier captures
+  [ "$(magick import -window root -crop 1x1+700+400 +repage -format '%[pixel:p{0,0}]' info: 2>/dev/null)" = "srgb(255,255,255)" ] && break
+  sleep 0.2
+done
+sleep 0.5
+
 echo "-- headless clipboard (CLIPBOARD selection, INCR for big images)"
 /clipt full -c; sleep 0.5
 paste_png > /tmp/paste.png

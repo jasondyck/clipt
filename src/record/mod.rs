@@ -53,6 +53,11 @@ enum Source {
     /// GNOME: a screencast from Mutter over PipeWire.
     #[cfg(feature = "pipewire")]
     Gnome(crate::capture::mutter_cast::Target),
+    /// The ScreenCast portal: what the user picks, cropped to a desktop region.
+    #[cfg(feature = "pipewire")]
+    Portal(crate::capture::portal_cast::Kind, Option<LogicalRect>),
+    /// X11: an output, cropped to `crop` (updated while following a window).
+    X11 { out: Output, crop: Arc<Mutex<Option<LogicalRect>>> },
 }
 
 /// How this desktop lets us record.
@@ -62,6 +67,8 @@ enum Method {
     Kde,
     #[cfg(feature = "pipewire")]
     Gnome,
+    #[cfg(feature = "pipewire")]
+    Portal,
 }
 
 pub struct Options {
@@ -70,6 +77,8 @@ pub struct Options {
     pub fps: Option<u32>,
     pub cursor: bool,
     pub backend: Option<Backend>,
+    /// Save a GIF (also chosen by a `.gif` output name or `record_format`).
+    pub gif: bool,
 }
 
 /// Stop recordings below this much free space, before ffmpeg hits ENOSPC
@@ -219,34 +228,71 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
     let fps = opts.fps.unwrap_or(cfg.record_fps).clamp(1, 240);
     let codec = encode::choose(&cfg.record_codec)?;
 
-    let mut wl = Wayland::connect().map_err(|e| e.context("recording needs a Wayland session for now (X11 is planned)"))?;
-    let outputs = wl.outputs();
+    // A Wayland compositor if there is one, else an X display.
+    let (mut wl, x11) = match Wayland::connect() {
+        Ok(wl) => (Some(wl), None),
+        Err(e) if crate::x11::available() => {
+            let x = crate::x11::X11::connect().map_err(|x| x.context(format!("and Wayland: {e:#}")))?;
+            (None, Some(x))
+        }
+        Err(e) => return Err(e.context("no Wayland compositor and no X11 display")),
+    };
+    let outputs = match (&wl, &x11) {
+        (Some(wl), _) => wl.outputs(),
+        (_, Some(x)) => x.outputs(),
+        _ => unreachable!(),
+    };
     anyhow::ensure!(!outputs.is_empty(), "no outputs found");
-    let wlroots = wl.protocols();
     // `zoom`: frames change size, so they go through the camera.
-    let method = pick_method(&wl, &wlroots, opts.backend)?;
-    #[cfg(feature = "pipewire")]
-    if matches!(method, Method::Kde | Method::Gnome) {
-        crate::capture::pipewire::check()?;
-    }
-    let proto = match method {
-        Method::Wlroots(p) => p,
-        #[allow(unreachable_patterns)]
-        _ => Protocol::ExtImageCopy,
+    let (source, zoom, follow, frame, proto) = match &wl {
+        Some(w) => {
+            let wlroots = w.protocols();
+            let method = pick_method(w, &wlroots, opts.backend)?;
+            #[cfg(feature = "pipewire")]
+            if matches!(method, Method::Kde | Method::Gnome | Method::Portal) {
+                crate::capture::pipewire::check()?;
+            }
+            let proto = match method {
+                Method::Wlroots(p) => p,
+                #[allow(unreachable_patterns)]
+                _ => Protocol::ExtImageCopy,
+            };
+            let (s, z, f, fr) = match method {
+                Method::Wlroots(p) => wlroots_source(w, p, &outputs, &opts.target)?,
+                #[cfg(feature = "pipewire")]
+                Method::Kde => kde_source(&outputs, &opts.target)?,
+                #[cfg(feature = "pipewire")]
+                Method::Gnome => gnome_source(&outputs, &opts.target)?,
+                #[cfg(feature = "pipewire")]
+                Method::Portal => portal_source(&outputs, &opts.target)?,
+            };
+            (s, z, f, fr, proto)
+        }
+        None => {
+            if let Some(b) = opts.backend.filter(|b| *b != Backend::X11) {
+                bail!("this is an X11 session; recording uses X11 here, not {b:?}");
+            }
+            let (s, z, f, fr) = x11_source(&outputs, &opts.target)?;
+            (s, z, f, fr, Protocol::ExtImageCopy)
+        }
     };
-    let (source, zoom, follow, frame) = match method {
-        Method::Wlroots(p) => wlroots_source(&wl, p, &outputs, &opts.target)?,
-        #[cfg(feature = "pipewire")]
-        Method::Kde => kde_source(&outputs, &opts.target)?,
-        #[cfg(feature = "pipewire")]
-        Method::Gnome => gnome_source(&outputs, &opts.target)?,
-    };
+    let interval = Duration::from_secs_f64(1.0 / fps as f64);
 
+    let gif_format = match cfg.record_format.as_str() {
+        "mp4" => opts.gif,
+        "gif" => true,
+        other => bail!("unknown record_format '{other}' (mp4, gif)"),
+    };
     let path = match &opts.output {
         Some(p) => crate::config::expand(p),
-        None => cfg.next_video_path(),
+        None => cfg.next_video_path(if gif_format { "gif" } else { "mp4" }),
     };
     check_extension(&path)?;
+    // A GIF is made from an MP4 when the recording stops: its palette needs
+    // every frame, and ffmpeg would otherwise hold them all in memory.
+    let gif = is_gif(&path);
+    let target = path.clone();
+    let path = if gif { hidden_sibling(&path, "recording.mp4") } else { path };
     if let Some(d) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(d).with_context(|| format!("creating {}", d.display()))?;
     }
@@ -265,9 +311,9 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
             }
         });
     }
-    if let (Source::Output { crop, .. }, Some((id, out))) = (&source, &follow) {
-        let (crop, id, out) = (crop.clone(), id.clone(), out.clone());
-        std::thread::spawn(move || follow::run(&id, &out, &crop));
+    if let (Source::Output { crop, .. } | Source::X11 { crop, .. }, Some((id, out))) = (&source, &follow) {
+        let (crop, id, out, on_x11) = (crop.clone(), id.clone(), out.clone(), x11.is_some());
+        std::thread::spawn(move || follow::run(&id, &out, &crop, on_x11));
     }
 
     let slot = Arc::new((Mutex::new(Slot::default()), Condvar::new()));
@@ -286,12 +332,15 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
                 !STOP.load(Ordering::SeqCst)
             };
             let r = match &source {
-                Source::Output { out, crop } => wl.stream(out, cursor, proto, &|| *crop.lock().unwrap(), &mut sink),
-                Source::Window { app, title } => wl.stream_window(app, title, cursor, &mut sink),
+                Source::Output { out, crop } => wl.as_mut().unwrap().stream(out, cursor, proto, &|| *crop.lock().unwrap(), &mut sink),
+                Source::Window { app, title } => wl.as_mut().unwrap().stream_window(app, title, cursor, &mut sink),
+                Source::X11 { out, crop } => x11.as_ref().unwrap().stream(out, cursor, interval, &|| *crop.lock().unwrap(), &mut sink),
                 #[cfg(feature = "pipewire")]
                 Source::Kde(t) => crate::capture::kwin_cast::stream(t.clone(), cursor, Box::new(|_, _| None), Box::new(sink)),
                 #[cfg(feature = "pipewire")]
                 Source::Gnome(t) => crate::capture::mutter_cast::stream(t.clone(), cursor, Box::new(|_, _| None), Box::new(sink)),
+                #[cfg(feature = "pipewire")]
+                Source::Portal(kind, region) => crate::capture::portal_cast::stream(*kind, *region, cursor, Box::new(sink)),
             };
             let (m, cv) = &*slot;
             let mut s = m.lock().unwrap();
@@ -303,12 +352,18 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         });
     }
 
-    let result = write_loop(cfg, &lock, &slot, &codec, fps, zoom, &path, &captured);
+    let mut result = write_loop(cfg, &lock, &slot, &codec, fps, zoom, &path, &captured);
+    if gif && result.is_ok() {
+        result = encode::to_gif(&path, &target, fps.min(15)).map(|()| {
+            let _ = std::fs::remove_file(&path);
+            "GIF".to_string()
+        });
+    }
     match &result {
         Ok(stats) => {
-            println!("{}", path.display());
+            println!("{}", target.display());
             if cfg.notify {
-                crate::notify::send("Recording saved", &format!("{}  ·  {}", path.display(), stats), None);
+                crate::notify::send("Recording saved", &format!("{}  ·  {}", target.display(), stats), None);
             }
         }
         Err(_) if path.exists() => eprintln!("clipt: the partial recording is in {}", path.display()),
@@ -321,9 +376,10 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
 /// one, else KWin's screencast (KDE), else Mutter's (GNOME).
 fn pick_method(wl: &Wayland, wlroots: &[Protocol], forced: Option<Backend>) -> Result<Method> {
     #[cfg(feature = "pipewire")]
-    let (kde, gnome) = (
+    let (kde, gnome, portal) = (
         || crate::capture::kwin_cast::available(wl.connection()),
         || crate::dbus::session().is_ok_and(|c| crate::capture::mutter_cast::available(&c)),
+        || crate::dbus::session().is_ok_and(|c| crate::capture::portal_cast::available(&c)),
     );
     let _ = wl;
     let ext = wlroots.contains(&Protocol::ExtImageCopy);
@@ -343,8 +399,8 @@ fn pick_method(wl: &Wayland, wlroots: &[Protocol], forced: Option<Backend>) -> R
         }
         #[cfg(feature = "pipewire")]
         Some(Backend::Portal) => {
-            anyhow::ensure!(gnome(), "Mutter's screencast isn't available here (the ScreenCast portal is planned)");
-            Method::Gnome
+            anyhow::ensure!(portal(), "the ScreenCast portal isn't available here");
+            Method::Portal
         }
         Some(b) => bail!("recording doesn't support the {b:?} backend (ext, wlr, kwin or portal)"),
         None if ext => Method::Wlroots(Protocol::ExtImageCopy),
@@ -353,6 +409,8 @@ fn pick_method(wl: &Wayland, wlroots: &[Protocol], forced: Option<Backend>) -> R
         None if kde() => Method::Kde,
         #[cfg(feature = "pipewire")]
         None if gnome() => Method::Gnome,
+        #[cfg(feature = "pipewire")]
+        None if portal() => Method::Portal,
         None if cfg!(feature = "pipewire") => {
             bail!("this desktop offers no way to record: no wlroots capture protocol, no KWin or Mutter screencast")
         }
@@ -386,6 +444,40 @@ fn wlroots_source(wl: &Wayland, proto: Protocol, outputs: &[Output], target: &Ta
             let (out, crop) = resolve_target(outputs, t)?;
             let frame = crop.map(|c| (out.clone(), c));
             (Source::Output { out, crop: Arc::new(Mutex::new(crop)) }, false, None, frame)
+        }
+    })
+}
+
+/// X11: the output (cropped), or a window followed by its position. No red
+/// frame: drawing one needs override-redirect windows, which would show in
+/// the recording whenever the region touches them.
+fn x11_source(outputs: &[Output], target: &Target) -> Result<Picked> {
+    let rect = |w: &crate::windows::Window| Target::Rect((w.x as f64, w.y as f64, w.width as f64, w.height as f64));
+    Ok(match target {
+        Target::Window(w) if !w.id.is_empty() => {
+            let (out, crop) = resolve_target(outputs, &rect(w))?;
+            debug("following the X11 window by its position");
+            (Source::X11 { out: out.clone(), crop: Arc::new(Mutex::new(crop)) }, true, Some((w.id.clone(), out)), None)
+        }
+        t => {
+            let (out, crop) = resolve_target(outputs, t)?;
+            (Source::X11 { out, crop: Arc::new(Mutex::new(crop)) }, false, None, None)
+        }
+    })
+}
+
+/// The ScreenCast portal: the user picks a monitor (or window) in its dialog,
+/// once; a region is cropped out of the monitor they pick.
+#[cfg(feature = "pipewire")]
+fn portal_source(outputs: &[Output], target: &Target) -> Result<Picked> {
+    use crate::capture::portal_cast::Kind;
+    Ok(match target {
+        Target::Screen(_) => (Source::Portal(Kind::Monitor, None), false, None, None),
+        Target::Window(_) => (Source::Portal(Kind::Window, None), true, None, None),
+        t => {
+            let (o, crop) = resolve_target(outputs, t)?;
+            let region = crop.map(|(x, y, w, h)| (x + o.x as f64, y + o.y as f64, w, h));
+            (Source::Portal(Kind::Monitor, region), false, None, None)
         }
     })
 }
@@ -473,9 +565,19 @@ fn resolve_target(outputs: &[Output], target: &Target) -> Result<(Output, Option
 
 fn check_extension(path: &Path) -> Result<()> {
     match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
-        Some("mp4" | "mkv" | "mov") => Ok(()),
-        _ => bail!("{}: recordings are .mp4, .mkv or .mov", path.display()),
+        Some("mp4" | "mkv" | "mov" | "gif") => Ok(()),
+        _ => bail!("{}: recordings are .mp4, .mkv, .mov or .gif", path.display()),
     }
+}
+
+fn is_gif(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("gif"))
+}
+
+/// `.<name>.<suffix>` next to `path`, for intermediate files.
+fn hidden_sibling(path: &Path, suffix: &str) -> PathBuf {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("recording");
+    path.with_file_name(format!(".{stem}.{suffix}"))
 }
 
 /// Feed frames to ffmpeg until stopped; returns a short summary.
@@ -704,7 +806,9 @@ mod tests {
     fn extensions() {
         assert!(check_extension(Path::new("a.mp4")).is_ok());
         assert!(check_extension(Path::new("a.MKV")).is_ok());
-        assert!(check_extension(Path::new("a.gif")).is_err());
+        assert!(check_extension(Path::new("a.gif")).is_ok() && is_gif(Path::new("a.GIF")));
+        assert!(check_extension(Path::new("a.webm")).is_err());
+        assert_eq!(hidden_sibling(Path::new("/v/Rec_1.gif"), "recording.mp4"), Path::new("/v/.Rec_1.recording.mp4"));
         assert!(check_extension(Path::new("a")).is_err());
     }
 }

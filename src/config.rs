@@ -34,6 +34,8 @@ pub struct Config {
     pub record_fps: u32,
     /// auto, vaapi, nvenc or x264.
     pub record_codec: String,
+    /// mp4 or gif (converted when the recording stops, at most 15 fps).
+    pub record_format: String,
     /// A recording stops by itself after this many seconds (0 = no limit).
     pub max_duration: u64,
 }
@@ -55,6 +57,7 @@ impl Default for Config {
             video_filename: "Recording_%Y-%m-%d_%H-%M-%S".into(),
             record_fps: 30,
             record_codec: "auto".into(),
+            record_format: "mp4".into(),
             max_duration: 3600,
         }
     }
@@ -80,9 +83,9 @@ impl Config {
         fresh_path(&expand(&self.save_dir), &self.filename, "png")
     }
 
-    /// A fresh, non-clobbering path in `video_dir`.
-    pub fn next_video_path(&self) -> PathBuf {
-        fresh_path(&expand(&self.video_dir), &self.video_filename, "mp4")
+    /// A fresh, non-clobbering path in `video_dir`, with `ext` (mp4, gif).
+    pub fn next_video_path(&self, ext: &str) -> PathBuf {
+        fresh_path(&expand(&self.video_dir), &self.video_filename, ext)
     }
 }
 

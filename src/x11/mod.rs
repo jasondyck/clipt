@@ -6,6 +6,7 @@
 
 pub mod clip;
 pub mod overlay;
+pub mod record;
 
 use crate::capture::{Output, Shot};
 use crate::image::Image;
@@ -168,7 +169,7 @@ pub fn available() -> bool {
     std::env::var_os("DISPLAY").is_some_and(|d| !d.is_empty())
 }
 
-struct CursorImage {
+pub(crate) struct CursorImage {
     x: i32,
     y: i32,
     w: u32,

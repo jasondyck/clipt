@@ -407,7 +407,7 @@ fn shm_buffer(x: &X11, len: usize) -> Result<Buffer> {
 }
 
 /// MIT-SHM only works when client and server share a machine.
-fn is_local_display() -> bool {
+pub(crate) fn is_local_display() -> bool {
     std::env::var("DISPLAY").is_ok_and(|d| d.starts_with(':') || d.starts_with("unix:"))
 }
 

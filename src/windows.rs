@@ -25,7 +25,7 @@ pub struct Window {
     pub title: String,
     /// The compositor's own id, for finding the window again while
     /// recording it: Sway's container id, Hyprland's address, KWin's
-    /// internal id (a UUID). Empty elsewhere.
+    /// internal id (a UUID), the X11 window id. Empty on GNOME.
     pub id: String,
 }
 
@@ -381,7 +381,7 @@ fn x11_windows() -> Result<Vec<Window>> {
             .ok()
             .and_then(|r| r.value.split(|&b| b == 0).filter(|s| !s.is_empty()).nth(1).map(|s| String::from_utf8_lossy(s).into_owned()))
             .unwrap_or_default();
-        out.push(Window { x, y, width: ww, height: hh, app, title, id: String::new() });
+        out.push(Window { x, y, width: ww, height: hh, app, title, id: w.to_string() });
     }
     Ok(out)
 }

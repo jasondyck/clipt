@@ -28,6 +28,17 @@ All notable changes are listed here. The format follows
   PipeWire. libpipewire is loaded at runtime when recording there, never
   linked, so clipt still starts without it.
 - `clipt record window APP` records the topmost window with that app id.
+- Recording on X11: frames over MIT-SHM, taken only when the screen changes
+  (DAMAGE extension); windows are followed by position.
+- `--gif` (or `record_format = "gif"`, or an output name ending in `.gif`)
+  saves a GIF, made from the recording when it stops (at most 15 fps).
+- Recording through the ScreenCast portal (`-b portal`, and automatically
+  where nothing better is available); the choice of screen is remembered,
+  so its dialog appears once.
+
+### Fixed
+- Recordings with few frames (a mostly still screen) could get a wrong,
+  shorter duration in the MP4: encoders now run without B-frames.
 - Tray: *Record region…*, *Record screen*, *Pause/Resume/Stop recording* and
   *Open recordings folder*; the icon gets a red (paused: amber) dot while
   recording, and clicking it stops.

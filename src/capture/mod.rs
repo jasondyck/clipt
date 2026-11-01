@@ -16,6 +16,8 @@ pub mod mutter_cast;
 #[cfg(feature = "pipewire")]
 pub mod pipewire;
 pub mod portal;
+#[cfg(feature = "pipewire")]
+pub mod portal_cast;
 pub mod wayland;
 
 use crate::image::Image;
