@@ -168,6 +168,16 @@ gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore \
   screenshot true screenshot clipt "['yes']"
 ```
 
+### Shell completions
+
+Tab-completion scripts live in `data/completions/`, no build step needed:
+
+```
+data/completions/clipt.bash   # bash: source it, or copy to /usr/share/bash-completion/completions/clipt
+data/completions/_clipt       # zsh: copy to a directory in $fpath, then run compinit
+data/completions/clipt.fish   # fish: copy to ~/.config/fish/completions/clipt.fish
+```
+
 ## Development
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the checks CI runs, the

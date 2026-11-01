@@ -1,0 +1,136 @@
+#compdef clipt
+
+# zsh completion for clipt.
+#
+# Install as _clipt in a directory in $fpath (for example
+# ~/.local/share/zsh/site-functions) and run compinit.
+
+_clipt() {
+  local curcontext="$curcontext" state line
+  typeset -A opt_args
+  local -a commands common record update
+
+  commands=(
+    'gui:select a region and annotate it (default)'
+    'full:capture the whole desktop'
+    'screen:capture one output (default: the first)'
+    'list:show outputs and available capture backends'
+    'record:pick an area to record (Enter starts)'
+    'tray:sit in the system tray'
+    'update:update to the latest release'
+  )
+  common=(
+    '(-o --output)'{-o,--output}'[write the PNG to PATH]:path:_files'
+    '(-c --clipboard)'{-c,--clipboard}'[copy to the clipboard]'
+    '(-g --geometry)'{-g,--geometry}'[crop to "X,Y WxH" in logical pixels]:geometry:'
+    '(-d --delay)'{-d,--delay}'[wait before capturing]:seconds:'
+    '(-b --backend)'{-b,--backend}'[force a capture backend]:backend:(ext wlr kwin portal x11)'
+    '--cursor[include the pointer]'
+    '--fps[recording frame rate]:frame rate:'
+    '(-h --help)'{-h,--help}'[show help]'
+    '(-V --version)'{-V,--version}'[show the version]'
+  )
+  record=(
+    '--stop[stop the running recording]'
+    '--pause[pause the running recording]'
+    '--resume[resume the running recording]'
+    '--toggle-pause[toggle pausing]'
+  )
+  update=( '--check[only check for updates]' )
+
+  _arguments -C $common $record $update \
+    '1:command:->command' \
+    '*::argument:->args' \
+    && return 0
+
+  case $state in
+    command)
+      _describe -t commands 'clipt command' commands
+      ;;
+    args)
+      _clipt_args
+      ;;
+  esac
+}
+
+# The words after the command.  The first _arguments call stops at the command
+# word, so options and arguments after it are completed here.
+_clipt_args() {
+  local cmd=$words[1]
+  local -a args=(${words[2,CURRENT-1]})
+  local prev=
+  (( CURRENT > 1 )) && prev=$words[CURRENT-1]
+
+  case $prev in
+    -o|--output)
+      _files
+      return
+      ;;
+    -b|--backend)
+      _values 'backend' ext wlr kwin portal x11
+      return
+      ;;
+    -g|--geometry|-d|--delay|--fps)
+      return
+      ;;
+  esac
+
+  if [[ $PREFIX == -* ]]; then
+    local -a opts=(
+      '-o:write the PNG to PATH'
+      '--output:write the PNG to PATH'
+      '-c:copy to the clipboard'
+      '--clipboard:copy to the clipboard'
+      '-g:crop to "X,Y WxH" in logical pixels'
+      '--geometry:crop to "X,Y WxH" in logical pixels'
+      '-d:wait before capturing'
+      '--delay:wait before capturing'
+      '-b:force a capture backend'
+      '--backend:force a capture backend'
+      '--cursor:include the pointer'
+      '--fps:recording frame rate'
+      '-h:show help'
+      '--help:show help'
+      '-V:show the version'
+      '--version:show the version'
+    )
+    case $cmd in
+      record)
+        opts+=(
+          '--stop:stop the running recording'
+          '--pause:pause the running recording'
+          '--resume:resume the running recording'
+          '--toggle-pause:toggle pausing'
+        )
+        ;;
+      update)
+        opts+=( '--check:only check for updates' )
+        ;;
+    esac
+    _describe -t options 'option' opts
+    return
+  fi
+
+  case $cmd in
+    screen)
+      (( ${#args} == 0 )) && _clipt_outputs
+      ;;
+    record)
+      if (( ${#args} == 0 )); then
+        _values 'record mode' screen region window
+      elif [[ $args[1] == screen ]] && (( ${#args} == 1 )); then
+        _clipt_outputs
+      fi
+      ;;
+  esac
+}
+
+# Output names from `clipt list`: one per line, first tab-separated column.
+_clipt_outputs() {
+  local -a outputs
+  outputs=("${(@f)$(command clipt list 2>/dev/null | awk -F '\t' 'NF > 1 { print $1 }')}")
+  outputs=(${outputs:#})
+  (( ${#outputs} )) && _describe -t outputs 'output' outputs
+}
+
+_clipt "$@"
