@@ -1,7 +1,7 @@
 # Maintainer: The clipt contributors
 pkgname=clipt-bin
 _pkgname=clipt
-pkgver=0.1.1
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Fast, lightweight screenshot and screen-recording tool for Wayland and X11 (prebuilt binary)"
 arch=('x86_64' 'aarch64')
@@ -18,8 +18,8 @@ provides=("$_pkgname")
 conflicts=("$_pkgname")
 source_x86_64=("$url/releases/download/v$pkgver/$_pkgname-v$pkgver-x86_64-linux.tar.gz")
 source_aarch64=("$url/releases/download/v$pkgver/$_pkgname-v$pkgver-aarch64-linux.tar.gz")
-sha256sums_x86_64=('fd7b277090f55b4f23b7d9395f4a8a5f435eddad2ba89aefce28336c0c035717')
-sha256sums_aarch64=('6bcdeee034a380ffc8ed45bd836df09660e23f597838d5b6818fd5a6754091af')
+sha256sums_x86_64=('bc0733fe86a05efedab6350cc655aa61542e6cfa97a8d2c5aab975132b3d6cfe')
+sha256sums_aarch64=('ef94e5f2a272f2109b690d03ad00add49e99eab056b752935f50c55dfdfcb7ca')
 
 package() {
   cd "$_pkgname-v$pkgver-$CARCH-linux"
