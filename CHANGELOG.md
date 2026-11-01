@@ -35,6 +35,8 @@ All notable changes are listed here. The format follows
 - Recording through the ScreenCast portal (`-b portal`, and automatically
   where nothing better is available); the choice of screen is remembered,
   so its dialog appears once.
+- Recording in the Flatpak: it now includes its own ffmpeg (VA-API, NVENC
+  and libx264), and can write to `~/Videos` and use the GPU to encode.
 
 ### Fixed
 - `clipt record --stop`, `--pause` and the tray found the running recording

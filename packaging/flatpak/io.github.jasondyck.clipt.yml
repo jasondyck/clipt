@@ -18,8 +18,12 @@ finish-args:
   - --socket=fallback-x11
   # MIT-SHM for the X11 overlay.
   - --share=ipc
-  # save_dir defaults to ~/Pictures/Screenshots.
+  # save_dir defaults to ~/Pictures/Screenshots, video_dir to
+  # ~/Videos/Screencasts.
   - --filesystem=xdg-pictures
+  - --filesystem=xdg-videos
+  # Render nodes, for encoding recordings on the GPU (VA-API, NVENC).
+  - --device=dri
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.kde.StatusNotifierWatcher
   # KDE: ScreenShot2 for capture and a KWin script for window positions.
@@ -33,6 +37,57 @@ build-options:
   env:
     CARGO_HOME: /run/build/clipt/cargo
 modules:
+  # `clipt record` runs the ffmpeg program. The ffmpeg extensions only
+  # provide its libraries, so it's built here, linked statically, with the
+  # encoders clipt picks between: VA-API, NVENC (loaded from the NVIDIA
+  # driver at run time) and libx264.
+  - name: x264
+    buildsystem: autotools
+    config-opts:
+      - --enable-static
+      - --enable-pic
+      - --disable-cli
+    cleanup:
+      - '*'
+    sources:
+      - type: git
+        url: https://code.videolan.org/videolan/x264.git
+        commit: b35605ace3ddf7c1a5d67a2eb553f034aef41d55
+  - name: nv-codec-headers
+    buildsystem: simple
+    build-commands:
+      - make install PREFIX=/app
+    cleanup:
+      - '*'
+    sources:
+      - type: git
+        url: https://github.com/FFmpeg/nv-codec-headers.git
+        tag: n13.1.15.0
+        commit: 0a6fba9a2820628b8103464f4c8753ee05838baa
+  - name: ffmpeg
+    buildsystem: autotools
+    config-opts:
+      - --disable-autodetect
+      - --disable-doc
+      - --disable-debug
+      - --disable-ffplay
+      - --disable-ffprobe
+      - --disable-shared
+      - --enable-static
+      - --enable-gpl
+      - --enable-libx264
+      - --enable-vaapi
+      - --enable-libdrm
+      - --enable-ffnvcodec
+      - --enable-nvenc
+    cleanup:
+      - /include
+      - /lib
+      - /share
+    sources:
+      - type: archive
+        url: https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
+        sha256: 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
   - name: clipt
     buildsystem: simple
     build-commands:

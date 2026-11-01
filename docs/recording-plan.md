@@ -1,6 +1,6 @@
 # Video recording: implementation plan
 
-Status: phases 0–4 done, phase 5 done except recording in the Flatpak (X11, GIF, ScreenCast portal), 2026-11-01.
+Status: phases 0–5 done (phase 5: X11, GIF, ScreenCast portal, Flatpak), 2026-11-01.
 
 ## Goal
 
@@ -235,12 +235,15 @@ GNOME e2e (add PipeWire to its container); KDE checked with
   recorder now holds a flock on the pidfile (locks cross namespaces) and
   reads one-byte commands from a FIFO beside it; SIGINT, SIGTERM and
   SIGUSR1/2 still work.
-- Open: **recording in the Flatpak.** The plan said ffmpeg would come from
-  the `org.freedesktop.Platform.ffmpeg-full` extension, but that extension
-  provides ffmpeg's libraries, not the `ffmpeg` program clipt runs. Options:
-  build ffmpeg as a module of the Flatpak (simple, slow builds, larger
-  download), or encode through libavcodec directly (no subprocess, more
-  code).
+- **Recording in the Flatpak.** The plan said ffmpeg would come from the
+  `org.freedesktop.Platform.ffmpeg-full` extension, but that extension
+  provides ffmpeg's libraries, not the `ffmpeg` program clipt runs. So the
+  manifest builds ffmpeg 9.0.2 (static, with x264 and nv-codec-headers;
+  33 MB, about 3 minutes the first time) rather than encoding through
+  libavcodec, which would have meant more code for the same result. Also
+  added: `--device=dri` and `--filesystem=xdg-videos`. Tested through the
+  Flatpak against headless Sway via `clipt-launch`: record, pause, resume
+  and stop from separate instances, MP4 (VA-API) and GIF.
 
 ## Spike results (2026-10-31)
 
@@ -289,8 +292,9 @@ previous row should roughly halve it.
   release targets; those get wlroots and X11 recording only.
 - **GNOME's dialog**: unavoidable the first time; restore tokens keep it to
   once.
-- **Flatpak**: needs the ffmpeg extension and the portal path; zkde_screencast
-  is hidden from the sandbox like the other privileged globals.
+- **Flatpak**: builds its own ffmpeg and records through the portal;
+  zkde_screencast is hidden from the sandbox like the other privileged
+  globals.
 
 ## Not in this plan
 

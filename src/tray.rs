@@ -84,13 +84,12 @@ fn rec_state() -> u8 {
 
 /// The menu as shown for this recording state. Flatpak updates clipt itself,
 /// and the sandbox has no network access to check, so the update entry (and
-/// its separator) go; recording isn't available there yet either.
+/// its separator) go.
 fn menu(rec: u8) -> impl Iterator<Item = &'static (i32, Option<(&'static str, Action)>)> {
     let flatpak = crate::update::flatpak();
     MENU.iter().filter(move |(id, _)| {
         let hidden = match id {
             6 | 7 => flatpak,
-            20..=26 if flatpak => true,
             20 | 21 => rec != IDLE,
             22 => rec != RECORDING,
             23 => rec != PAUSED,
