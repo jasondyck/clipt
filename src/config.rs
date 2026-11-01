@@ -26,6 +26,16 @@ pub struct Config {
     pub font: Option<String>,
     /// `clipt tray` checks GitHub for a new release daily (off by default).
     pub check_updates: bool,
+    /// Where `clipt record` saves. `~` is expanded.
+    pub video_dir: String,
+    /// strftime pattern for recordings, without extension.
+    pub video_filename: String,
+    /// Recording frame rate.
+    pub record_fps: u32,
+    /// auto, vaapi, nvenc or x264.
+    pub record_codec: String,
+    /// A recording stops by itself after this many seconds (0 = no limit).
+    pub max_duration: u64,
 }
 
 impl Default for Config {
@@ -41,6 +51,11 @@ impl Default for Config {
             cursor: false,
             font: None,
             check_updates: false,
+            video_dir: "~/Videos/Screencasts".into(),
+            video_filename: "Recording_%Y-%m-%d_%H-%M-%S".into(),
+            record_fps: 30,
+            record_codec: "auto".into(),
+            max_duration: 3600,
         }
     }
 }
@@ -62,16 +77,24 @@ impl Config {
 
     /// A fresh, non-clobbering path in `save_dir`.
     pub fn next_save_path(&self) -> PathBuf {
-        let dir = expand(&self.save_dir);
-        let stem = strftime(&self.filename);
-        let mut p = dir.join(format!("{stem}.png"));
-        let mut n = 2;
-        while p.exists() {
-            p = dir.join(format!("{stem}_{n}.png"));
-            n += 1;
-        }
-        p
+        fresh_path(&expand(&self.save_dir), &self.filename, "png")
     }
+
+    /// A fresh, non-clobbering path in `video_dir`.
+    pub fn next_video_path(&self) -> PathBuf {
+        fresh_path(&expand(&self.video_dir), &self.video_filename, "mp4")
+    }
+}
+
+fn fresh_path(dir: &std::path::Path, pattern: &str, ext: &str) -> PathBuf {
+    let stem = strftime(pattern);
+    let mut p = dir.join(format!("{stem}.{ext}"));
+    let mut n = 2;
+    while p.exists() {
+        p = dir.join(format!("{stem}_{n}.{ext}"));
+        n += 1;
+    }
+    p
 }
 
 pub fn home() -> PathBuf {

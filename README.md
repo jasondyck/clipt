@@ -52,7 +52,17 @@ clipt full -g "$(slurp)" -o -   # slurp region to stdout
 clipt list          # outputs and available backends
 clipt tray          # tray icon: click = region, right-click = menu
 clipt update        # update to the latest release (--check: just check)
+clipt record screen # record the first output to ~/Videos/Screencasts
+clipt record --stop # ...and stop it (or Ctrl-C)
 ```
+
+**Recording (early):** `clipt record screen [NAME]` or `clipt record -g
+"X,Y WxH"` records to MP4 until `clipt record --stop`, Ctrl-C or
+`max_duration` (1 h). It needs `ffmpeg` and uses the GPU encoder when there
+is one (VA-API on AMD and Intel, NVENC on NVIDIA), libx264 otherwise. For now
+it works on wlroots-family compositors (Sway, Hyprland, niri, labwc, river,
+COSMIC); window recording, the selection overlay, KDE, GNOME and X11 are
+planned (see [docs/recording-plan.md](docs/recording-plan.md)).
 
 Before you select anything, clipt highlights what a click would take: the
 window under the pointer (KDE, Sway, Hyprland and X11), or the whole screen

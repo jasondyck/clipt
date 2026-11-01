@@ -9,6 +9,7 @@ mod icon;
 mod image;
 mod notify;
 mod overlay;
+mod record;
 mod session;
 mod text;
 mod tray;
@@ -31,16 +32,21 @@ USAGE:
     clipt full            Capture the whole desktop
     clipt screen [NAME]   Capture one output (default: the first)
     clipt list            Show outputs and available capture backends
+    clipt record screen [NAME]  Record one output to MP4 (default: the first)
+    clipt record -g GEOM  Record a region (within one output)
+    clipt record --stop   Stop the running recording
     clipt tray            Sit in the system tray (click: region, right-click: menu)
     clipt update          Update to the latest release (--check: only check)
 
 OPTIONS:
     -o, --output PATH     Write the PNG to PATH ('-' for stdout) instead of the save dir
+                          (record: the .mp4/.mkv/.mov file)
     -c, --clipboard       Copy to the clipboard (full/screen)
     -g, --geometry GEOM   Crop to \"X,Y WxH\" in logical pixels (slurp format)
     -d, --delay SECS      Wait before capturing
     -b, --backend NAME    Force a backend: ext, wlr, kwin, portal, x11
         --cursor          Include the pointer
+        --fps N           Recording frame rate (default 30)
     -h, --help            Show this help
     -V, --version         Show the version
 
@@ -54,7 +60,9 @@ EDITOR KEYS:
     Ctrl+Z / Ctrl+Shift+Z undo / redo     Esc / right-click  cancel / back
 
 Config: ~/.config/clipt/config.toml (save_dir, filename, color, width,
-copy_on_save, notify, backend, cursor, font).
+copy_on_save, notify, backend, cursor, font, video_dir, video_filename,
+record_fps, record_codec, max_duration). Recording needs ffmpeg and, for now,
+a wlroots-family compositor (Sway, Hyprland, niri, labwc, river, COSMIC).
 ";
 
 #[derive(Default)]
@@ -68,6 +76,9 @@ struct Args {
     backend: Option<String>,
     cursor: bool,
     check: bool,
+    record_mode: Option<String>,
+    fps: Option<u32>,
+    stop: bool,
 }
 
 fn parse_args() -> Result<Args> {
@@ -84,6 +95,8 @@ fn parse_args() -> Result<Args> {
             Short('b') | Long("backend") => a.backend = Some(p.value()?.string()?),
             Long("cursor") => a.cursor = true,
             Long("check") => a.check = true,
+            Long("fps") => a.fps = Some(p.value()?.parse()?),
+            Long("stop") => a.stop = true,
             Short('h') | Long("help") => {
                 print!("{HELP}");
                 std::process::exit(0);
@@ -97,6 +110,14 @@ fn parse_args() -> Result<Args> {
                 positional += 1;
             }
             Value(v) if positional == 1 && a.cmd == "screen" => {
+                a.screen = Some(v.string()?);
+                positional += 1;
+            }
+            Value(v) if positional == 1 && a.cmd == "record" => {
+                a.record_mode = Some(v.string()?);
+                positional += 1;
+            }
+            Value(v) if positional == 2 && a.record_mode.as_deref() == Some("screen") => {
                 a.screen = Some(v.string()?);
                 positional += 1;
             }
@@ -141,9 +162,25 @@ fn run() -> Result<()> {
     if args.cmd == "update" {
         return update::cli(args.check);
     }
+    if args.cmd == "record" && args.stop {
+        return record::stop();
+    }
     let cursor = args.cursor || cfg.cursor;
     if args.delay > 0.0 {
         std::thread::sleep(std::time::Duration::from_secs_f64(args.delay));
+    }
+    if args.cmd == "record" {
+        let target = match (args.record_mode.as_deref(), &args.geometry) {
+            (_, Some(g)) => record::Target::Geometry(g.clone()),
+            (Some("screen"), None) => record::Target::Screen(args.screen.clone()),
+            (Some(m @ ("region" | "window")), None) => {
+                bail!("'clipt record {m}' needs the selection overlay, which isn't built yet; use -g \"X,Y WxH\"")
+            }
+            (Some(m), None) => bail!("unknown recording mode '{m}' (screen, or -g GEOM)"),
+            (None, None) => bail!("what to record: 'clipt record screen [NAME]' or 'clipt record -g \"X,Y WxH\"'"),
+        };
+        let opts = record::Options { target, output: args.output.clone(), fps: args.fps, cursor, backend };
+        return record::run(&cfg, opts);
     }
 
     // Font loading overlaps the capture.

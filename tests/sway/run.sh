@@ -59,6 +59,46 @@ check "geometry crop size matches grim ($(size /tmp/grim-g.png))" '[ "$(size /tm
 d=$(magick compare -metric AE /tmp/g.png /tmp/grim-g.png null: 2>&1 | cut -d" " -f1)
 check "geometry crop pixels match grim (AE=$d)" '[ "${d%.*}" -lt 100 ]'
 
+echo "-- recording"
+dur()   { ffprobe -v error -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null; }
+vsize() { ffprobe -v error -select_streams v -show_entries stream=width,height -of csv=s=x:p=0 "$1" 2>/dev/null; }
+frame() { ffmpeg -v error -y -sseof "$2" -i "$1" -frames:v 1 "$3" 2>/dev/null; }   # $2: seconds from the end, e.g. -0.3
+even()  { awk "BEGIN{w=$1; h=$2; printf \"%dx%d\", w+w%2, h+h%2}"; }
+read NW NH < <(swaymsg -t get_outputs | jq -r '.[] | select(.name=="HEADLESS-1") | "\(.current_mode.width) \(.current_mode.height)"')
+grim -o HEADLESS-1 /tmp/rec-ref.png
+for b in ext wlr; do
+  CLIPT_DEBUG=1 /clipt record screen HEADLESS-1 -b $b -o /tmp/rec-$b.mp4 2>/tmp/rec.err &
+  rp=$!
+  # Change the screen halfway: the end of the video must show it, which
+  # proves frames keep coming after the first.
+  sleep 1.5; swaymsg -q 'output * bg #20c040 solid_color'; sleep 1.5
+  /clipt record --stop; wait $rp; rc=$?
+  check "record -b $b exits cleanly (rc=$rc)" '[ $rc = 0 ]'
+  d=$(dur /tmp/rec-$b.mp4)
+  check "record -b $b lasts about 3 s (${d:-none})" 'awk "BEGIN{exit !(\"$d\"+0 > 2.5 && \"$d\"+0 < 3.5)}"'
+  check "record -b $b is the output's native size ($(even $NW $NH), got $(vsize /tmp/rec-$b.mp4))" '[ "$(vsize /tmp/rec-$b.mp4)" = "$(even $NW $NH)" ]'
+  ffmpeg -v error -y -i /tmp/rec-$b.mp4 -frames:v 1 /tmp/rec-first.png   # VFR: frame 1 lasts until the change
+  d=$(magick compare -fuzz 12% -metric AE /tmp/rec-first.png <(magick /tmp/rec-ref.png -alpha off png:-) null: 2>&1 | cut -d" " -f1)
+  check "record -b $b: first frame matches grim (AE=$d of $((NW*NH)) at 12% fuzz)" '[ "${d%.*}" -lt $((NW*NH/50)) ]'
+  frame /tmp/rec-$b.mp4 -0.2 /tmp/rec-last.png
+  p=$(px /tmp/rec-last.png "$((NW/2)),$((NH/2))")
+  check "record -b $b: last frame shows the new green background ($p)" 'echo "$p" | grep -Eq "srgba?\(([0-9]|[1-5][0-9]),(1[6-9][0-9]|2[0-9][0-9]),([0-9]|[1-9][0-9]),?"'
+  grep -E "encoder:|recorded" /tmp/rec.err | sed 's/^clipt: /  /'
+  swaymsg -q 'output * bg /tmp/bg.png stretch'; sleep 0.3
+done
+/clipt record -g "100,50 301x200" -o /tmp/rec-g.mp4 2>/tmp/rec.err &
+rp=$!; sleep 1.5; /clipt record --stop; wait $rp
+check "record -g crops to the region at native size ($(even $(awk "BEGIN{print int(301*$(swaymsg -t get_outputs | jq '.[] | select(.name=="HEADLESS-1") | .scale')+0.5)}") $(awk "BEGIN{print int(200*$(swaymsg -t get_outputs | jq '.[] | select(.name=="HEADLESS-1") | .scale')+0.5)}")), got $(vsize /tmp/rec-g.mp4))" \
+  '[ "$(vsize /tmp/rec-g.mp4)" = "$(even $(awk "BEGIN{print int(301*$(swaymsg -t get_outputs | jq ".[] | select(.name==\"HEADLESS-1\") | .scale")+0.5)}") $(awk "BEGIN{print int(200*$(swaymsg -t get_outputs | jq ".[] | select(.name==\"HEADLESS-1\") | .scale")+0.5)}"))" ]'
+/clipt record screen -o /tmp/rec-1.mp4 2>/dev/null &
+rp=$!; sleep 1
+/clipt record screen -o /tmp/rec-2.mp4 2>/tmp/rec.err
+check "a second recording is refused while one runs" 'grep -q "already recording" /tmp/rec.err'
+/clipt record --stop; wait $rp
+check "--stop with nothing running fails" '! /clipt record --stop 2>/dev/null'
+/clipt record -g "-50,0 100x100" -o /tmp/rec-x.mp4 2>/tmp/rec.err
+check "a region outside every output is refused" 'grep -q "within one output" /tmp/rec.err'
+
 echo "-- headless clipboard (data-control)"
 /clipt full -c
 sleep 0.5
