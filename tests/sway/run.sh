@@ -86,8 +86,12 @@ for b in ext wlr; do
   grep -E "encoder:|recorded" /tmp/rec.err | sed 's/^clipt: /  /'
   swaymsg -q 'output * bg /tmp/bg.png stretch'; sleep 0.3
 done
+# A pidfile left behind, naming a live process (in the Flatpak, every
+# instance's first process is pid 2): it must not block the next recording.
+printf '%s\nrecording\n' $$ > $XDG_RUNTIME_DIR/clipt-record.pid
 /clipt record -g "100,50 301x200" -o /tmp/rec-g.mp4 2>/tmp/rec.err &
 rp=$!; sleep 1.5; /clipt record --stop; wait $rp
+check "a stale pidfile doesn't block recording" '! grep -q "already recording" /tmp/rec.err && [ -s /tmp/rec-g.mp4 ]'
 check "record -g crops to the region at native size ($(even $(awk "BEGIN{print int(301*$(swaymsg -t get_outputs | jq '.[] | select(.name=="HEADLESS-1") | .scale')+0.5)}") $(awk "BEGIN{print int(200*$(swaymsg -t get_outputs | jq '.[] | select(.name=="HEADLESS-1") | .scale')+0.5)}")), got $(vsize /tmp/rec-g.mp4))" \
   '[ "$(vsize /tmp/rec-g.mp4)" = "$(even $(awk "BEGIN{print int(301*$(swaymsg -t get_outputs | jq ".[] | select(.name==\"HEADLESS-1\") | .scale")+0.5)}") $(awk "BEGIN{print int(200*$(swaymsg -t get_outputs | jq ".[] | select(.name==\"HEADLESS-1\") | .scale")+0.5)}"))" ]'
 /clipt record screen -o /tmp/rec-1.mp4 2>/dev/null &

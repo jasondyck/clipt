@@ -77,8 +77,8 @@ const PAUSED: u8 = 2;
 fn rec_state() -> u8 {
     match crate::record::status() {
         None => IDLE,
-        Some((_, false)) => RECORDING,
-        Some((_, true)) => PAUSED,
+        Some(false) => RECORDING,
+        Some(true) => PAUSED,
     }
 }
 

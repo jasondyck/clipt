@@ -63,10 +63,13 @@ and handle resizes smoothly instead of jumping. No audio in the first version.
   Output `-movflags +faststart`. Canvas sizes are rounded up to even numbers
   (H.264 needs them).
 - **Control** (`src/record/mod.rs`): one recording at a time. A pidfile in
-  `$XDG_RUNTIME_DIR/clipt-record.pid`; `clipt record --stop` and the tray
-  send SIGINT, which ends the stream, closes ffmpeg's stdin and waits for it
-  to finish the file. Ctrl-C in a terminal does the same. A `max_duration`
-  safety limit (default 1 h) and a disk-space check every few seconds.
+  `$XDG_RUNTIME_DIR/clipt-record.pid`, which the recorder holds under a
+  flock; `clipt record --stop` and the tray write a command to the
+  `clipt-record.ctl` FIFO beside it, which ends the stream, closes ffmpeg's
+  stdin and waits for it to finish the file. (They first sent SIGINT to the
+  pid, which can't work across Flatpak instances; see phase 5.) Ctrl-C in
+  a terminal does the same. A `max_duration` safety limit (default 1 h) and
+  a disk-space check every few seconds.
 
 ## Window recording and the smooth camera
 
@@ -225,6 +228,13 @@ GNOME e2e (add PipeWire to its container); KDE checked with
 - Found on the way: libx264's B-frames gave sparse VFR recordings a short
   MP4 duration too (as h264_vaapi's had), so every encoder now runs with
   `-bf 0`.
+- Found on the way: control by pid can't work in the Flatpak. Each `flatpak
+  run` has its own PID namespace whose first process is pid 2, so the
+  recorder's pid meant nothing to `clipt record --stop`, which would have
+  signalled itself, and a leftover pidfile always looked live. The
+  recorder now holds a flock on the pidfile (locks cross namespaces) and
+  reads one-byte commands from a FIFO beside it; SIGINT, SIGTERM and
+  SIGUSR1/2 still work.
 - Open: **recording in the Flatpak.** The plan said ffmpeg would come from
   the `org.freedesktop.Platform.ffmpeg-full` extension, but that extension
   provides ffmpeg's libraries, not the `ffmpeg` program clipt runs. Options:

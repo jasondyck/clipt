@@ -37,6 +37,10 @@ All notable changes are listed here. The format follows
   so its dialog appears once.
 
 ### Fixed
+- `clipt record --stop`, `--pause` and the tray found the running recording
+  by its pid, which another Flatpak instance can't see (each has its own
+  PID namespace), and a pidfile left behind could block new recordings if
+  its pid had been reused. They now use a lock and a control FIFO beside it.
 - The Flatpak's desktop entry named its icon `${FLATPAK_ID}` literally.
 - Recordings with few frames (a mostly still screen) could get a wrong,
   shorter duration in the MP4: encoders now run without B-frames.
