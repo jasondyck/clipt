@@ -14,7 +14,7 @@
           version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
           src = pkgs.lib.cleanSource ./.;
           cargoLock.lockFile = ./Cargo.lock;
-          nativeBuildInputs = [ pkgs.pkg-config pkgs.makeWrapper ];
+          nativeBuildInputs = [ pkgs.pkg-config pkgs.makeWrapper pkgs.installShellFiles ];
           buildInputs = [ pkgs.libxkbcommon ];
           # The tests load a system font through fontconfig.
           nativeCheckInputs = [ pkgs.fontconfig pkgs.dejavu_fonts ];
@@ -25,6 +25,9 @@
           postInstall = ''
             install -Dm644 data/clipt.desktop -t $out/share/applications
             install -Dm644 data/clipt.svg -t $out/share/icons/hicolor/scalable/apps
+            installManPage data/clipt.1
+            installShellCompletion --bash --name clipt data/completions/clipt.bash \
+              --zsh data/completions/_clipt --fish data/completions/clipt.fish
             # fc-match finds the UI font; make sure it's on PATH.
             # Recording loads libpipewire at runtime (KDE, GNOME) and runs ffmpeg.
             wrapProgram $out/bin/clipt --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.fontconfig pkgs.ffmpeg ]} \

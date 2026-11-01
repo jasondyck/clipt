@@ -173,7 +173,9 @@ gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore \
 
 ### Shell completions
 
-Tab-completion scripts live in `data/completions/`, no build step needed:
+The packages, `install.sh` and the release tarballs install these, along
+with the man page (`man clipt`). From a checkout, without installing, the
+scripts in `data/completions/` work as they are:
 
 ```
 data/completions/clipt.bash   # bash: source it, or copy to /usr/share/bash-completion/completions/clipt

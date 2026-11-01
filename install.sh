@@ -20,6 +20,13 @@ rm -f /tmp/clipt.desktop.$$
 icon=data/clipt.svg
 [ -f "$icon" ] || icon=clipt.svg
 install -Dm644 "$icon" "$prefix/share/icons/hicolor/scalable/apps/clipt.svg"
+# Man page and completions: from data/ in a checkout, beside this script in
+# a release tarball.
+from() { if [ -f "data/$1" ]; then echo "data/$1"; else basename "$1"; fi; }
+install -Dm644 "$(from clipt.1)" "$prefix/share/man/man1/clipt.1"
+install -Dm644 "$(from completions/clipt.bash)" "$prefix/share/bash-completion/completions/clipt"
+install -Dm644 "$(from completions/clipt.fish)" "$prefix/share/fish/vendor_completions.d/clipt.fish"
+install -Dm644 "$(from completions/_clipt)" "$prefix/share/zsh/site-functions/_clipt"
 # --tray: start `clipt tray` at login.
 if [ "${1:-}" = "--tray" ]; then
   tray=data/clipt-tray.desktop
@@ -31,3 +38,8 @@ if [ "${1:-}" = "--tray" ]; then
   echo "clipt tray will start at login ($autostart/clipt-tray.desktop)"
 fi
 echo "installed $prefix/bin/clipt"
+# zsh only searches system directories by default.
+case "$prefix" in
+  /usr | /usr/local) ;;
+  *) echo "zsh completion: add 'fpath+=($prefix/share/zsh/site-functions)' to ~/.zshrc before compinit" ;;
+esac
