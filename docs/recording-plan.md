@@ -1,6 +1,6 @@
 # Video recording: implementation plan
 
-Status: phases 0–2 done (spike; pipeline and screen/region on wlroots; overlay, frame, tray, pause), 2026-11-01.
+Status: phases 0–3 done (spike; pipeline and screen/region on wlroots; overlay, frame, tray, pause; window recording and the camera), 2026-11-01.
 
 ## Goal
 
@@ -157,7 +157,20 @@ Original scope: Record mode in the
 overlay, the border indicator, tray items and red icon, `--delay`
 countdown. CI: overlay record mode driven by the existing e2e input.
 
-**3. Window recording + camera (about 1 week).** `Window::id`, ext toplevel
+**3. Window recording + camera (done 2026-11-01).** `Wayland::stream_window`
+(ext-foreign-toplevel list + image capture source; frames that fail with
+buffer_constraints on a resize are retried at the new size),
+`record/follow.rs` (Sway/Hyprland IPC polled at 10 Hz, output crop updated
+live), `record/camera.rs` (spring, fit, threaded separable scaler). The
+overlay reports a clicked window via `Editor::selected_window`. Differences
+from the plan: window ids are matched by app id and title (ext toplevel
+handles carry no geometry); window capture gives the window's own pixels,
+so a 1x client on a 1.5x output records at 1x; the spring caps each step at
+50 ms so a resize after a still stretch glides instead of jumping; no frame
+indicator around a recorded window yet. Tests: `examples/testwin.rs` (a
+resizable test window); the Sway suite records it with `-b ext` and
+`-b wlr`, widens it, moves it, and checks size, zoom and that the zoom
+passes through several sizes. Original scope: `Window::id`, ext toplevel
 source, crop-follow for Sway/Hyprland/X11, `camera.rs`. Unit tests for the
 spring and the fit maths. CI: Sway e2e resizes the test window mid-recording
 (`swaymsg resize`); `ffprobe` shows a constant size and decoded frames show

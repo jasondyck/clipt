@@ -761,6 +761,14 @@ impl Editor {
         }
     }
 
+    /// The window the selection is, if it was picked by clicking a window
+    /// (exactly its highlight) rather than dragged or adjusted.
+    pub fn selected_window(&self) -> Option<&crate::windows::Window> {
+        let sel = self.sel?;
+        let desk = self.desktop();
+        self.windows.iter().find(|w| Rect::from_xywh(w.x, w.y, w.width, w.height).and_then(|r| r.intersect(&desk)) == Some(sel))
+    }
+
     /// Selection to export; falls back to the screen under the pointer.
     pub fn final_rect(&self) -> Option<Rect> {
         self.sel.or_else(|| self.screen_at(self.pointer).map(|i| self.screens[i].bounds()))
@@ -887,8 +895,15 @@ mod tests {
 
     #[test]
     fn click_selects_topmost_window_and_tab_picks_screen() {
-        let win =
-            |x: f32, y: f32, w: f32, h: f32| crate::windows::Window { x, y, width: w, height: h, app: "a".into(), title: String::new() };
+        let win = |x: f32, y: f32, w: f32, h: f32| crate::windows::Window {
+            x,
+            y,
+            width: w,
+            height: h,
+            app: "a".into(),
+            title: String::new(),
+            id: String::new(),
+        };
         let mut ed = editor(vec![shot("A", 0, 400, 300, 1, [0, 0, 0])], false);
         // Topmost first; the second window partly hangs off the screen.
         ed.windows = vec![win(100.0, 100.0, 50.0, 50.0), win(50.0, 50.0, 400.0, 100.0)];
@@ -1074,6 +1089,7 @@ mod tests {
             height: h,
             app: app.into(),
             title: String::new(),
+            id: String::new(),
         };
         ed.windows = vec![win(300.0, 120.0, 220.0, 160.0, "front"), win(60.0, 40.0, 320.0, 240.0, "back")];
         step(&mut ed, &|e| {

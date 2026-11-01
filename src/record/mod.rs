@@ -11,7 +11,9 @@
 //! See docs/recording-plan.md for what's still to come (overlay, windows,
 //! PipeWire for KDE/GNOME, X11).
 
+mod camera;
 mod encode;
+mod follow;
 mod indicator;
 mod mkv;
 
@@ -33,6 +35,18 @@ pub enum Target {
     /// A selection from the overlay, in logical desktop coordinates. Trimmed
     /// to the output under its centre.
     Rect(LogicalRect),
+    /// A window picked in the overlay: followed as it moves and resizes
+    /// where the compositor allows.
+    Window(crate::windows::Window),
+}
+
+/// Where frames come from.
+enum Source {
+    /// An output, cropped to `crop` (output-logical; updated while following
+    /// a window).
+    Output { out: Output, crop: Arc<Mutex<Option<LogicalRect>>> },
+    /// One window, captured by the compositor itself.
+    Window { app: String, title: String },
 }
 
 pub struct Options {
@@ -195,7 +209,27 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
     let proto = pick_protocol(&wl, opts.backend)?;
     let outputs = wl.outputs();
     anyhow::ensure!(!outputs.is_empty(), "no outputs found");
-    let (out, crop) = resolve_target(&outputs, &opts.target)?;
+    // `zoom`: frames change size, so they go through the camera.
+    let (source, zoom, follow) = match &opts.target {
+        Target::Window(w) if wl.can_capture_windows() && proto == Protocol::ExtImageCopy && !w.app.is_empty() => {
+            debug(&format!("recording window '{}' by window capture", w.app));
+            (Source::Window { app: w.app.clone(), title: w.title.clone() }, true, None)
+        }
+        Target::Window(w) if follow::supported() && !w.id.is_empty() => {
+            let (out, crop) = resolve_target(&outputs, &Target::Rect((w.x as f64, w.y as f64, w.width as f64, w.height as f64)))?;
+            debug("following the window by cropping its output");
+            (Source::Output { out: out.clone(), crop: Arc::new(Mutex::new(crop)) }, true, Some((w.id.clone(), out)))
+        }
+        Target::Window(w) => {
+            eprintln!("clipt: this compositor can't follow a window; recording the area it covers now");
+            let (out, crop) = resolve_target(&outputs, &Target::Rect((w.x as f64, w.y as f64, w.width as f64, w.height as f64)))?;
+            (Source::Output { out, crop: Arc::new(Mutex::new(crop)) }, false, None)
+        }
+        t => {
+            let (out, crop) = resolve_target(&outputs, t)?;
+            (Source::Output { out, crop: Arc::new(Mutex::new(crop)) }, false, None)
+        }
+    };
 
     let path = match &opts.output {
         Some(p) => crate::config::expand(p),
@@ -213,13 +247,22 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         }
     }
 
-    if let Some(c) = crop {
-        let out = out.clone();
-        std::thread::spawn(move || {
-            if let Err(e) = indicator::run(&out, c) {
-                eprintln!("clipt: no recording frame: {e:#}");
+    match (&source, &follow) {
+        (Source::Output { out, crop }, None) => {
+            if let Some(c) = *crop.lock().unwrap() {
+                let out = out.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = indicator::run(&out, c) {
+                        eprintln!("clipt: no recording frame: {e:#}");
+                    }
+                });
             }
-        });
+        }
+        (Source::Output { crop, .. }, Some((id, out))) => {
+            let (crop, id, out) = (crop.clone(), id.clone(), out.clone());
+            std::thread::spawn(move || follow::run(&id, &out, &crop));
+        }
+        _ => {}
     }
 
     let slot = Arc::new((Mutex::new(Slot::default()), Condvar::new()));
@@ -236,7 +279,10 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
                 cv.notify_one();
                 !STOP.load(Ordering::SeqCst)
             };
-            let r = wl.stream(&out, cursor, proto, crop, &mut sink);
+            let r = match &source {
+                Source::Output { out, crop } => wl.stream(out, cursor, proto, &|| *crop.lock().unwrap(), &mut sink),
+                Source::Window { app, title } => wl.stream_window(app, title, cursor, &mut sink),
+            };
             let (m, cv) = &*slot;
             let mut s = m.lock().unwrap();
             s.done = true;
@@ -247,7 +293,7 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         });
     }
 
-    let result = write_loop(cfg, &lock, &slot, &codec, fps, &path, &captured);
+    let result = write_loop(cfg, &lock, &slot, &codec, fps, zoom, &path, &captured);
     match &result {
         Ok(stats) => {
             println!("{}", path.display());
@@ -296,6 +342,7 @@ fn resolve_target(outputs: &[Output], target: &Target) -> Result<(Output, Option
             };
             Ok((o.clone(), Some((x - o.x as f64, y - o.y as f64, w, h))))
         }
+        Target::Window(w) => resolve_target(outputs, &Target::Rect((w.x as f64, w.y as f64, w.width as f64, w.height as f64))),
         &Target::Rect((x, y, w, h)) => {
             let (cx, cy) = (x + w / 2.0, y + h / 2.0);
             let o = outputs
@@ -325,16 +372,20 @@ fn check_extension(path: &Path) -> Result<()> {
 ///
 /// Each frame is stamped with when it was captured, minus the time spent
 /// paused before it, so paused time is simply left out of the video.
+#[allow(clippy::too_many_arguments)]
 fn write_loop(
     cfg: &Config,
     lock: &Lock,
     slot: &Arc<(Mutex<Slot>, Condvar)>,
     codec: &encode::Codec,
     fps: u32,
+    zoom: bool,
     path: &Path,
     captured: &std::sync::atomic::AtomicU64,
 ) -> Result<String> {
     let (m, cv) = &**slot;
+    // Window recordings: frames of changing size go through the camera.
+    let mut cam: Option<camera::Camera> = None;
     let interval = Duration::from_secs_f64(1.0 / fps as f64);
     let started = Instant::now();
     let max = (cfg.max_duration > 0).then(|| Duration::from_secs(cfg.max_duration));
@@ -400,7 +451,8 @@ fn write_loop(
 
         // Take the newest frame. While one is waiting to be sent, wait no
         // longer than the rest of the frame interval.
-        let wait = if fresh && !paused { interval.saturating_sub(last_write.elapsed()) } else { Duration::from_millis(100) };
+        let animating = cam.as_ref().zip(last.as_ref()).is_some_and(|(c, f)| c.animating(f.width, f.height));
+        let wait = if (fresh || animating) && !paused { interval.saturating_sub(last_write.elapsed()) } else { Duration::from_millis(100) };
         {
             let mut s = m.lock().unwrap();
             if s.frame.is_none() && !s.done && !wait.is_zero() {
@@ -418,6 +470,7 @@ fn write_loop(
             }
             if let Some((f, at)) = s.frame.take() {
                 if let Some(l) = &last
+                    && !zoom
                     && (f.width, f.height) != (l.width, l.height)
                 {
                     stop_reason = Some(format!(
@@ -437,18 +490,30 @@ fn write_loop(
             }
             continue;
         };
-        if paused || !fresh || last_write.elapsed() < interval && enc.is_some() {
+        let animating = cam.as_ref().is_some_and(|c| c.animating(frame.width, frame.height));
+        if paused || !(fresh || animating) || last_write.elapsed() < interval && enc.is_some() {
             continue;
         }
+        // A new capture is stamped with its capture time; a frame that only
+        // moves the zoom along, with now.
+        let at = if fresh { last_at } else { Instant::now() };
+        let rendered = if zoom {
+            let c = cam.get_or_insert_with(|| camera::Camera::new(frame.width, frame.height));
+            c.step(frame.width, frame.height, at);
+            Some(c.render(frame))
+        } else {
+            None
+        };
+        let out = rendered.as_ref().unwrap_or(frame);
         let e = match &mut enc {
             Some(e) => e,
             None => {
-                t0 = Some(last_at);
-                enc.insert(encode::Encoder::spawn(codec, frame.width, frame.height, frame.order, fps, path)?)
+                t0 = Some(at);
+                enc.insert(encode::Encoder::spawn(codec, out.width, out.height, out.order, fps, path)?)
             }
         };
-        let ts = stamp(last_at, t0.unwrap(), paused_total, &mut last_ts);
-        e.write(&frame.data, ts)?;
+        let ts = stamp(at, t0.unwrap(), paused_total, &mut last_ts);
+        e.write(&out.data, ts)?;
         written += 1;
         last_write = Instant::now();
         fresh = false;
@@ -464,7 +529,13 @@ fn write_loop(
     // end isn't cut off; it lasts one frame interval (the track's default).
     let end = stamp(stopped, t0, paused_total, &mut last_ts);
     if let Some(f) = &last {
-        e.write(&f.data, end)?;
+        match &mut cam {
+            Some(c) => {
+                c.step(f.width, f.height, stopped);
+                e.write(&c.render(f).data, end)?;
+            }
+            None => e.write(&f.data, end)?,
+        }
     }
     e.finish()?;
     if let Some(r) = stop_reason {
@@ -477,6 +548,12 @@ fn write_loop(
         eprintln!("clipt: recorded {secs:.1} s of {wall:.1} s: {c} frames captured ({:.1}/s), {written} sent to ffmpeg", c as f64 / wall);
     }
     Ok(format!("{secs:.0} s, {}", codec.name()))
+}
+
+fn debug(msg: &str) {
+    if std::env::var_os("CLIPT_DEBUG").is_some() {
+        eprintln!("clipt: {msg}");
+    }
 }
 
 fn free_bytes(path: &Path) -> Option<u64> {

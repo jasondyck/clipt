@@ -129,7 +129,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: .github/scripts/apt-install.sh libxkbcommon-dev
-      - run: cargo build --release --locked --bin clipt --example vinput
+      - run: cargo build --release --locked --bin clipt --example vinput --example testwin
       - uses: docker/setup-buildx-action@v4
       - uses: docker/build-push-action@v7
         with:

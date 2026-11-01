@@ -13,7 +13,12 @@ use wayland_client::{
     globals::{GlobalList, GlobalListContents, registry_queue_init},
     protocol::{wl_buffer, wl_output, wl_registry, wl_shm, wl_shm_pool},
 };
+use wayland_protocols::ext::foreign_toplevel_list::v1::client::{
+    ext_foreign_toplevel_handle_v1::{self as ext_toplevel, ExtForeignToplevelHandleV1},
+    ext_foreign_toplevel_list_v1::{self as ext_toplevel_list, ExtForeignToplevelListV1},
+};
 use wayland_protocols::ext::image_capture_source::v1::client::{
+    ext_foreign_toplevel_image_capture_source_manager_v1::ExtForeignToplevelImageCaptureSourceManagerV1,
     ext_image_capture_source_v1::ExtImageCaptureSourceV1, ext_output_image_capture_source_manager_v1::ExtOutputImageCaptureSourceManagerV1,
 };
 use wayland_protocols::ext::image_copy_capture::v1::client::{
@@ -42,7 +47,16 @@ struct OutInfo {
     logical_size: Option<(i32, i32)>,
 }
 
+/// A window from ext-foreign-toplevel-list.
+struct Toplevel {
+    handle: ExtForeignToplevelHandleV1,
+    app_id: String,
+    title: String,
+    closed: bool,
+}
+
 struct State {
+    toplevels: Vec<Toplevel>,
     outputs: Vec<(wl_output::WlOutput, OutInfo)>,
     frame: FrameState,
 }
@@ -56,6 +70,9 @@ struct FrameState {
     transform: Option<wl_output::Transform>,
     ready: bool,
     failed: Option<String>,
+    /// The frame failed because the buffer no longer fits (the window
+    /// resized): wait for new constraints and try again.
+    retry: bool,
 }
 
 pub struct Wayland {
@@ -102,7 +119,7 @@ impl Wayland {
             eprintln!("clipt: wayland globals: {}", names.join(" "));
         }
         let qh = queue.handle();
-        let mut state = State { outputs: Vec::new(), frame: FrameState::default() };
+        let mut state = State { toplevels: Vec::new(), outputs: Vec::new(), frame: FrameState::default() };
         for g in globals.contents().clone_list() {
             if g.interface == "wl_output" {
                 let o: wl_output::WlOutput = globals.registry().bind(g.name, g.version.min(4), &qh, ());
@@ -253,7 +270,7 @@ impl Wayland {
         out: &Output,
         cursor: bool,
         proto: Protocol,
-        crop: Option<LogicalRect>,
+        crop: &dyn Fn() -> Option<LogicalRect>,
         sink: &mut dyn FnMut(VideoFrame) -> bool,
     ) -> Result<()> {
         anyhow::ensure!(self.protocols().contains(&proto), "compositor doesn't offer {proto:?}");
@@ -263,27 +280,75 @@ impl Wayland {
         let transform = self.state.outputs[out.index].1.transform;
         self.state.frame = FrameState { transform, ..Default::default() };
         match proto {
-            Protocol::ExtImageCopy => self.stream_ext(&qh, &shm, &wl_out, out, cursor, crop, sink),
+            Protocol::ExtImageCopy => {
+                let src_mgr: ExtOutputImageCaptureSourceManagerV1 = self.globals.bind(&qh, 1..=1, ())?;
+                let source = src_mgr.create_source(&wl_out, &qh, ());
+                let r = self.stream_ext(&qh, &shm, &source, Some(out), cursor, crop, sink);
+                source.destroy();
+                src_mgr.destroy();
+                r
+            }
             Protocol::WlrScreencopy => self.stream_wlr(&qh, &shm, &wl_out, out, cursor, crop, sink),
         }
     }
 
+    /// The compositor can capture single windows (ext-foreign-toplevel image
+    /// capture source), which follows a window as it moves and resizes and
+    /// sees it even when other windows cover it.
+    pub fn can_capture_windows(&self) -> bool {
+        let has = |n: &str| self.globals.contents().with_list(|l| l.iter().any(|g| g.interface == n));
+        has("ext_foreign_toplevel_list_v1")
+            && has("ext_foreign_toplevel_image_capture_source_manager_v1")
+            && has("ext_image_copy_capture_manager_v1")
+    }
+
+    /// Capture one window continuously, found by app id and title. Frames
+    /// are the window's own size, which changes when it resizes.
+    pub fn stream_window(&mut self, app_id: &str, title: &str, cursor: bool, sink: &mut dyn FnMut(VideoFrame) -> bool) -> Result<()> {
+        anyhow::ensure!(self.can_capture_windows(), "this compositor can't capture single windows");
+        let qh = self.queue.handle();
+        let list: ExtForeignToplevelListV1 = self.globals.bind(&qh, 1..=1, ())?;
+        // The list arrives as events: one roundtrip for the handles, one for
+        // their details.
+        self.queue.roundtrip(&mut self.state)?;
+        self.queue.roundtrip(&mut self.state)?;
+        let open: Vec<&Toplevel> = self.state.toplevels.iter().filter(|t| !t.closed).collect();
+        let exact: Vec<&&Toplevel> = open.iter().filter(|t| t.app_id == app_id && t.title == title).collect();
+        let by_app: Vec<&&Toplevel> = open.iter().filter(|t| t.app_id == app_id).collect();
+        let handle = match (exact.as_slice(), by_app.as_slice()) {
+            ([t, ..], _) => t.handle.clone(),
+            ([], [t]) => t.handle.clone(),
+            _ => bail!("can't find the window '{app_id}' ('{title}') among {} windows", open.len()),
+        };
+        if exact.len() > 1 {
+            eprintln!("clipt: {} windows are called '{title}'; recording the first", exact.len());
+        }
+        let src_mgr: ExtForeignToplevelImageCaptureSourceManagerV1 = self.globals.bind(&qh, 1..=1, ())?;
+        let source = src_mgr.create_source(&handle, &qh, ());
+        let shm: wl_shm::WlShm = self.globals.bind(&qh, 1..=1, ())?;
+        self.state.frame = FrameState::default();
+        let r = self.stream_ext(&qh, &shm, &source, None, cursor, &|| None, sink);
+        source.destroy();
+        src_mgr.destroy();
+        list.stop();
+        r
+    }
+
     #[allow(clippy::too_many_arguments)]
+    /// `out` is the output being captured (None for a window), for cropping.
     fn stream_ext(
         &mut self,
         qh: &QueueHandle<State>,
         shm: &wl_shm::WlShm,
-        wl_out: &wl_output::WlOutput,
-        out: &Output,
+        source: &ExtImageCaptureSourceV1,
+        out: Option<&Output>,
         cursor: bool,
-        crop: Option<LogicalRect>,
+        crop: &dyn Fn() -> Option<LogicalRect>,
         sink: &mut dyn FnMut(VideoFrame) -> bool,
     ) -> Result<()> {
-        let src_mgr: ExtOutputImageCaptureSourceManagerV1 = self.globals.bind(qh, 1..=1, ())?;
         let mgr: ExtImageCopyCaptureManagerV1 = self.globals.bind(qh, 1..=1, ())?;
-        let source = src_mgr.create_source(wl_out, qh, ());
         let opts = if cursor { ext_mgr::Options::PaintCursors } else { ext_mgr::Options::empty() };
-        let session = mgr.create_session(&source, opts, qh, ());
+        let session = mgr.create_session(source, opts, qh, ());
         let mut buf: Option<ShmBuffer> = None;
         let result = loop {
             if let Err(e) = self.dispatch_until(|f| f.constraints_done) {
@@ -311,10 +376,16 @@ impl Wayland {
             self.state.frame.ready = false;
             let r = self.dispatch_until(|f| f.ready);
             frame.destroy();
+            if r.is_err() && self.state.frame.retry {
+                // Resized: new constraints are on their way; go round again.
+                self.state.frame.failed = None;
+                self.state.frame.retry = false;
+                continue;
+            }
             if let Err(e) = r {
                 break Err(e);
             }
-            let vf = b.video_frame(false, self.state.frame.transform, out, crop)?;
+            let vf = b.video_frame(false, self.state.frame.transform, out, crop())?;
             if !sink(vf) {
                 break Ok(());
             }
@@ -323,9 +394,7 @@ impl Wayland {
             b.buffer.destroy();
         }
         session.destroy();
-        source.destroy();
         mgr.destroy();
-        src_mgr.destroy();
         result
     }
 
@@ -337,7 +406,7 @@ impl Wayland {
         wl_out: &wl_output::WlOutput,
         out: &Output,
         cursor: bool,
-        crop: Option<LogicalRect>,
+        crop: &dyn Fn() -> Option<LogicalRect>,
         sink: &mut dyn FnMut(VideoFrame) -> bool,
     ) -> Result<()> {
         let mgr: ZwlrScreencopyManagerV1 = self.globals.bind(qh, 1..=3, ())?;
@@ -373,7 +442,7 @@ impl Wayland {
             if let Err(e) = r {
                 break Err(e);
             }
-            let vf = b.video_frame(self.state.frame.y_invert, self.state.frame.transform, out, crop)?;
+            let vf = b.video_frame(self.state.frame.y_invert, self.state.frame.transform, Some(out), crop())?;
             if !sink(vf) {
                 break Ok(());
             }
@@ -447,7 +516,7 @@ impl ShmBuffer {
         &self,
         y_invert: bool,
         transform: Option<wl_output::Transform>,
-        out: &Output,
+        out: Option<&Output>,
         crop: Option<LogicalRect>,
     ) -> Result<VideoFrame> {
         use wl_shm::Format::*;
@@ -482,8 +551,8 @@ impl ShmBuffer {
 /// `crop` (output-logical, relative to the output) in buffer pixels of a
 /// buffer `bw` x `bh` that shows the whole output upright. Rounds like
 /// screenshot crops do and never leaves the buffer.
-fn crop_rect(bw: u32, bh: u32, out: &Output, crop: Option<LogicalRect>) -> (u32, u32, u32, u32) {
-    let Some((x, y, w, h)) = crop else { return (0, 0, bw, bh) };
+fn crop_rect(bw: u32, bh: u32, out: Option<&Output>, crop: Option<LogicalRect>) -> (u32, u32, u32, u32) {
+    let (Some(out), Some((x, y, w, h))) = (out, crop) else { return (0, 0, bw, bh) };
     let scale = bw as f64 / out.width.max(1) as f64;
     let r = |v: f64| (v * scale).round().max(0.0) as u32;
     let (x, y) = (r(x).min(bw - 1), r(y).min(bh - 1));
@@ -501,12 +570,12 @@ mod tests {
     #[test]
     fn crop_rect_scales_and_clamps() {
         let o = output(1280, 720);
-        assert_eq!(crop_rect(2560, 1440, &o, None), (0, 0, 2560, 1440));
-        assert_eq!(crop_rect(2560, 1440, &o, Some((100.0, 50.0, 300.0, 200.0))), (200, 100, 600, 400));
+        assert_eq!(crop_rect(2560, 1440, Some(&o), None), (0, 0, 2560, 1440));
+        assert_eq!(crop_rect(2560, 1440, Some(&o), Some((100.0, 50.0, 300.0, 200.0))), (200, 100, 600, 400));
         // 1.5x fractional scale rounds like the screenshot crop
-        assert_eq!(crop_rect(1920, 1080, &o, Some((101.0, 0.0, 33.0, 33.0))), (152, 0, 50, 50));
+        assert_eq!(crop_rect(1920, 1080, Some(&o), Some((101.0, 0.0, 33.0, 33.0))), (152, 0, 50, 50));
         // never past the buffer's edge
-        assert_eq!(crop_rect(1280, 720, &o, Some((1200.0, 700.0, 500.0, 500.0))), (1200, 700, 80, 20));
+        assert_eq!(crop_rect(1280, 720, Some(&o), Some((1200.0, 700.0, 500.0, 500.0))), (1200, 700, 80, 20));
     }
 }
 
@@ -598,7 +667,12 @@ impl Dispatch<ExtImageCopyCaptureSessionV1, ()> for State {
     fn event(s: &mut Self, _: &ExtImageCopyCaptureSessionV1, ev: ext_session::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         let f = &mut s.frame;
         match ev {
-            ext_session::Event::BufferSize { width, height } => f.size = Some((width, height)),
+            ext_session::Event::BufferSize { width, height } => {
+                // A new batch of constraints (they change when a window resizes).
+                f.size = Some((width, height));
+                f.formats.clear();
+                f.constraints_done = false;
+            }
             ext_session::Event::ShmFormat { format: WEnum::Value(fmt) } => f.formats.push((fmt, 0, 0, 0)),
             ext_session::Event::Done => f.constraints_done = true,
             ext_session::Event::Stopped => f.failed = Some("session stopped".into()),
@@ -613,12 +687,40 @@ impl Dispatch<ExtImageCopyCaptureFrameV1, ()> for State {
         match ev {
             ext_frame::Event::Transform { transform: WEnum::Value(t) } => f.transform = Some(t),
             ext_frame::Event::Ready => f.ready = true,
-            ext_frame::Event::Failed { reason } => f.failed = Some(format!("{reason:?}")),
+            ext_frame::Event::Failed { reason } => {
+                f.retry = reason == WEnum::Value(ext_frame::FailureReason::BufferConstraints);
+                f.failed = Some(format!("{reason:?}"));
+            }
             _ => {}
         }
     }
 }
 
+impl Dispatch<ExtForeignToplevelListV1, ()> for State {
+    fn event(s: &mut Self, _: &ExtForeignToplevelListV1, ev: ext_toplevel_list::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let ext_toplevel_list::Event::Toplevel { toplevel } = ev {
+            s.toplevels.push(Toplevel { handle: toplevel, app_id: String::new(), title: String::new(), closed: false });
+        }
+    }
+
+    wayland_client::event_created_child!(State, ExtForeignToplevelListV1, [
+        ext_toplevel_list::EVT_TOPLEVEL_OPCODE => (ExtForeignToplevelHandleV1, ()),
+    ]);
+}
+
+impl Dispatch<ExtForeignToplevelHandleV1, ()> for State {
+    fn event(s: &mut Self, h: &ExtForeignToplevelHandleV1, ev: ext_toplevel::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        let Some(t) = s.toplevels.iter_mut().find(|t| t.handle == *h) else { return };
+        match ev {
+            ext_toplevel::Event::AppId { app_id } => t.app_id = app_id,
+            ext_toplevel::Event::Title { title } => t.title = title,
+            ext_toplevel::Event::Closed => t.closed = true,
+            _ => {}
+        }
+    }
+}
+
+wayland_client::delegate_noop!(State: ExtForeignToplevelImageCaptureSourceManagerV1);
 wayland_client::delegate_noop!(State: ignore wl_shm::WlShm);
 wayland_client::delegate_noop!(State: ignore wl_buffer::WlBuffer);
 wayland_client::delegate_noop!(State: wl_shm_pool::WlShmPool);

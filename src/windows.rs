@@ -23,6 +23,9 @@ pub struct Window {
     /// App id / WM_CLASS, for the label when there's no title.
     pub app: String,
     pub title: String,
+    /// The compositor's own id, for finding the window again while
+    /// recording it: Sway's container id, Hyprland's address. Empty elsewhere.
+    pub id: String,
 }
 
 impl Window {
@@ -120,7 +123,15 @@ fn kwin() -> Result<Vec<Window>> {
     let ws: Vec<W> = serde_json::from_str(&result?)?;
     Ok(ws
         .into_iter()
-        .map(|w| Window { x: w.x.round(), y: w.y.round(), width: w.w.round(), height: w.h.round(), app: w.app, title: w.title })
+        .map(|w| Window {
+            x: w.x.round(),
+            y: w.y.round(),
+            width: w.w.round(),
+            height: w.h.round(),
+            app: w.app,
+            title: w.title,
+            id: String::new(),
+        })
         .collect())
 }
 
@@ -177,6 +188,7 @@ fn sway() -> Result<Vec<Window>> {
         kind: String,
         rect: R,
         name: Option<String>,
+        id: i64,
         app_id: Option<String>,
         window_properties: Option<Props>,
         pid: Option<i64>,
@@ -198,6 +210,7 @@ fn sway() -> Result<Vec<Window>> {
                 height: n.rect.height,
                 app,
                 title: n.name.clone().unwrap_or_default(),
+                id: n.id.to_string(),
             };
             if floating { floats.push(w) } else { tiled.push(w) }
         }
@@ -268,6 +281,8 @@ fn hyprland() -> Result<Vec<Window>> {
         class: String,
         #[serde(default)]
         title: String,
+        #[serde(default)]
+        address: String,
     }
 
     let mons: Vec<Monitor> = serde_json::from_slice(&ask("j/monitors")?)?;
@@ -284,7 +299,7 @@ fn hyprland() -> Result<Vec<Window>> {
     cs.sort_by_key(|c| (!full(c), !c.floating, c.focus_history_id));
     Ok(cs
         .into_iter()
-        .map(|c| Window { x: c.at[0], y: c.at[1], width: c.size[0], height: c.size[1], app: c.class, title: c.title })
+        .map(|c| Window { x: c.at[0], y: c.at[1], width: c.size[0], height: c.size[1], app: c.class, title: c.title, id: c.address })
         .collect())
 }
 
@@ -371,7 +386,7 @@ fn x11_windows() -> Result<Vec<Window>> {
             .ok()
             .and_then(|r| r.value.split(|&b| b == 0).filter(|s| !s.is_empty()).nth(1).map(|s| String::from_utf8_lossy(s).into_owned()))
             .unwrap_or_default();
-        out.push(Window { x, y, width: ww, height: hh, app, title });
+        out.push(Window { x, y, width: ww, height: hh, app, title, id: String::new() });
     }
     Ok(out)
 }
