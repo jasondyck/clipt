@@ -6,6 +6,8 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-01
+
 ### Added
 - `clipt record`: record the screen, a region or a window to MP4, MKV, MOV
   or GIF. With no arguments it opens the selection overlay in record mode
