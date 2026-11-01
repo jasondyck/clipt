@@ -39,7 +39,7 @@ modules:
       - cargo --offline build --release --locked
       - install -Dm755 target/release/clipt /app/bin/clipt
       # Flatpak only exports files named after the app ID.
-      - sed 's/^Icon=clipt$/Icon=${FLATPAK_ID}/' data/clipt.desktop > ${FLATPAK_ID}.desktop
+      - sed "s/^Icon=clipt$/Icon=${FLATPAK_ID}/" data/clipt.desktop > ${FLATPAK_ID}.desktop
       - install -Dm644 ${FLATPAK_ID}.desktop -t /app/share/applications
       - install -Dm644 data/clipt.svg /app/share/icons/hicolor/scalable/apps/${FLATPAK_ID}.svg
       - install -Dm644 packaging/flatpak/${FLATPAK_ID}.metainfo.xml -t /app/share/metainfo

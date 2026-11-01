@@ -37,6 +37,7 @@ All notable changes are listed here. The format follows
   so its dialog appears once.
 
 ### Fixed
+- The Flatpak's desktop entry named its icon `${FLATPAK_ID}` literally.
 - Recordings with few frames (a mostly still screen) could get a wrong,
   shorter duration in the MP4: encoders now run without B-frames.
 - Tray: *Record region…*, *Record screen*, *Pause/Resume/Stop recording* and
