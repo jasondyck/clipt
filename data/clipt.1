@@ -58,7 +58,7 @@ Open the selection overlay in record mode: drag an area, or click a window
 or screen, then press \fBEnter\fR to start.
 A red frame outside the recorded area marks it; the frame is not in the
 video.
-The recording is saved in \fBvideo_dir\fR.
+The recording is saved in \fBvideo_dir\fR by default.
 .TP
 \fBrecord screen\fR [\fIname\fR]
 Record one output without opening the overlay, named as shown by
@@ -115,8 +115,8 @@ Copy the capture to the clipboard.
 Applies to \fBfull\fR and \fBscreen\fR.
 .TP
 \fB\-g\fR, \fB\-\-geometry\fR \fIGEOM\fR
-Crop the capture to \fIGEOM\fR in logical pixels, in slurp's "X,Y WxH"
-format.
+Crop a \fBfull\fR or \fBscreen\fR capture to \fIGEOM\fR in logical pixels,
+in slurp's "X,Y WxH" format.
 With \fBrecord\fR, records that region.
 .TP
 \fB\-d\fR, \fB\-\-delay\fR \fISECS\fR
@@ -181,8 +181,8 @@ Undo and redo.
 \fBEsc\fR, right-click
 Cancel with \fBEsc\fR; right-click backs out a step.
 .SH CONFIGURATION
-Settings live in \fI$XDG_CONFIG_HOME/clipt/config.toml\fR (default
-\fI~/.config/clipt/config.toml\fR).
+Settings live in \fIconfig.toml\fR under \fI$XDG_CONFIG_HOME/clipt\fR
+(\fI~/.config/clipt\fR when \fBXDG_CONFIG_HOME\fR is unset).
 The file is TOML and every key is optional; unknown keys are an error.
 A leading \fB~/\fR in a path is expanded to the home directory.
 .PP
@@ -245,8 +245,9 @@ Bug reports are most useful with this output.
 .SH FILES
 .TP
 \fI$XDG_CONFIG_HOME/clipt/config.toml\fR
-Configuration file; \fI~/.config/clipt/config.toml\fR when
-\fBXDG_CONFIG_HOME\fR is unset.
+Configuration file.
+Defaults to \fI~/.config/clipt/config.toml\fR when \fBXDG_CONFIG_HOME\fR is
+unset.
 .TP
 \fI~/Pictures/Screenshots\fR
 Default \fBsave_dir\fR for screenshots.
