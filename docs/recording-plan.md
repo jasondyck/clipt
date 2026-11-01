@@ -1,6 +1,6 @@
 # Video recording: implementation plan
 
-Status: phases 0–4 done, phase 5 done except recording in the Flatpak (X11, GIF, ScreenCast portal), 2026-11-01.
+Status: phases 0–5 done (phase 5: X11, GIF, ScreenCast portal, Flatpak), 2026-11-01.
 
 ## Goal
 
@@ -63,10 +63,13 @@ and handle resizes smoothly instead of jumping. No audio in the first version.
   Output `-movflags +faststart`. Canvas sizes are rounded up to even numbers
   (H.264 needs them).
 - **Control** (`src/record/mod.rs`): one recording at a time. A pidfile in
-  `$XDG_RUNTIME_DIR/clipt-record.pid`; `clipt record --stop` and the tray
-  send SIGINT, which ends the stream, closes ffmpeg's stdin and waits for it
-  to finish the file. Ctrl-C in a terminal does the same. A `max_duration`
-  safety limit (default 1 h) and a disk-space check every few seconds.
+  `$XDG_RUNTIME_DIR/clipt-record.pid`, which the recorder holds under a
+  flock; `clipt record --stop` and the tray write a command to the
+  `clipt-record.ctl` FIFO beside it, which ends the stream, closes ffmpeg's
+  stdin and waits for it to finish the file. (They first sent SIGINT to the
+  pid, which can't work across Flatpak instances; see phase 5.) Ctrl-C in
+  a terminal does the same. A `max_duration` safety limit (default 1 h) and
+  a disk-space check every few seconds.
 
 ## Window recording and the smooth camera
 
@@ -225,12 +228,23 @@ GNOME e2e (add PipeWire to its container); KDE checked with
 - Found on the way: libx264's B-frames gave sparse VFR recordings a short
   MP4 duration too (as h264_vaapi's had), so every encoder now runs with
   `-bf 0`.
-- Open: **recording in the Flatpak.** The plan said ffmpeg would come from
-  the `org.freedesktop.Platform.ffmpeg-full` extension, but that extension
-  provides ffmpeg's libraries, not the `ffmpeg` program clipt runs. Options:
-  build ffmpeg as a module of the Flatpak (simple, slow builds, larger
-  download), or encode through libavcodec directly (no subprocess, more
-  code).
+- Found on the way: control by pid can't work in the Flatpak. Each `flatpak
+  run` has its own PID namespace whose first process is pid 2, so the
+  recorder's pid meant nothing to `clipt record --stop`, which would have
+  signalled itself, and a leftover pidfile always looked live. The
+  recorder now holds a flock on the pidfile (locks cross namespaces) and
+  reads one-byte commands from a FIFO beside it; SIGINT, SIGTERM and
+  SIGUSR1/2 still work.
+- **Recording in the Flatpak.** The plan said ffmpeg would come from the
+  `org.freedesktop.Platform.ffmpeg-full` extension, but that extension
+  provides ffmpeg's libraries, not the `ffmpeg` program clipt runs. So the
+  manifest builds ffmpeg 9.0.2 (static, with x264 and nv-codec-headers,
+  and only the components clipt's command lines use: 6.9 MB, against 33 MB
+  with everything) rather than encoding through libavcodec, which would
+  have meant more code for the same result. Also added: `--device=dri` and
+  `--filesystem=xdg-videos`. Tested through the Flatpak against headless
+  Sway via `clipt-launch`: record, pause, resume and stop from separate
+  instances; .mp4, .mkv, .mov and .gif with VA-API, and libx264.
 
 ## Spike results (2026-10-31)
 
@@ -279,8 +293,9 @@ previous row should roughly halve it.
   release targets; those get wlroots and X11 recording only.
 - **GNOME's dialog**: unavoidable the first time; restore tokens keep it to
   once.
-- **Flatpak**: needs the ffmpeg extension and the portal path; zkde_screencast
-  is hidden from the sandbox like the other privileged globals.
+- **Flatpak**: builds its own ffmpeg and records through the portal;
+  zkde_screencast is hidden from the sandbox like the other privileged
+  globals.
 
 ## Not in this plan
 

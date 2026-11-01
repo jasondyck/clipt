@@ -35,8 +35,15 @@ All notable changes are listed here. The format follows
 - Recording through the ScreenCast portal (`-b portal`, and automatically
   where nothing better is available); the choice of screen is remembered,
   so its dialog appears once.
+- Recording in the Flatpak: it now includes its own ffmpeg (VA-API, NVENC
+  and libx264), and can write to `~/Videos` and use the GPU to encode.
 
 ### Fixed
+- `clipt record --stop`, `--pause` and the tray found the running recording
+  by its pid, which another Flatpak instance can't see (each has its own
+  PID namespace), and a pidfile left behind could block new recordings if
+  its pid had been reused. They now use a lock and a control FIFO beside it.
+- The Flatpak's desktop entry named its icon `${FLATPAK_ID}` literally.
 - Recordings with few frames (a mostly still screen) could get a wrong,
   shorter duration in the MP4: encoders now run without B-frames.
 - Tray: *Record region…*, *Record screen*, *Pause/Resume/Stop recording* and

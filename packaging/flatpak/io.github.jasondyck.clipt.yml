@@ -18,8 +18,12 @@ finish-args:
   - --socket=fallback-x11
   # MIT-SHM for the X11 overlay.
   - --share=ipc
-  # save_dir defaults to ~/Pictures/Screenshots.
+  # save_dir defaults to ~/Pictures/Screenshots, video_dir to
+  # ~/Videos/Screencasts.
   - --filesystem=xdg-pictures
+  - --filesystem=xdg-videos
+  # Render nodes, for encoding recordings on the GPU (VA-API, NVENC).
+  - --device=dri
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.kde.StatusNotifierWatcher
   # KDE: ScreenShot2 for capture and a KWin script for window positions.
@@ -33,13 +37,81 @@ build-options:
   env:
     CARGO_HOME: /run/build/clipt/cargo
 modules:
+  # `clipt record` runs the ffmpeg program. The ffmpeg extensions only
+  # provide its libraries, so it's built here, linked statically, with only
+  # what src/record/encode.rs asks of it: the encoders it picks between
+  # (VA-API, NVENC loaded from the NVIDIA driver at run time, libx264), the
+  # Matroska stream it's fed, the containers clipt accepts (.mp4 .mkv .mov
+  # .gif) and the filters in its command lines.
+  - name: x264
+    buildsystem: autotools
+    config-opts:
+      - --enable-static
+      - --enable-pic
+      - --disable-cli
+      - --disable-opencl
+      - --bit-depth=8
+      - --chroma-format=420
+    cleanup:
+      - '*'
+    sources:
+      - type: git
+        url: https://code.videolan.org/videolan/x264.git
+        commit: b35605ace3ddf7c1a5d67a2eb553f034aef41d55
+  - name: nv-codec-headers
+    buildsystem: simple
+    build-commands:
+      - make install PREFIX=/app
+    cleanup:
+      - '*'
+    sources:
+      - type: git
+        url: https://github.com/FFmpeg/nv-codec-headers.git
+        tag: n13.1.15.0
+        commit: 0a6fba9a2820628b8103464f4c8753ee05838baa
+  - name: ffmpeg
+    buildsystem: autotools
+    config-opts:
+      - --disable-autodetect
+      - --disable-everything
+      - --disable-doc
+      - --disable-debug
+      - --disable-ffplay
+      - --disable-ffprobe
+      - --disable-network
+      - --disable-swresample
+      - --disable-shared
+      - --enable-static
+      - --enable-gpl
+      - --enable-libx264
+      - --enable-vaapi
+      - --enable-ffnvcodec
+      - --enable-nvenc
+      - --enable-protocol=file,pipe
+      # The encoder probe's test frame (handed over as wrapped_avframe).
+      - --enable-indev=lavfi
+      # Frames arrive as Matroska; a GIF is made from the finished MP4.
+      - --enable-demuxer=matroska,mov
+      - --enable-decoder=rawvideo,h264,wrapped_avframe
+      - --enable-parser=h264
+      - --enable-encoder=libx264,h264_vaapi,h264_nvenc,gif
+      - --enable-muxer=mp4,mov,matroska,gif,null
+      - --enable-filter=color,format,pad,scale,hwupload,scale_vaapi,fps,split,palettegen,paletteuse,null
+    cleanup:
+      - /include
+      - /lib
+      - /share
+    sources:
+      - type: archive
+        url: https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
+        sha256: 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
   - name: clipt
     buildsystem: simple
     build-commands:
       - cargo --offline build --release --locked
       - install -Dm755 target/release/clipt /app/bin/clipt
       # Flatpak only exports files named after the app ID.
-      - sed 's/^Icon=clipt$/Icon=${FLATPAK_ID}/' data/clipt.desktop > ${FLATPAK_ID}.desktop
+      - sed "s/^Icon=clipt$/Icon=${FLATPAK_ID}/" data/clipt.desktop > ${FLATPAK_ID}.desktop
       - install -Dm644 ${FLATPAK_ID}.desktop -t /app/share/applications
       - install -Dm644 data/clipt.svg /app/share/icons/hicolor/scalable/apps/${FLATPAK_ID}.svg
       - install -Dm644 packaging/flatpak/${FLATPAK_ID}.metainfo.xml -t /app/share/metainfo

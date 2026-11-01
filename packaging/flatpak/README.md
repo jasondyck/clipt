@@ -69,9 +69,21 @@ ScreenCast portal with a restore token (silent after one approval, but a
 PipeWire dependency clipt doesn't otherwise need), and per-app allow-lists in
 compositors (their configuration, not ours).
 
+## Recording
+
+The Flatpak builds its own `ffmpeg` (the runtime's ffmpeg extensions carry
+only the libraries), with VA-API, NVENC and libx264, and has `--device=dri`
+for the GPU encoders and `--filesystem=xdg-videos` for `video_dir`. It
+records through the ScreenCast portal on Wayland (KWin's and Mutter's
+screencast, like wlroots capture, aren't reachable from the sandbox), so the
+portal's dialog appears the first time; on X11, and under `clipt-launch` on
+wlroots, it records as a native install does.
+
 ## Flatpak-specific code
 
 - `update::flatpak()` detects the sandbox (`/.flatpak-info`).
+- Recording control uses a lock and a FIFO rather than pids, which differ
+  between `flatpak run` instances (`record/mod.rs`).
 - `clipt update` refuses and points at `flatpak update`; the tray hides
   *Check for updates…* and ignores `check_updates` (no network permission).
 - Tray: the lock name becomes `<app-id>.Tray` and the item registers under

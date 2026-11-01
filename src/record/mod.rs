@@ -107,93 +107,157 @@ fn instant_at(ns: u64) -> Instant {
 }
 
 extern "C" fn on_signal(sig: libc::c_int) {
-    let now = monotonic_ns();
-    match sig {
-        libc::SIGUSR1 => {
-            if !PAUSED.swap(true, Ordering::SeqCst) {
-                PAUSED_AT.store(now, Ordering::SeqCst);
-            }
-        }
-        libc::SIGUSR2 => {
-            if PAUSED.swap(false, Ordering::SeqCst) {
-                RESUMED_AT.store(now, Ordering::SeqCst);
-            }
-        }
-        _ => {
-            if !STOP.swap(true, Ordering::SeqCst) {
-                STOPPED_AT.store(now, Ordering::SeqCst);
-            }
+    apply(match sig {
+        libc::SIGUSR1 => CMD_PAUSE,
+        libc::SIGUSR2 => CMD_RESUME,
+        _ => CMD_STOP,
+    });
+}
+
+/// Act on a command from the control FIFO or a signal. Async-signal-safe.
+fn apply(cmd: u8) {
+    // The flag to set, its new value, and where to note when it changed.
+    let (flag, value, at) = match cmd {
+        CMD_PAUSE => (&PAUSED, true, &PAUSED_AT),
+        CMD_RESUME => (&PAUSED, false, &RESUMED_AT),
+        CMD_STOP => (&STOP, true, &STOPPED_AT),
+        _ => return,
+    };
+    if flag.swap(value, Ordering::SeqCst) != value {
+        at.store(monotonic_ns(), Ordering::SeqCst);
+    }
+}
+
+// Recording control works through files in the runtime dir rather than
+// pids: each Flatpak instance has its own PID namespace (where the first
+// process is always pid 2), so a pid in the pidfile means nothing to another
+// `flatpak run`, and signalling it would hit the wrong process.
+//   clipt-record.pid  held under an exclusive flock while recording (locks
+//                     cross PID namespaces); says "recording" or "paused"
+//   clipt-record.ctl  a FIFO the recorder reads one-byte commands from
+
+fn runtime_file(name: &str) -> PathBuf {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    dir.join(name)
+}
+
+fn pidfile() -> PathBuf {
+    runtime_file("clipt-record.pid")
+}
+
+fn ctlfile() -> PathBuf {
+    runtime_file("clipt-record.ctl")
+}
+
+const CMD_STOP: u8 = b's';
+const CMD_PAUSE: u8 = b'p';
+const CMD_RESUME: u8 = b'r';
+
+/// The running recording, if any: whether it's paused. The pidfile holds the
+/// recorder's pid (for people reading it) on the first line and "paused" or
+/// "recording" on the second.
+pub fn status() -> Option<bool> {
+    use rustix::fs::{FlockOperation, flock};
+    let f = std::fs::File::open(pidfile()).ok()?;
+    match flock(&f, FlockOperation::NonBlockingLockShared) {
+        Ok(()) => None, // nobody holds it: stale
+        Err(_) => {
+            let s = std::io::read_to_string(&f).unwrap_or_default();
+            Some(s.lines().nth(1) == Some("paused"))
         }
     }
 }
 
-fn pidfile() -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    dir.join("clipt-record.pid")
+/// Holds the pidfile (locked) and the control FIFO for as long as the
+/// recording runs.
+struct Lock {
+    file: std::fs::File,
 }
-
-fn alive(pid: i32) -> bool {
-    pid > 0 && unsafe { libc::kill(pid, 0) } == 0
-}
-
-/// The running recording, if any: its pid and whether it's paused. The
-/// pidfile holds the pid on the first line and "paused" or "recording" on
-/// the second.
-pub fn status() -> Option<(i32, bool)> {
-    let s = std::fs::read_to_string(pidfile()).ok()?;
-    let mut lines = s.lines();
-    let pid = lines.next()?.trim().parse().ok()?;
-    alive(pid).then(|| (pid, lines.next() == Some("paused")))
-}
-
-/// Holds the pidfile for as long as the recording runs.
-struct Lock(PathBuf);
 
 impl Lock {
     fn take() -> Result<Self> {
+        use rustix::fs::{FlockOperation, flock};
         let p = pidfile();
-        if let Some((pid, _)) = status() {
-            bail!("already recording (pid {pid}); stop it with 'clipt record --stop'");
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&p)
+            .with_context(|| format!("opening {}", p.display()))?;
+        if flock(&file, FlockOperation::NonBlockingLockExclusive).is_err() {
+            bail!("already recording; stop it with 'clipt record --stop'");
         }
-        let _ = std::fs::remove_file(&p); // stale
-        std::fs::OpenOptions::new().write(true).create_new(true).open(&p).with_context(|| format!("creating {}", p.display()))?;
-        let lock = Self(p);
+        let lock = Self { file };
         lock.set(false)?;
+        let ctl = ctlfile();
+        let _ = std::fs::remove_file(&ctl); // stale
+        rustix::fs::mkfifoat(rustix::fs::CWD, &ctl, rustix::fs::Mode::from_raw_mode(0o600))
+            .with_context(|| format!("creating {}", ctl.display()))?;
+        // Read and write: with a writer of its own, reads wait for the next
+        // command instead of seeing end-of-file whenever a sender closes.
+        let mut fifo =
+            std::fs::OpenOptions::new().read(true).write(true).open(&ctl).with_context(|| format!("opening {}", ctl.display()))?;
+        std::thread::spawn(move || {
+            let mut b = [0u8; 16];
+            while let Ok(n) = std::io::Read::read(&mut fifo, &mut b) {
+                b[..n].iter().for_each(|&c| apply(c));
+            }
+        });
         Ok(lock)
     }
 
     fn set(&self, paused: bool) -> Result<()> {
-        let tmp = self.0.with_extension("tmp");
-        std::fs::write(&tmp, format!("{}\n{}\n", std::process::id(), if paused { "paused" } else { "recording" }))?;
-        std::fs::rename(&tmp, &self.0)?;
+        use std::os::unix::fs::FileExt;
+        // Rewritten in place: replacing the file would drop the lock.
+        let s = format!("{}\n{}\n", std::process::id(), if paused { "paused" } else { "recording" });
+        self.file.set_len(0)?;
+        self.file.write_all_at(s.as_bytes(), 0)?;
         Ok(())
     }
 }
 
 impl Drop for Lock {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        let _ = std::fs::remove_file(ctlfile());
+        let _ = std::fs::remove_file(pidfile());
     }
 }
 
 /// Fail early, before the overlay opens, if a recording is already running.
 pub fn ensure_idle() -> Result<()> {
     match status() {
-        Some((pid, _)) => bail!("already recording (pid {pid}); stop it with 'clipt record --stop'"),
+        Some(_) => bail!("already recording; stop it with 'clipt record --stop'"),
         None => Ok(()),
     }
 }
 
-/// `clipt record --stop`: signal the running recording and wait for it to
-/// finish writing.
+/// Hand the running recording a command.
+fn send(cmd: u8) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    if status().is_none() {
+        bail!("no recording is running");
+    }
+    // Non-blocking, so a FIFO nobody reads fails at once instead of hanging.
+    let mut fifo = std::fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(ctlfile())
+        .context("no recording is running (its control FIFO isn't open)")?;
+    fifo.write_all(&[cmd]).context("sending the command to the recording")?;
+    Ok(())
+}
+
+/// `clipt record --stop`: tell the running recording to stop and wait for it
+/// to finish writing.
 pub fn stop() -> Result<()> {
-    let Some((pid, _)) = status() else { bail!("no recording is running") };
-    unsafe { libc::kill(pid, libc::SIGINT) };
+    send(CMD_STOP)?;
     let deadline = Instant::now() + Duration::from_secs(30);
-    while alive(pid) && Instant::now() < deadline {
+    while status().is_some() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
-    anyhow::ensure!(!alive(pid), "recording (pid {pid}) didn't stop within 30 s");
+    anyhow::ensure!(status().is_none(), "the recording didn't stop within 30 s");
     Ok(())
 }
 
@@ -205,14 +269,13 @@ pub enum PauseCmd {
 
 /// `clipt record --pause / --resume / --toggle-pause`.
 pub fn pause(cmd: PauseCmd) -> Result<()> {
-    let Some((pid, paused)) = status() else { bail!("no recording is running") };
+    let Some(paused) = status() else { bail!("no recording is running") };
     let pause = match cmd {
         PauseCmd::Pause => true,
         PauseCmd::Resume => false,
         PauseCmd::Toggle => !paused,
     };
-    unsafe { libc::kill(pid, if pause { libc::SIGUSR1 } else { libc::SIGUSR2 }) };
-    Ok(())
+    send(if pause { CMD_PAUSE } else { CMD_RESUME })
 }
 
 /// The newest captured frame, shared between the capture thread and the writer.
