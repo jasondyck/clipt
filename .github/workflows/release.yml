@@ -27,6 +27,7 @@ concurrency:
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
@@ -36,7 +37,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
+      - run: .github/scripts/apt-install.sh libxkbcommon-dev
       - name: bump (manual run)
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -79,13 +80,14 @@ jobs:
           - { runner: ubuntu-22.04, arch: x86_64 }
           - { runner: ubuntu-22.04-arm, arch: aarch64 }
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
       # Built on the oldest supported Ubuntu so the glibc requirement stays low.
-      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
+      - run: .github/scripts/apt-install.sh libxkbcommon-dev
       - run: cargo build --release --locked
       - uses: taiki-e/install-action@v2
         with:
@@ -114,6 +116,7 @@ jobs:
   release:
     needs: [prepare, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -145,12 +148,13 @@ jobs:
   crates-io:
     needs: [prepare, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
+      - run: .github/scripts/apt-install.sh libxkbcommon-dev
       - name: publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
