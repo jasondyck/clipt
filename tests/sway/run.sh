@@ -217,6 +217,44 @@ act "key Escape"; wait $rp
 check "Esc in record mode records nothing" '[ ! -e /tmp/rec-esc.mp4 ] && [ ! -e $XDG_RUNTIME_DIR/clipt-record.pid ]'
 gerr
 
+echo "-- recording a window: follows it, eases the zoom on resize"
+swaymsg -q 'for_window [app_id="clipt-testwin"] floating enable, move position 100 100'
+win_rect() { swaymsg -t get_tree | jq -r '.. | select(.app_id? == "clipt-testwin") | .rect | "\(.x) \(.y) \(.width) \(.height)"' | head -1; }
+heights() {  # content height per frame, down the middle column (background is #1e1e22)
+  rm -rf /tmp/cols && mkdir /tmp/cols
+  ffmpeg -v error -i "$1" -vf "crop=2:ih:iw/2:0" -fps_mode passthrough /tmp/cols/%04d.png
+  for f in /tmp/cols/*.png; do magick "$f" -fuzz 12% -transparent "#1e1e22" -trim -format "%h\n" info: 2>/dev/null; done
+}
+for b in ext wlr; do
+  /testwin c020c0 400 300 & tw=$!; sleep 1
+  read WX WY WW WH < <(win_rect)
+  CLIPT_DEBUG=1 /clipt record -b $b -o /tmp/rec-w-$b.mp4 2>/tmp/rec.err & rp=$!; sleep 1
+  act "move $((WX + WW / 2)) $((WY + WH / 2))" click; sleep 0.3
+  act "key Return"; sleep 1.2
+  swaymsg -q '[app_id="clipt-testwin"] resize set 800 300'; sleep 1.2
+  swaymsg -q '[app_id="clipt-testwin"] move position 300 350'; sleep 1
+  /clipt record --stop 2>/dev/null; wait $rp
+  kill $tw 2>/dev/null; wait $tw 2>/dev/null
+  if [ $b = ext ]; then
+    check "-b ext records the window itself" 'grep -q "by window capture" /tmp/rec.err'
+  else
+    check "-b wlr follows the window by cropping" 'grep -q "following the window" /tmp/rec.err'
+  fi
+  # Window capture gives the window's own pixels (testwin draws at 1x);
+  # cropping the output gives the output's (scaled) pixels.
+  if [ $b = ext ]; then want=$(even $WW $WH); else want=$(even $(logical $WW $WH | tr x " ")); fi
+  check "window recording keeps the window's first size ($want, got $(vsize /tmp/rec-w-$b.mp4))" '[ "$(vsize /tmp/rec-w-$b.mp4)" = "$want" ]'
+  read VW VH < <(vsize /tmp/rec-w-$b.mp4 | tr x " ")
+  frame /tmp/rec-w-$b.mp4 -0.1 /tmp/rec-w-last.png
+  top=$(px /tmp/rec-w-last.png "$((VW / 2)),$((VH / 10))"); mid=$(px /tmp/rec-w-last.png "$((VW / 2)),$((VH / 2))")
+  check "after widening, the window is zoomed out with bars above ($top) and still shown in the middle ($mid)" \
+    'echo "$top" | grep -Eq "srgba?\(([0-9]|[1-3][0-9]),([0-9]|[1-3][0-9]),([0-9]|[1-3][0-9])" && echo "$mid" | grep -Eq "srgba?\(1[6-9][0-9]|2[0-9][0-9],([0-9]|[1-5][0-9]),(1[6-9][0-9]|2[0-9][0-9])"'
+  hs=$(heights /tmp/rec-w-$b.mp4 | sort -un | tr "\n" " ")
+  n=$(echo $hs | wc -w)
+  check "the zoom eases through several sizes, not one jump (heights: $hs)" '[ "$n" -ge 4 ]'
+done
+gerr
+
 echo "-- interactive: double-click copies"
 gui
 drag 60 60 260 200

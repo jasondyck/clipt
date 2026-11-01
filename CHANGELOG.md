@@ -18,6 +18,11 @@ All notable changes are listed here. The format follows
   marks a region recording.
 - Pausing: `clipt record --pause`, `--resume`, `--toggle-pause`. Paused time
   is left out of the video; the frame turns amber.
+- Window recording: click a window in `clipt record`'s overlay. It's
+  captured on its own where the compositor can (ext-foreign-toplevel image
+  capture: Sway 1.11+, Hyprland 0.50+, COSMIC), or followed by position on
+  Sway and Hyprland otherwise. When it resizes, the video keeps its size and
+  the zoom eases to fit (~200 ms, never past 1:1).
 - Tray: *Record region…*, *Record screen*, *Pause/Resume/Stop recording* and
   *Open recordings folder*; the icon gets a red (paused: amber) dot while
   recording, and clicking it stops.

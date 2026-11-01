@@ -192,7 +192,7 @@ fn run() -> Result<()> {
             (_, Some(g)) => record::Target::Geometry(g.clone()),
             (Some("screen"), None) => record::Target::Screen(args.screen.clone()),
             (None | Some("region" | "window"), None) => match pick_recording_area(&cfg, cursor, backend)? {
-                Some(r) => record::Target::Rect(r),
+                Some(t) => t,
                 None => return Ok(()), // cancelled
             },
             (Some(m), None) => bail!("unknown recording mode '{m}' (screen, region, or -g GEOM)"),
@@ -346,9 +346,9 @@ fn gui(
     Ok(())
 }
 
-/// The overlay in record mode: returns the chosen area in logical desktop
-/// coordinates, or None if cancelled.
-fn pick_recording_area(cfg: &Config, cursor: bool, backend: Option<Backend>) -> Result<Option<capture::LogicalRect>> {
+/// The overlay in record mode: returns what to record (an area, or a window
+/// picked with a click), or None if cancelled.
+fn pick_recording_area(cfg: &Config, cursor: bool, backend: Option<Backend>) -> Result<Option<record::Target>> {
     let font_path = cfg.font.clone();
     let fonts = std::thread::spawn(move || text::Fonts::load(font_path.as_deref()));
     let mut cap = Capturer::new()?;
@@ -368,11 +368,15 @@ fn pick_recording_area(cfg: &Config, cursor: bool, backend: Option<Backend>) -> 
         return Ok(None);
     }
     let r = session.editor().final_rect().context("nothing selected")?;
+    let target = match session.editor().selected_window() {
+        Some(w) => record::Target::Window(w.clone()),
+        None => record::Target::Rect((r.left() as f64, r.top() as f64, r.width() as f64, r.height() as f64)),
+    };
     session.hide()?;
     drop(session);
     // Let the compositor take the overlay down before the first frame.
     std::thread::sleep(std::time::Duration::from_millis(150));
-    Ok(Some((r.left() as f64, r.top() as f64, r.width() as f64, r.height() as f64)))
+    Ok(Some(target))
 }
 
 fn deliver(cfg: &Config, args: &Args, img: image::Image, kind: capture::DisplayKind) -> Result<()> {

@@ -59,7 +59,11 @@ clipt record --stop # ...and stop it (or Ctrl-C, or click the tray icon)
 **Recording (early):** `clipt record` opens the selection overlay without the
 annotation tools: drag an area (or click a window or screen) and press
 **Enter**. A red frame marks the area while it records, outside it so it's
-not in the video. `clipt record screen [NAME]` and `clipt record -g "X,Y
+not in the video. A clicked window is followed as it moves, and when it's
+resized the video keeps its size and zooms smoothly to fit (never enlarging
+past 1:1). Compositors that can capture single windows (Sway 1.11+, Hyprland
+0.50+, COSMIC) record just the window, even when something covers it; on Sway
+and Hyprland without that, clipt follows it by position instead. `clipt record screen [NAME]` and `clipt record -g "X,Y
 WxH"` skip the overlay. `--pause`, `--resume` and `--toggle-pause` pause
 without a gap in the video (the frame turns amber); `--stop`, Ctrl-C or
 `max_duration` (1 h) end it. The tray menu has the same controls, and its icon
@@ -67,7 +71,7 @@ shows a red dot while recording. Files go to `~/Videos/Screencasts` as MP4.
 It needs `ffmpeg` and uses the GPU encoder when there is one (VA-API on AMD
 and Intel, NVENC on NVIDIA), libx264 otherwise. For now it works on
 wlroots-family compositors (Sway, Hyprland, niri, labwc, river, COSMIC);
-following a window as it moves, KDE, GNOME and X11 are planned (see
+KDE, GNOME and X11 are planned (see
 [docs/recording-plan.md](docs/recording-plan.md)).
 
 Before you select anything, clipt highlights what a click would take: the
