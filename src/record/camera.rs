@@ -173,8 +173,8 @@ mod tests {
     /// Bounding box of pixels that aren't the background.
     fn content(f: &VideoFrame) -> (u32, u32, u32, u32) {
         let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
-        for (i, p) in f.data.chunks_exact(4).enumerate() {
-            if p != BG {
+        for (i, p) in f.data.as_chunks::<4>().0.iter().enumerate() {
+            if *p != BG {
                 let (x, y) = (i as u32 % f.width, i as u32 / f.width);
                 (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
             }
