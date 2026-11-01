@@ -1,6 +1,6 @@
 # Video recording: implementation plan
 
-Status: proposed, 2026-10-31. Phase 0 (spike) done; nothing else built yet.
+Status: phase 0 (spike) and phase 1 (pipeline, screen/region on wlroots) done, 2026-11-01.
 
 ## Goal
 
@@ -22,7 +22,7 @@ and handle resizes smoothly instead of jumping. No audio in the first version.
 ## How it fits together
 
 ```
- capture source ──frames──▶ camera ──canvas frames──▶ pacer ──▶ ffmpeg stdin ──▶ file.mp4
+ capture source ──frames──▶ camera ──canvas frames──▶ writer ──▶ ffmpeg stdin ──▶ file.mp4
  (ext / wlr / PipeWire /    (crop, fit,              (constant fps,
   X11, own thread)           ease, pad)               drop when behind)
 ```
@@ -33,10 +33,14 @@ and handle resizes smoothly instead of jumping. No audio in the first version.
   not a queue), so a slow encoder drops frames instead of building up memory.
 - **Camera** (`src/record/camera.rs`): pure function of (frame size, canvas
   size, time) → transform, so it's unit-testable. See below.
-- **Pacer** (`src/record/pacer.rs`): ticks at the target fps (30 by default)
-  and sends the newest canvas frame to ffmpeg, repeating the last one when
-  nothing changed. That makes the output constant frame rate, which keeps the
-  ffmpeg side a plain `-f rawvideo` pipe with no timestamps to manage.
+- **Writer** (`src/record/mod.rs`): hands the newest frame to ffmpeg at most
+  `fps` times a second, only when the screen changed. ffmpeg stamps frames
+  with their arrival time (`-use_wallclock_as_timestamps`) and keeps those
+  times (`-fps_mode passthrough`), so the output is variable frame rate: a
+  still screen costs nothing, and a slow encoder drops frames instead of
+  slowing the video. (Constant frame rate was the first plan; ffmpeg's cfr
+  mode padded the end of each recording by over a second.) At stop the last
+  frame is sent twice, a frame apart, so a still ending isn't cut short.
 - **Encoder** (`src/record/encode.rs`): builds the ffmpeg command line,
   probes it once at start and falls back step by step:
   1. `h264_vaapi` (AMD, Intel): `-vaapi_device /dev/dri/renderD128 -vf
@@ -110,10 +114,11 @@ nothing is ever cut off.
 - Tray menu: *Record region…*, *Record window…*, *Record screen*; *Stop
   recording* while one runs.
 - When done: a notification with the file, like screenshots. Saved to
-  `video_dir` (default `~/Videos/clipt`), named like screenshots.
-- Config: `video_dir`, `record_fps`, `record_format` (`mp4`/`gif`),
-  `record_codec` (`auto`/`vaapi`/`x264`), `record_cursor`,
-  `record_background`, `max_duration`.
+  `video_dir` (default `~/Videos/Screencasts`), named like screenshots.
+- Config (phase 1 has the first five): `video_dir`, `video_filename`,
+  `record_fps`, `record_codec` (`auto`/`vaapi`/`nvenc`/`x264`),
+  `max_duration`; later `record_format` (`mp4`/`gif`) and
+  `record_background`.
 
 ## Phases
 
@@ -124,8 +129,11 @@ no memfd ring; the camera needs its own scaler. Capture-loop rates were not
 measured: headless Sway renders in software, so its numbers wouldn't say
 anything about real desktops. Phase 1 measures them on real compositors.
 
-**1. Pipeline + screen/region on wlroots (about 1 week).** `src/record/`
-with source trait, ext and wlr sources, pacer, encoder with fallback,
+**1. Pipeline + screen/region on wlroots (done 2026-11-01).** Capture loops
+in `capture/wayland.rs` (`Wayland::stream`), writer and encoder in
+`src/record/`. Regions must lie within one output for now. Still to measure:
+capture rates on real (GPU) wlroots compositors. Original scope: source
+trait, ext and wlr sources, pacer, encoder with fallback,
 pidfile control, `clipt record screen` and `-g`. Notification on finish.
 CI: Sway e2e records 3 s, `ffprobe` checks duration, fps and size, and a
 decoded frame shows the test pattern.

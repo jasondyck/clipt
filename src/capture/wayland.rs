@@ -4,7 +4,7 @@
 //!   * ext-image-copy-capture-v1 (the standardised one, preferred)
 //!   * wlr-screencopy-unstable-v1 (older, still the most widely deployed)
 
-use super::{Output, Shot};
+use super::{LogicalRect, Output, PixelOrder, Shot, VideoFrame};
 use crate::image::Image;
 use anyhow::{Context, Result, bail};
 use std::os::fd::{AsFd, OwnedFd};
@@ -242,6 +242,149 @@ impl Wayland {
         buf.into_image()
     }
 
+    /// Capture `out` continuously for a recording, handing each new frame to
+    /// `sink` until it returns false. `crop` is a rectangle in the output's
+    /// logical coordinates (relative to its top-left corner).
+    ///
+    /// Both protocols wait for the screen to change before delivering, so a
+    /// still screen produces no frames; the recorder repeats the last one.
+    pub fn stream(
+        &mut self,
+        out: &Output,
+        cursor: bool,
+        proto: Protocol,
+        crop: Option<LogicalRect>,
+        sink: &mut dyn FnMut(VideoFrame) -> bool,
+    ) -> Result<()> {
+        anyhow::ensure!(self.protocols().contains(&proto), "compositor doesn't offer {proto:?}");
+        let qh = self.queue.handle();
+        let shm: wl_shm::WlShm = self.globals.bind(&qh, 1..=1, ())?;
+        let wl_out = self.state.outputs[out.index].0.clone();
+        let transform = self.state.outputs[out.index].1.transform;
+        self.state.frame = FrameState { transform, ..Default::default() };
+        match proto {
+            Protocol::ExtImageCopy => self.stream_ext(&qh, &shm, &wl_out, out, cursor, crop, sink),
+            Protocol::WlrScreencopy => self.stream_wlr(&qh, &shm, &wl_out, out, cursor, crop, sink),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn stream_ext(
+        &mut self,
+        qh: &QueueHandle<State>,
+        shm: &wl_shm::WlShm,
+        wl_out: &wl_output::WlOutput,
+        out: &Output,
+        cursor: bool,
+        crop: Option<LogicalRect>,
+        sink: &mut dyn FnMut(VideoFrame) -> bool,
+    ) -> Result<()> {
+        let src_mgr: ExtOutputImageCaptureSourceManagerV1 = self.globals.bind(qh, 1..=1, ())?;
+        let mgr: ExtImageCopyCaptureManagerV1 = self.globals.bind(qh, 1..=1, ())?;
+        let source = src_mgr.create_source(wl_out, qh, ());
+        let opts = if cursor { ext_mgr::Options::PaintCursors } else { ext_mgr::Options::empty() };
+        let session = mgr.create_session(&source, opts, qh, ());
+        let mut buf: Option<ShmBuffer> = None;
+        let result = loop {
+            if let Err(e) = self.dispatch_until(|f| f.constraints_done) {
+                break Err(e);
+            }
+            let (w, h) = self.state.frame.size.context("no buffer size from session")?;
+            // A new buffer starts out stale everywhere; after that the
+            // compositor only rewrites what changed, since we never touch it.
+            let fresh = buf.as_ref().is_none_or(|b| (b.width, b.height) != (w, h));
+            if fresh {
+                let formats: Vec<_> = self.state.frame.formats.iter().map(|&(f, ..)| (f, w, h, 0)).collect();
+                let (fmt, w, h, stride) = pick_format(&formats).context("no usable shm format offered")?;
+                if let Some(old) = buf.take() {
+                    old.buffer.destroy();
+                }
+                buf = Some(ShmBuffer::new(shm, qh, w, h, stride, fmt)?);
+            }
+            let b = buf.as_ref().unwrap();
+            let frame = session.create_frame(qh, ());
+            frame.attach_buffer(&b.buffer);
+            if fresh {
+                frame.damage_buffer(0, 0, w as i32, h as i32);
+            }
+            frame.capture();
+            self.state.frame.ready = false;
+            let r = self.dispatch_until(|f| f.ready);
+            frame.destroy();
+            if let Err(e) = r {
+                break Err(e);
+            }
+            let vf = b.video_frame(false, self.state.frame.transform, out, crop)?;
+            if !sink(vf) {
+                break Ok(());
+            }
+        };
+        if let Some(b) = buf {
+            b.buffer.destroy();
+        }
+        session.destroy();
+        source.destroy();
+        mgr.destroy();
+        src_mgr.destroy();
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn stream_wlr(
+        &mut self,
+        qh: &QueueHandle<State>,
+        shm: &wl_shm::WlShm,
+        wl_out: &wl_output::WlOutput,
+        out: &Output,
+        cursor: bool,
+        crop: Option<LogicalRect>,
+        sink: &mut dyn FnMut(VideoFrame) -> bool,
+    ) -> Result<()> {
+        let mgr: ZwlrScreencopyManagerV1 = self.globals.bind(qh, 1..=3, ())?;
+        let v = mgr.version();
+        let transform = self.state.frame.transform;
+        let mut buf: Option<ShmBuffer> = None;
+        let result = loop {
+            // Each wlr frame is a new object that re-announces its buffer.
+            self.state.frame = FrameState { transform, ..Default::default() };
+            let frame = mgr.capture_output(cursor as i32, wl_out, qh, ());
+            if let Err(e) = self.dispatch_until(|f| if v >= 3 { f.constraints_done } else { !f.formats.is_empty() }) {
+                frame.destroy();
+                break Err(e);
+            }
+            let (fmt, w, h, stride) = pick_format(&self.state.frame.formats).context("no usable shm format offered")?;
+            let reuse = buf.as_ref().is_some_and(|b| (b.width, b.height, b.stride, b.format) == (w, h, stride, fmt));
+            if !reuse {
+                if let Some(old) = buf.take() {
+                    old.buffer.destroy();
+                }
+                buf = Some(ShmBuffer::new(shm, qh, w, h, stride, fmt)?);
+            }
+            let b = buf.as_ref().unwrap();
+            // copy_with_damage (v2+) waits for the screen to change, so a still
+            // screen doesn't make us spin. The first copy must not wait.
+            if v >= 2 && reuse {
+                frame.copy_with_damage(&b.buffer);
+            } else {
+                frame.copy(&b.buffer);
+            }
+            let r = self.dispatch_until(|f| f.ready);
+            frame.destroy();
+            if let Err(e) = r {
+                break Err(e);
+            }
+            let vf = b.video_frame(self.state.frame.y_invert, self.state.frame.transform, out, crop)?;
+            if !sink(vf) {
+                break Ok(());
+            }
+        };
+        if let Some(b) = buf {
+            b.buffer.destroy();
+        }
+        mgr.destroy();
+        result
+    }
+
     #[allow(dead_code)]
     pub fn connection(&self) -> &Connection {
         &self.conn
@@ -281,16 +424,89 @@ impl ShmBuffer {
     }
 
     fn into_image(self) -> Result<Image> {
+        let img = self.image();
+        self.buffer.destroy();
+        img
+    }
+
+    fn image(&self) -> Result<Image> {
         use wl_shm::Format::*;
         let (w, h, s) = (self.width, self.height, self.stride as usize);
-        let img = match self.format {
+        match self.format {
             Xrgb8888 => Image::from_rows(w, h, s, 4, &self.map, |p| [p[2], p[1], p[0], 255]),
             Argb8888 => Image::from_rows(w, h, s, 4, &self.map, |p| [p[2], p[1], p[0], 255]),
             Xbgr8888 | Abgr8888 => Image::from_rows(w, h, s, 4, &self.map, |p| [p[0], p[1], p[2], 255]),
             f => bail!("unsupported shm format {f:?}"),
+        }
+    }
+
+    /// Copy the buffer (or the `crop` part of it, in output-logical
+    /// coordinates) out as a video frame. Upright outputs are a row copy in
+    /// the buffer's own byte order; rotated ones go through `Image`.
+    fn video_frame(
+        &self,
+        y_invert: bool,
+        transform: Option<wl_output::Transform>,
+        out: &Output,
+        crop: Option<LogicalRect>,
+    ) -> Result<VideoFrame> {
+        use wl_shm::Format::*;
+        let upright = matches!(transform, None | Some(wl_output::Transform::Normal));
+        if !upright {
+            let mut img = self.image()?;
+            if y_invert {
+                img = img.flip_vertical();
+            }
+            img = apply_transform(img, transform.unwrap());
+            let (x, y, w, h) = crop_rect(img.width, img.height, out, crop);
+            let img = if (x, y, w, h) == (0, 0, img.width, img.height) { img } else { img.crop(x, y, w, h) };
+            return Ok(VideoFrame { width: img.width, height: img.height, order: PixelOrder::Rgbx, data: img.data });
+        }
+        let order = match self.format {
+            Xrgb8888 | Argb8888 => PixelOrder::Bgrx,
+            Xbgr8888 | Abgr8888 => PixelOrder::Rgbx,
+            f => bail!("unsupported shm format {f:?}"),
         };
-        self.buffer.destroy();
-        img
+        let (x, y, w, h) = crop_rect(self.width, self.height, out, crop);
+        let (stride, row) = (self.stride as usize, w as usize * 4);
+        let mut data = Vec::with_capacity(row * h as usize);
+        for r in 0..h {
+            let sy = if y_invert { self.height - 1 - (y + r) } else { y + r } as usize;
+            let start = sy * stride + x as usize * 4;
+            data.extend_from_slice(&self.map[start..start + row]);
+        }
+        Ok(VideoFrame { width: w, height: h, order, data })
+    }
+}
+
+/// `crop` (output-logical, relative to the output) in buffer pixels of a
+/// buffer `bw` x `bh` that shows the whole output upright. Rounds like
+/// screenshot crops do and never leaves the buffer.
+fn crop_rect(bw: u32, bh: u32, out: &Output, crop: Option<LogicalRect>) -> (u32, u32, u32, u32) {
+    let Some((x, y, w, h)) = crop else { return (0, 0, bw, bh) };
+    let scale = bw as f64 / out.width.max(1) as f64;
+    let r = |v: f64| (v * scale).round().max(0.0) as u32;
+    let (x, y) = (r(x).min(bw - 1), r(y).min(bh - 1));
+    (x, y, r(w).clamp(1, bw - x), r(h).clamp(1, bh - y))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn output(w: u32, h: u32) -> Output {
+        Output { index: 0, name: "o".into(), description: String::new(), x: 0, y: 0, width: w, height: h, native: (0, 0) }
+    }
+
+    #[test]
+    fn crop_rect_scales_and_clamps() {
+        let o = output(1280, 720);
+        assert_eq!(crop_rect(2560, 1440, &o, None), (0, 0, 2560, 1440));
+        assert_eq!(crop_rect(2560, 1440, &o, Some((100.0, 50.0, 300.0, 200.0))), (200, 100, 600, 400));
+        // 1.5x fractional scale rounds like the screenshot crop
+        assert_eq!(crop_rect(1920, 1080, &o, Some((101.0, 0.0, 33.0, 33.0))), (152, 0, 50, 50));
+        // never past the buffer's edge
+        assert_eq!(crop_rect(1280, 720, &o, Some((1200.0, 700.0, 500.0, 500.0))), (1200, 700, 80, 20));
     }
 }
 

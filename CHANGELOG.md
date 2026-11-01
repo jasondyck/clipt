@@ -6,6 +6,14 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `clipt record`: record an output (`screen [NAME]`) or a region (`-g`) to
+  MP4, stopped with `clipt record --stop` or Ctrl-C. Encodes with ffmpeg on
+  the GPU where possible (VA-API, NVENC), libx264 otherwise; frames are only
+  captured and encoded when the screen changes. wlroots-family compositors
+  only for now. New config keys: `video_dir`, `video_filename`, `record_fps`,
+  `record_codec`, `max_duration`.
+
 ## [0.1.1] - 2026-10-31
 
 ### Fixed
