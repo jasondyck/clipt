@@ -1,0 +1,270 @@
+.\" clipt(1) -- screenshot and screen recording tool for Wayland and X11.
+.TH CLIPT 1 "2026-10-31" "clipt" "User Commands"
+.SH NAME
+clipt \- screenshot and screen recording tool for Wayland and X11
+.SH SYNOPSIS
+.na
+.B clipt
+[\fIoptions\fR] [\fIcommand\fR] [\fIargument\fR ...]
+.br
+.B clipt record
+[\fBscreen\fR [\fIname\fR] | \fBwindow\fR [\fIapp\fR] |
+\fB\-g\fR \fIgeometry\fR | \fB\-\-stop\fR | \fB\-\-pause\fR |
+\fB\-\-resume\fR | \fB\-\-toggle\-pause\fR]
+.ad
+.SH DESCRIPTION
+\fBclipt\fR freezes the screen, lets you drag a region, annotate it, and
+then copy or save the result.
+It is one small binary with no GUI toolkit: the overlay is drawn by clipt
+itself, and captures use the compositor's own protocols.
+.PP
+On Wayland the capture backend is chosen automatically: ext-image-copy-capture
+or wlr-screencopy on wlroots compositors, KWin's ScreenShot2 interface on KDE
+Plasma, and xdg-desktop-portal on GNOME.
+On X11 it uses GetImage (RandR/Xinerama monitors) and supports INCR, so
+large images paste into any application.
+Every output gets its own overlay at its native resolution, so mixed
+resolutions, fractional scaling and rotated monitors work.
+.PP
+\fBclipt record\fR records an output, a region or a window to MP4.
+On wlroots compositors it uses the capture protocols directly; on KDE Plasma
+and GNOME it goes through KWin's and Mutter's screencast interfaces over
+PipeWire.
+Recording needs \fBffmpeg\fR; X11 recording is planned but not supported yet.
+.PP
+After copying, clipt forks into the background to serve the clipboard until
+something else is copied, because a Wayland clipboard is owned by a live
+client.
+.SH COMMANDS
+.TP
+.B gui
+Select a region and annotate it.
+This is the default when no \fIcommand\fR is given.
+The overlay opens on every output; drag a selection on any of them.
+.TP
+.B full
+Capture the whole desktop, stitching every output into one image.
+.TP
+\fBscreen\fR [\fIname\fR]
+Capture one output, named as shown by \fBlist\fR; the first output is used
+when \fIname\fR is omitted.
+.TP
+.B list
+Print each output's name, size, position and description, then the capture
+backends available on this desktop.
+.TP
+.B record
+Open the selection overlay in record mode: drag an area, or click a window
+or screen, then press \fBEnter\fR to start.
+A red frame outside the recorded area marks it; the frame is not in the
+video.
+The recording is saved in \fBvideo_dir\fR by default.
+\fBrecord region\fR is accepted as a synonym for plain \fBrecord\fR.
+.TP
+\fBrecord screen\fR [\fIname\fR]
+Record one output without opening the overlay, named as shown by
+\fBlist\fR; the first output is used when \fIname\fR is omitted.
+.TP
+\fBrecord window\fR [\fIapp\fR]
+Record the topmost window whose app ID is \fIapp\fR.
+With no \fIapp\fR, the overlay opens so that a window can be picked; a
+picked window is followed as it moves and resizes.
+.TP
+\fBrecord\fR \fB\-g\fR \fIgeometry\fR
+Record the region \fIgeometry\fR, in slurp's "X,Y WxH" format and logical
+pixels, without opening the overlay.
+The region must lie within one output.
+.TP
+\fBrecord\fR \fB\-\-stop\fR
+Stop the running recording and wait for the file to be finished.
+.TP
+\fBrecord\fR \fB\-\-pause\fR
+Pause a running recording.
+Paused time is left out of the video and the frame turns amber.
+.TP
+\fBrecord\fR \fB\-\-resume\fR
+Resume a paused recording.
+.TP
+\fBrecord\fR \fB\-\-toggle\-pause\fR
+Pause a running recording, or resume it if it is already paused.
+.TP
+.B tray
+Sit in the system tray (StatusNotifierItem).
+While idle, left-click captures a region and middle-click copies the whole
+desktop; while recording, clicking the icon stops the recording.
+The right-click menu has a 3-second-delay capture, recording controls, the
+screenshots and recordings folders, an update check, and Quit.
+Each capture runs as a fresh clipt process.
+.TP
+\fBupdate\fR [\fB\-\-check\fR]
+Check GitHub for a newer release and, for installs that clipt manages,
+download it and replace the binary.
+Packaged installs are pointed at their package manager.
+With \fB\-\-check\fR, only report whether an update is available.
+Needs \fBcurl\fR.
+.SH OPTIONS
+Options may appear before or after the command.
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fIPATH\fR
+Write the PNG to \fIPATH\fR instead of the save directory; \fB\-\fR writes
+it to standard output.
+With \fBrecord\fR, \fIPATH\fR is the video file and must end in \fB.mp4\fR,
+\fB.mkv\fR or \fB.mov\fR.
+.TP
+\fB\-c\fR, \fB\-\-clipboard\fR
+Copy the capture to the clipboard.
+Applies to \fBfull\fR and \fBscreen\fR.
+.TP
+\fB\-g\fR, \fB\-\-geometry\fR \fIGEOM\fR
+Crop a \fBfull\fR or \fBscreen\fR capture to \fIGEOM\fR in logical pixels,
+in slurp's "X,Y WxH" format.
+With \fBrecord\fR, records that region.
+.TP
+\fB\-d\fR, \fB\-\-delay\fR \fISECS\fR
+Wait \fISECS\fR seconds before capturing or recording.
+Fractional seconds are accepted.
+.TP
+\fB\-b\fR, \fB\-\-backend\fR \fINAME\fR
+Force a capture backend: \fBext\fR, \fBwlr\fR, \fBkwin\fR, \fBportal\fR or
+\fBx11\fR.
+.TP
+\fB\-\-cursor\fR
+Include the mouse pointer in the capture, where the backend supports it.
+.TP
+\fB\-\-fps\fR \fIN\fR
+Recording frame rate, 1 to 240 (default 30); overrides \fBrecord_fps\fR.
+.TP
+\fB\-\-stop\fR, \fB\-\-pause\fR, \fB\-\-resume\fR, \fB\-\-toggle\-pause\fR
+Control a running recording; see \fBrecord\fR under COMMANDS.
+.TP
+\fB\-\-check\fR
+With \fBupdate\fR, only check for a newer release; do not install it.
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Show help and exit.
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Show the version and exit.
+.SH EDITOR KEYS
+.TP
+.B drag
+Select a region.
+A click selects the highlighted window or the whole screen; drag the
+handles to resize the selection and drag inside it to move it.
+The window or screen under the pointer is highlighted before you click;
+\fBTab\fR switches between a window and its screen.
+.TP
+\fBV\fR, \fBR\fR, \fBE\fR, \fBA\fR, \fBL\fR, \fBP\fR, \fBM\fR, \fBT\fR, \fBX\fR, \fBN\fR
+Select, rectangle, ellipse, arrow, line, pen, highlighter, text, pixelate
+and numbered counter.
+.TP
+\fB1\fR\-\fB8\fR
+Colour: red, orange, yellow, green, blue, purple, white, black.
+.TP
+\fBscroll\fR, \fB[\fR, \fB]\fR
+Stroke width.
+.TP
+.B Shift
+Constrain to squares and 45\(de lines.
+.TP
+.B arrows
+Nudge the selection; hold \fBShift\fR to resize it.
+.TP
+\fBEnter\fR, \fBCtrl+C\fR, double-click
+Copy the annotated image and exit.
+.TP
+.B Ctrl+S
+Save to \fBsave_dir\fR, and copy too when \fBcopy_on_save\fR is set.
+.TP
+\fBCtrl+Z\fR, \fBCtrl+Shift+Z\fR
+Undo and redo.
+.TP
+\fBEsc\fR, right-click
+Cancel with \fBEsc\fR; right-click backs out a step.
+.SH CONFIGURATION
+Settings live in \fIconfig.toml\fR under \fI$XDG_CONFIG_HOME/clipt\fR
+(\fI~/.config/clipt\fR when \fBXDG_CONFIG_HOME\fR is unset).
+The file is TOML and every key is optional; unknown keys are an error.
+A leading \fB~/\fR in a path is expanded to the home directory.
+.PP
+The following keys are understood.
+.TP
+\fBsave_dir\fR = \fI"~/Pictures/Screenshots"\fR
+Where \fBCtrl+S\fR, \fBfull\fR and \fBscreen\fR save screenshots.
+.TP
+\fBfilename\fR = \fI"Screenshot_%Y-%m-%d_%H-%M-%S"\fR
+strftime pattern for new screenshots, without the extension.
+.TP
+\fBcolor\fR = \fI1\fR
+Starting colour, 1 to 8: red, orange, yellow, green, blue, purple, white,
+black.
+.TP
+\fBwidth\fR = \fI4\fR
+Starting stroke width in logical pixels.
+.TP
+\fBcopy_on_save\fR = \fItrue\fR
+Saving from the editor also copies the image to the clipboard.
+.TP
+\fBnotify\fR = \fItrue\fR
+Show a desktop notification after saving or copying.
+.TP
+\fBbackend\fR = \fI"auto"\fR
+Capture backend: \fBauto\fR, \fBext\fR, \fBwlr\fR, \fBkwin\fR,
+\fBportal\fR or \fBx11\fR.
+.TP
+\fBcursor\fR = \fIfalse\fR
+Include the mouse pointer in captures, where the backend supports it.
+.TP
+.B font
+Path to a TTF or OTF file for editor text.
+When unset (the default), fontconfig's sans-serif font is used.
+.TP
+\fBcheck_updates\fR = \fIfalse\fR
+\fBclipt tray\fR checks GitHub once a day for a newer release.
+.TP
+\fBvideo_dir\fR = \fI"~/Videos/Screencasts"\fR
+Where recordings are saved.
+.TP
+\fBvideo_filename\fR = \fI"Recording_%Y-%m-%d_%H-%M-%S"\fR
+strftime pattern for new recordings, without the extension.
+.TP
+\fBrecord_fps\fR = \fI30\fR
+Recording frame rate; \fB\-\-fps\fR overrides it.
+.TP
+\fBrecord_codec\fR = \fI"auto"\fR
+Encoder: \fBauto\fR, \fBvaapi\fR, \fBnvenc\fR or \fBx264\fR.
+\fBauto\fR uses the first one that works.
+.TP
+\fBmax_duration\fR = \fI3600\fR
+A recording stops by itself after this many seconds; 0 means no limit.
+.SH ENVIRONMENT
+.TP
+.B CLIPT_DEBUG
+When set (for example \fBCLIPT_DEBUG=1\fR), clipt prints startup timings
+and extra diagnostics to standard error.
+Bug reports are most useful with this output.
+.SH FILES
+.TP
+\fI$XDG_CONFIG_HOME/clipt/config.toml\fR
+Configuration file.
+Defaults to \fI~/.config/clipt/config.toml\fR when \fBXDG_CONFIG_HOME\fR is
+unset.
+.TP
+\fI~/Pictures/Screenshots\fR
+Default \fBsave_dir\fR for screenshots.
+.TP
+\fI~/Videos/Screencasts\fR
+Default \fBvideo_dir\fR for recordings.
+.SH EXIT STATUS
+.TP
+.B 0
+Success, including a cancelled selection and \fB\-\-help\fR or
+\fB\-\-version\fR.
+.TP
+.B 1
+An error occurred; clipt prints a message to standard error.
+.SH SEE ALSO
+.BR ffmpeg (1),
+.BR slurp (1)
+.PP
+\fIhttps://github.com/jasondyck/clipt\fR
