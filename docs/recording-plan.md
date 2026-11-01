@@ -1,6 +1,6 @@
 # Video recording: implementation plan
 
-Status: proposed, 2026-10-31. Nothing here is built yet.
+Status: proposed, 2026-10-31. Phase 0 (spike) done; nothing else built yet.
 
 ## Goal
 
@@ -39,10 +39,16 @@ and handle resizes smoothly instead of jumping. No audio in the first version.
   ffmpeg side a plain `-f rawvideo` pipe with no timestamps to manage.
 - **Encoder** (`src/record/encode.rs`): builds the ffmpeg command line,
   probes it once at start and falls back step by step:
-  1. `h264_vaapi`: `-vaapi_device /dev/dri/renderD128 -vf hwupload,scale_vaapi=format=nv12`
-     (BGRA → NV12 on the GPU, not in swscale).
-  2. `libx264 -preset veryfast -crf 23 -pix_fmt yuv420p`.
-  3. No ffmpeg: a clear error that names the package to install.
+  1. `h264_vaapi` (AMD, Intel): `-vaapi_device /dev/dri/renderD128 -vf
+     hwupload,scale_vaapi=format=nv12` (BGRA → NV12 on the GPU; doing it in
+     swscale costs 3.5× the CPU, see spike results).
+  2. `h264_nvenc` (NVIDIA proprietary driver, which has no VA-API encode):
+     takes BGRA directly and converts on the GPU.
+  3. `libx264 -preset veryfast -crf 23 -pix_fmt yuv420p`; at 4K without a GPU
+     encoder, drop to `ultrafast` or 24 fps rather than fall behind.
+  4. No ffmpeg: a clear error that names the package to install.
+  Each step is probed with a one-frame test encode, so the choice is
+  automatic; `record_codec` overrides it.
   Output `-movflags +faststart`. Canvas sizes are rounded up to even numbers
   (H.264 needs them).
 - **Control** (`src/record/mod.rs`): one recording at a time. A pidfile in
@@ -79,9 +85,11 @@ handed to the recorder.
   flicker.
 - The window is centred; spare canvas is a neutral background
   (`record_background`, default dark grey).
-- Scaling uses tiny-skia's bilinear pattern draw (already a dependency). It
-  only happens while the window doesn't fit at 1:1; the common case is a
-  plain copy.
+- Scaling is a purpose-built separable bilinear downscale (fixed point,
+  rows split across threads), not tiny-skia: tiny-skia's general pipeline
+  took 64 ms per 4K frame, the dedicated one 9 ms on 4 threads (spike
+  results). It only runs while the window doesn't fit at 1:1; the common
+  case is a plain row copy (3.6 ms at 4K).
 
 Later (not in this plan): a "studio" mode that records at native size plus
 the window rectangle per frame, then renders the final framing on stop, so
@@ -111,11 +119,10 @@ nothing is ever cut off.
 
 Each phase ends with something usable, tests in CI, and a PR.
 
-**0. Spike (1–2 days).** Measure before building: ext-image-copy-capture
-session loop at 4K on headless Sway (fps, CPU), throughput of BGRA frames
-through a pipe into `h264_vaapi` and `libx264`, and the cost of one
-tiny-skia 4K scaled draw. If a 4K pipe can't keep 30 fps, pass frames through
-a memfd ring plus `-f rawvideo -i /proc/self/fd/N` instead.
+**0. Spike (done 2026-10-31).** Results below. The pipe is fast enough, so
+no memfd ring; the camera needs its own scaler. Capture-loop rates were not
+measured: headless Sway renders in software, so its numbers wouldn't say
+anything about real desktops. Phase 1 measures them on real compositors.
 
 **1. Pipeline + screen/region on wlroots (about 1 week).** `src/record/`
 with source trait, ext and wlr sources, pacer, encoder with fallback,
@@ -146,6 +153,40 @@ manifest (ffmpeg from the `org.freedesktop.Platform.ffmpeg-full`
 extension), and cross-target CI with `--no-default-features` where PipeWire
 can't build.
 
+## Spike results (2026-10-31)
+
+Ryzen 7 3800X (8 cores), Radeon RX 9070 XT (radeonsi VA-API), ffmpeg 9.0.2.
+Raw BGRA frames written to ffmpeg's stdin as fast as it takes them, 10 s of
+30 fps input. "Real" rows use `docs/screenshot.png` scaled to 4K and
+scrolling; synthetic rows compress unrealistically well.
+
+| Test | Throughput | CPU |
+|---|---|---|
+| 4K pipe only (`-f null`) | 70 fps | ffmpeg 78 %, writer 51 % of a core |
+| 4K `h264_vaapi`, NV12 conversion on GPU | 69 fps (pipe-bound); 76 fps real | ffmpeg 73 % |
+| 4K `h264_vaapi`, NV12 conversion in swscale | 62 fps | ffmpeg 266 % |
+| 4K `av1_vaapi`, GPU conversion | 68 fps | ffmpeg 72 % |
+| 4K `libx264 veryfast`, real | 42 fps | ~5 cores |
+| 4K `libx264 ultrafast`, real | 60 fps | ~4 cores, 4× the file size |
+| 1080p `h264_vaapi` / `libx264 veryfast` | 286 / 216 fps | 72 % / ~6 cores |
+
+So at 4K 30 fps with VA-API, recording costs about half of one core for the
+pipe plus encoder. Without a GPU encoder, 4K costs several cores and 1080p
+is comfortable.
+
+Camera scaling, per frame, single process:
+
+| Operation | Time |
+|---|---|
+| 4K plain row copy | 3.6 ms |
+| tiny-skia bilinear draw, 4K → 4K canvas at 0.8 | 64 ms |
+| tiny-skia, 2560×1440 → 1920×1080 | 24.5 ms |
+| Dedicated separable bilinear, 4K → 3072×1728, 1 / 4 threads | 34 / 9.3 ms |
+| Dedicated, 2560×1440 → 1920×1080, 1 / 4 threads | 13.3 / 3.8 ms |
+
+The dedicated scaler still recomputes each source row twice; caching the
+previous row should roughly halve it.
+
 ## Risks
 
 - **4K CPU cost**: BGRA through a pipe is ~1 GB/s at 30 fps. Mitigated by the
@@ -165,5 +206,5 @@ can't build.
 ## Not in this plan
 
 Audio, webcam overlay, pause/resume, the studio mode, editing or trimming,
-hardware encoders other than VA-API (NVENC), and recording that keeps
+QSV/AMF-specific encoders (VA-API covers Intel and AMD), and recording that keeps
 running after clipt's process exits.
