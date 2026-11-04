@@ -207,6 +207,24 @@ act "key Escape"; sleep 0.5
 check "clipt exited on Esc" '! pgrep -f "^/clipt gui" >/dev/null'
 check "clipboard still holds the old text" '[ "$(wl-paste -n 2>/dev/null)" = marker ]'
 
+echo "-- interactive: an open xdg_popup holding a grab (like a <select>)"
+/testwin --popup c020c0 400 300 >/tmp/popup.out & tw=$!; sleep 1
+swaymsg -q '[app_id="clipt-testwin"] floating enable, move position 100 100'; sleep 0.5
+act "move 300 250" click
+for _ in $(seq 20); do grep -q "popup open" /tmp/popup.out && break; sleep 0.1; done
+check "the test popup opened" 'grep -q "popup open" /tmp/popup.out'
+grim -o HEADLESS-1 /tmp/popup-before.png
+p=$(px /tmp/popup-before.png "$(awk "BEGIN{print int(250*$scale)\",\"int(250*$scale)}")")
+check "it's on screen ($p)" 'echo "$p" | grep -Eq "srgba?\(([1-3][0-9]|4[0-5]),(1[89][0-9]|20[0-5]),(1[89][0-9]|20[0-5])"'
+gui
+act "move 600 400" click; sleep 0.3
+act "key Return"; sleep 0.8
+wl-paste -t image/png > /tmp/popup-sel.png 2>/dev/null
+d=$(magick compare -metric AE /tmp/popup-sel.png /tmp/popup-before.png null: 2>&1 | cut -d" " -f1)
+check "the overlay opened over it and copied HEADLESS-1 with the popup (AE=$d; $(tail -1 /tmp/popup.out))" 'awk "BEGIN{exit !(\"$d\" != \"\" && \"$d\"+0 < 100)}"'
+kill $tw 2>/dev/null; wait $tw 2>/dev/null
+gerr
+
 echo "-- interactive: click selects whole output"
 gui
 act "move 300 200" click; sleep 0.3

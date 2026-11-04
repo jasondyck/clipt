@@ -38,6 +38,11 @@ All notable changes are listed here. The format follows
 - The Copy button's tooltip shows Ctrl+C rather than Enter (both still copy).
 
 ### Fixed
+- X11: the editor opens while another program holds the keyboard and
+  pointer, such as an open browser `<select>` or menu, instead of giving up
+  with "couldn't grab the keyboard". clipt presses Escape to close the popup,
+  which is already in the screenshot. Escape goes to whatever holds the grab,
+  so a program that uses it for something else will see it too.
 - Recordings of a busy screen came out at about 27 fps rather than 30: the
   time each frame took to hand to ffmpeg was added to every frame interval.
 - `--gif` was ignored for a recording started from the screenshot overlay's

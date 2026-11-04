@@ -158,6 +158,23 @@ drag 10 10 200 200; key Escape; sleep 0.5
 check "exited" '! pgrep -f "^/clipt gui" >/dev/null'
 check "clipboard untouched" '[ "$(xclip -selection clipboard -o 2>/dev/null)" = marker ]'
 
+echo "-- interactive: an open popup holding the grab (like a <select>) is closed with Escape"
+popup() { /x11grab "$@" >/tmp/grab.out & gp=$!; for _ in $(seq 50); do grep -q grabbed /tmp/grab.out && break; sleep 0.1; done; }
+popup
+gui
+check "the popup got Escape and closed" '! kill -0 $gp 2>/dev/null'
+drag 550 250 850 500; key Return; sleep 0.8
+p=$(paste_png | magick - -format "%[pixel:p{150,125}]" info: 2>/dev/null)
+check "the capture still shows the popup ($p)" 'echo "$p" | grep -Eq "srgba?\(32,192,192"'
+gerr
+
+echo "-- interactive: a grab that ignores Escape still fails with a message"
+popup --ignore-escape
+/clipt gui 2>/tmp/gui.err; rc=$?
+check "the popup kept its grab" 'kill -0 $gp 2>/dev/null'
+kill $gp 2>/dev/null; wait $gp 2>/dev/null
+check "clipt exits 1 (rc=$rc) and says why" '[ $rc = 1 ] && grep -q "another program holds it" /tmp/gui.err'
+
 echo "-- interactive: text, undo, double-click"
 gui
 drag 100 100 500 400; key t; xdotool mousemove 150 150 click 1; sleep 0.2
