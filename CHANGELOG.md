@@ -6,6 +6,8 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-04
+
 ### Added
 - `clipt config` lists the settings with their values;
   `clipt config KEY` shows one and `clipt config KEY VALUE` sets it (for
