@@ -69,5 +69,82 @@ check "a screenshot tells the tray, which shows a notification" 'grep -q "notifi
 # Quit, from the menu: the window's close does the same.
 kill $tp; wait $tp 2>/dev/null
 
+if [ -f /ffmpeg.exe ]; then
+  echo "-- recording (ffmpeg.exe beside clipt.exe)"
+  # Trying each GPU encoder costs Wine seconds apiece, and there's no GPU.
+  $C config record_codec x264 >/dev/null
+  R="timeout 180 wine /clipt.exe"
+  started() { for _ in $(seq 900); do [ -s "$1" ] && return 0; sleep 0.1; done; return 1; }
+  dims() { ffprobe -v error -select_streams v -show_entries stream=width,height -of csv=p=0:s=x "$1" 2>/dev/null; }
+  secs() { ffprobe -v error -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null; }
+  CLIPT_DEBUG=1 $R record screen -o 'Z:\tmp\out\rec.mp4' 2>/tmp/rec.err & p=$!
+  started /tmp/out/rec.mp4; sleep 2
+  $R record --pause; pr=$?; sleep 3; $R record --resume; rr=$?; sleep 2
+  $R record --stop; sr=$?; wait $p; rc=$?
+  check "record screen, --pause, --resume, --stop (rc $pr $rr $sr $rc)" '[ "$pr$rr$sr$rc" = 0000 ]'
+  check "a 1600x1000 MP4 ($(dims /tmp/out/rec.mp4))" '[ "$(dims /tmp/out/rec.mp4)" = 1600x1000 ]'
+  # The writer's debug line: "recorded A s of B s".
+  gap=$(sed -n 's/.*recorded \([0-9.]*\) s of \([0-9.]*\) s.*/\2 \1/p' /tmp/rec.err | awk '{printf "%.1f", $1 - $2}')
+  check "the pause is left out (wall minus video: ${gap:-?} s)" "awk 'BEGIN{exit !($gap > 2.5 && $gap < 5)}'"
+  $R record -g "10,20 301x200" -o 'Z:\tmp\out\g.mp4' & p=$!
+  started /tmp/out/g.mp4; sleep 1; $R record --stop; wait $p
+  check "record -g: padded to even ($(dims /tmp/out/g.mp4))" '[ "$(dims /tmp/out/g.mp4)" = 302x200 ]'
+  $R record window notepad -o 'Z:\tmp\out\w.mp4' & p=$!
+  started /tmp/out/w.mp4; xdotool search --name Notepad | head -1 | xargs -I{} xdotool windowmove {} 300 200; sleep 2
+  $R record --stop; wait $p
+  check "record window notepad ($(dims /tmp/out/w.mp4))" '[ "$(dims /tmp/out/w.mp4)" = 950x712 ]'
+  $R record -o 'Z:\tmp\out\o.mp4' & p=$!; sleep 6
+  drag 1000 500 1400 800; xdotool key Return
+  started /tmp/out/o.mp4; sleep 1
+  out=$($R record screen 2>&1); rc=$?
+  check "a second recording is refused (rc=$rc: ${out##*: })" '[ $rc != 0 ] && echo "$out" | grep -q "already recording"'
+  $R record --stop; wait $p
+  check "the overlay's selection ($(dims /tmp/out/o.mp4))" '[ "$(dims /tmp/out/o.mp4)" = 400x300 ]'
+  $R gui -o 'Z:\tmp\out\s.mp4' & p=$!; sleep 6
+  drag 1000 500 1300 700; xdotool key ctrl+r; sleep 0.5; xdotool key Return
+  started /tmp/out/s.mp4; sleep 1; $R record --stop; wait $p
+  check "Ctrl+R in the screenshot overlay records ($(dims /tmp/out/s.mp4))" '[ "$(dims /tmp/out/s.mp4)" = 300x200 ]'
+  $R record -g "0,0 200x100" --gif -o 'Z:\tmp\out\r.gif' & p=$!
+  started '/tmp/out/.r.recording.mp4'; sleep 1; $R record --stop; wait $p
+  check "--gif makes a GIF ($(size "/tmp/out/r.gif[0]"))" '[ "$(size "/tmp/out/r.gif[0]")" = 200x100 ]'
+  # The tray follows a recording it didn't start, and hears when it's saved.
+  CLIPT_DEBUG=1 $R tray 2>/tmp/tray2.err & tp=$!; sleep 3
+  $R record -g "0,0 200x100" -o 'Z:\tmp\out\t.mp4' & p=$!
+  started /tmp/out/t.mp4
+  $R record --pause; sleep 2; $R record --stop; wait $p; sleep 2
+  check "the tray's icon shows recording, then paused, then idle" \
+    'sed -n "s/.*recording state: //p" /tmp/tray2.err | tr -d "\r" | tr "\n" " " | grep -q "recording paused idle"'
+  check "and it shows \"Recording saved\"" 'grep -q "notification: Recording saved" /tmp/tray2.err'
+  kill $tp; wait $tp 2>/dev/null
+
+  echo "-- recording: sound (WASAPI, which Wine serves from PulseAudio)"
+  . /audio.sh
+  sound_server
+  out=$($R list sound 2>&1)
+  check "list sound: the null sinks, the default marked ($(echo "$out" | grep -c .) devices)" 'echo "$out" | grep -q "(system)"'
+  tone_on; sleep 0.5
+  CLIPT_DEBUG=1 $R record -g "0,0 320x240" --audio -o 'Z:\tmp\out\snd.mp4' 2>/tmp/snd.err & p=$!
+  started /tmp/out/snd.mp4; sleep 3; $R record --stop; wait $p; rc=$?
+  tone_off
+  check "--audio records the computer's sound (rc=$rc, $(a_codec /tmp/out/snd.mp4))" '[ $rc = 0 ] && [ "$(a_codec /tmp/out/snd.mp4)" = aac ]'
+  m=$(band_db /tmp/out/snd.mp4 0 1000)
+  check "the 1 kHz tone is in it (${m:-?} dB)" 'awk "BEGIN{exit !(${m:--99} > -40)}"'
+  va=$(s_dur /tmp/out/snd.mp4 v) aa=$(s_dur /tmp/out/snd.mp4 a)
+  check "sound and video last as long ($aa s, $va s)" '[ -n "$aa" ] && awk "BEGIN{d=$aa-$va; exit !(d < 0.3 && d > -0.3)}"'
+  # Silence: the loopback delivers nothing, and clipt fills the gap.
+  $R record -g "0,0 320x240" --audio -o 'Z:\tmp\out\quiet.mp4' & p=$!
+  started /tmp/out/quiet.mp4; sleep 2; tone_on; sleep 2; tone_off; $R record --stop; wait $p
+  va=$(s_dur /tmp/out/quiet.mp4 v) aa=$(s_dur /tmp/out/quiet.mp4 a)
+  check "silence is filled: sound still lasts as long ($aa s, $va s)" '[ -n "$aa" ] && awk "BEGIN{d=$aa-$va; exit !(d < 0.3 && d > -0.3)}"'
+  mic_tone_on; sleep 0.5
+  $R record -g "0,0 320x240" --audio=mic -o 'Z:\tmp\out\mic.mp4' & p=$!
+  started /tmp/out/mic.mp4; sleep 3; $R record --stop; wait $p
+  mic_tone_off
+  m=$(band_db /tmp/out/mic.mp4 0 440)
+  check "--audio=mic records the microphone's 440 Hz (${m:-?} dB)" 'awk "BEGIN{exit !(${m:--99} > -40)}"'
+  out=$($R record -g "0,0 320x240" --audio=nosuch 2>&1)
+  check "an unknown device is refused (${out##*: })" 'echo "$out" | grep -q "no sound device .nosuch"'
+fi
+
 echo "== $pass passed, $fail failed"
 [ $fail = 0 ]
