@@ -33,6 +33,8 @@ All notable changes are listed here. The format follows
 - The Copy button's tooltip shows Ctrl+C rather than Enter (both still copy).
 
 ### Fixed
+- Recordings of a busy screen came out at about 27 fps rather than 30: the
+  time each frame took to hand to ffmpeg was added to every frame interval.
 - `--gif` was ignored for a recording started from the screenshot overlay's
   Video mode.
 - Turning the sound or microphone on or off with S or M didn't redraw their
