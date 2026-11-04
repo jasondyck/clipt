@@ -193,6 +193,22 @@ delay, recording, the folders, ticks for *Record as GIF*, *Copy when saving*
 and *Notifications*, *Settings…* (opens the config file) and Quit. Each
 capture runs as a fresh `clipt` process, so the tray itself stays idle.
 
+**Full web pages (early):** clipt's extension for Chrome, Edge, Chromium
+and Brave captures a whole page, not just what's on screen, and hands it to
+clipt to copy or save:
+
+```
+clipt browser-extension  # register clipt with your browsers; prints the folder to load
+```
+
+Then open `chrome://extensions` (`edge://extensions`), turn on Developer
+mode, click *Load unpacked* and choose that folder. Click clipt's toolbar
+icon, or press **Alt+Shift+P** to copy. Chrome shows an "is being debugged"
+bar while it captures. Pages that scroll inside a panel rather than the
+window (Gmail, many web apps) give just what's visible, very tall pages
+are scaled to fit 16384 pixels, and browsers from Flathub can't reach clipt
+outside their sandbox.
+
 **Updates:** `clipt update` (or *Check for updates…* in the tray menu)
 asks GitHub for the latest release. When clipt was installed with
 `install.sh`, it downloads the tarball for your architecture, checks its

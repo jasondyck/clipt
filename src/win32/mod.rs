@@ -49,9 +49,22 @@ e.g. \"ctrl+shift+s\"; \"\" turns it off. Notifications need the tray.
 Screenshots go to Pictures\\Screenshots, where Windows keeps its own.
 ";
 
+/// The browser extension's native messaging host (see `crate::browser`).
+/// Windows keeps the clipboard's data itself, so nothing lingers.
+pub fn browser_host(cfg: &Config) -> Result<()> {
+    let copy = |png: Vec<u8>, ready: &mut dyn FnMut()| -> Result<()> {
+        let img = crate::image::Image::decode_png(&png)?;
+        clipboard::copy(&img, &png)?;
+        ready();
+        Ok(())
+    };
+    crate::browser::serve(cfg, copy, |_, _, _| {})
+}
+
 pub fn run(args: Args, cfg: Config) -> Result<()> {
     match args.cmd.as_str() {
         "gui" | "full" | "screen" | "list" | "tray" => {}
+        "browser-extension" => return crate::browser::install(),
         "record" | "update" | "gnome-extension" => bail!("`clipt {}` isn't available on Windows yet", args.cmd),
         other => bail!("unknown command '{other}' (try --help)"),
     }

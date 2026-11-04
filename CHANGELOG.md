@@ -28,6 +28,10 @@ All notable changes are listed here. The format follows
 - After selecting, the hint bar at the top says how to copy, save and
   start again, until you draw something; it moves to the bottom when it
   would cover the selection.
+- Full-page screenshots in Chrome, Edge, Chromium and Brave (early): a
+  browser extension captures the whole page and clipt copies or saves it.
+  `clipt browser-extension` registers clipt with the browsers and writes
+  the extension out to load unpacked.
 
 ### Changed
 - The Copy button's tooltip shows Ctrl+C rather than Enter (both still copy).

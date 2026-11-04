@@ -19,6 +19,7 @@ _clipt() {
     'tray:sit in the system tray'
     'update:update to the latest release'
     'gnome-extension:install the GNOME Shell extension for window highlighting'
+    'browser-extension:set up the Chrome/Edge extension for full-page screenshots'
   )
   common=(
     '(-o --output)'{-o,--output}'[write the PNG to PATH]:path:_files'

@@ -50,6 +50,17 @@ clipt needs the Screen Recording permission (System Settings > Privacy &
 Security) for the app it runs from.
 ";
 
+/// The browser extension's native messaging host (see `crate::browser`).
+/// The pasteboard keeps its data itself, so nothing lingers.
+pub fn browser_host(cfg: &Config) -> Result<()> {
+    let copy = |png: Vec<u8>, ready: &mut dyn FnMut()| -> Result<()> {
+        clipboard::copy_png(&png)?;
+        ready();
+        Ok(())
+    };
+    crate::browser::serve(cfg, copy, |_, _, _| {})
+}
+
 pub fn run(args: Args, cfg: Config) -> Result<()> {
     // Opened as clipt.app (Finder, Spotlight, Login Items), with nothing on
     // the command line: the menu bar icon.
@@ -59,6 +70,7 @@ pub fn run(args: Args, cfg: Config) -> Result<()> {
     }
     match args.cmd.as_str() {
         "gui" | "full" | "screen" | "list" => {}
+        "browser-extension" => return crate::browser::install(),
         "record" | "update" | "gnome-extension" => bail!("`clipt {}` isn't available on macOS yet", args.cmd),
         other => bail!("unknown command '{other}' (try --help)"),
     }

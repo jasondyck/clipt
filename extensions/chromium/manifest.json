@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "clipt: full-page screenshots",
+  "short_name": "clipt",
+  "version": "0.1.0",
+  "description": "Capture a whole web page, not just what's on screen, and copy or save it with clipt.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3Lnn2KYyPekYYAxA0Ln+KySv4BxJTRcOrbVB2rFtlC2kgi/U0t4LObDmEq/mm0eD/fosNtacLj9+npfOyezjHJgzXeJ8NWYkIxu7N9DZlb2qpGvKPFS9JJuN3o4dLvhLU5CP8tyZL/gxaKqnWw/UVRSQLTjZ06uzeHQ6aGKadgBvU9Vm4Qp/85mh13gGEFjjeyAZOuRRis2q7NvfOi5PqpQr8K3tlggOYXlS6WYQiyR1hdIZnySxj10jwuOUKq+oAgYr7oCDzkzdfjuLNiDRnECHayCYfGPoAzzMH7xsiKOQJTXQrCBfNATpUEeFnLoXZVoqMOSiL/qqkW4QeOIpSQIDAQAB",
+  "minimum_chrome_version": "116",
+  "permissions": ["activeTab", "debugger", "nativeMessaging"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_title": "clipt: capture the full page",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png" }
+  },
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+  "commands": {
+    "copy-full-page": {
+      "suggested_key": { "default": "Alt+Shift+P" },
+      "description": "Copy the full page"
+    },
+    "save-full-page": {
+      "description": "Save the full page"
+    }
+  }
+}

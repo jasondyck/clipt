@@ -4,6 +4,7 @@
 // and Windows can't do yet, recording among it.
 #![cfg_attr(not(wayland_x11), allow(dead_code))]
 
+mod browser;
 mod capture;
 #[cfg(wayland_x11)]
 mod clipboard;
@@ -73,6 +74,8 @@ USAGE:
                           e.g. clipt config record_format gif
     clipt gnome-extension Install the GNOME Shell extension that lets the
                           overlay highlight windows on GNOME
+    clipt browser-extension  Set up the Chrome/Edge extension that copies or
+                          saves a whole web page
 
 OPTIONS:
     -o, --output PATH     Write the PNG to PATH ('-' for stdout) instead of the save dir
@@ -237,7 +240,8 @@ fn config_cmd(args: &Args) -> Result<()> {
 }
 
 fn main() {
-    if let Err(e) = run() {
+    let r = if browser::started_by_browser() { browser_host() } else { run() };
+    if let Err(e) = r {
         eprintln!("clipt: {e:#}");
         std::process::exit(1);
     }
@@ -245,6 +249,41 @@ fn main() {
 
 /// Process start, for CLIPT_DEBUG timings.
 pub static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// Started by Chrome or Edge as the extension's native messaging host: copy
+/// or save the page it sends. On Wayland and X11 clipt then stays in the
+/// background to serve the paste, as after a screenshot.
+#[cfg(wayland_x11)]
+fn browser_host() -> Result<()> {
+    let cfg = Config::load()?;
+    let copy = |png: Vec<u8>, ready: &mut dyn FnMut()| -> Result<()> {
+        trim_heap();
+        let serving = || {
+            ready();
+            daemonize();
+        };
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            clipboard::copy_and_serve(png, serving)
+        } else {
+            x11::clip::copy_and_serve(png, serving)
+        }
+    };
+    browser::serve(&cfg, copy, |summary, body, path| {
+        if cfg.notify {
+            notify::send(summary, body, path);
+        }
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn browser_host() -> Result<()> {
+    macos::browser_host(&Config::load()?)
+}
+
+#[cfg(windows)]
+fn browser_host() -> Result<()> {
+    win32::browser_host(&Config::load()?)
+}
 
 #[cfg(target_os = "macos")]
 fn run() -> Result<()> {
@@ -318,6 +357,9 @@ fn run() -> Result<()> {
     }
     if args.cmd == "gnome-extension" {
         return windows::install_gnome_extension();
+    }
+    if args.cmd == "browser-extension" {
+        return browser::install();
     }
     if args.cmd == "record" && args.stop {
         return record::stop();

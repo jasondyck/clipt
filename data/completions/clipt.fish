@@ -70,6 +70,7 @@ complete -c clipt -n __fish_clipt_use_command -a record -d 'Pick an area to reco
 complete -c clipt -n __fish_clipt_use_command -a tray -d 'Sit in the system tray'
 complete -c clipt -n __fish_clipt_use_command -a update -d 'Update to the latest release'
 complete -c clipt -n __fish_clipt_use_command -a gnome-extension -d 'Install the GNOME Shell extension for window highlighting'
+complete -c clipt -n __fish_clipt_use_command -a browser-extension -d 'Set up the Chrome/Edge extension for full-page screenshots'
 
 # Record modes.
 complete -c clipt -n __fish_clipt_wants_record_mode -f -a screen -d 'Record one output (default: the first)'
