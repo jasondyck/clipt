@@ -2,15 +2,22 @@
 //! (and a black 4 px border) that redraws at whatever size the compositor
 //! configures, so tests can resize it while recording.
 //!
-//!   testwin [RRGGBB] [W H]      (default c020c0 400 300, app_id clipt-testwin)
+//!   testwin [--popup] [RRGGBB] [W H]   (default c020c0 400 300, app_id clipt-testwin)
+//!
+//! With --popup, a click in the window opens a 200x150 xdg_popup (colour
+//! 20c0c0, 50,50 into the window) holding a grab, like an open `<select>`;
+//! it prints `popup open` when shown and `popup done` when dismissed.
 
 use std::os::fd::AsFd;
 use wayland_client::{
     Connection, Dispatch, QueueHandle,
     globals::{GlobalListContents, registry_queue_init},
-    protocol::{wl_buffer, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface},
+    protocol::{wl_buffer, wl_compositor, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface},
 };
-use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+use wayland_protocols::xdg::shell::client::{xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base};
+
+/// User data telling the popup's xdg_surface from the window's.
+struct Popup;
 
 struct S {
     color: u32,
@@ -18,10 +25,16 @@ struct S {
     pending: (i32, i32),
     configured: Option<u32>,
     closed: bool,
+    click: Option<u32>,
+    popup_configured: Option<u32>,
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
+    let popup = args.get(1).is_some_and(|a| a == "--popup");
+    if popup {
+        args.remove(1);
+    }
     let color = args.get(1).and_then(|c| u32::from_str_radix(c, 16).ok()).unwrap_or(0xc020c0);
     let w = args.get(2).and_then(|v| v.parse().ok()).unwrap_or(400);
     let h = args.get(3).and_then(|v| v.parse().ok()).unwrap_or(300);
@@ -37,10 +50,46 @@ fn main() {
     top.set_app_id("clipt-testwin".into());
     top.set_title("testwin".into());
     surface.commit();
-    let mut s = S { color: 0xff00_0000 | color, size: (w, h), pending: (0, 0), configured: None, closed: false };
+    let seat: Option<wl_seat::WlSeat> = popup.then(|| globals.bind(&qh, 1..=5, ()).unwrap());
+    let _pointer = seat.as_ref().map(|s| s.get_pointer(&qh, ()));
+    let mut s = S {
+        color: 0xff00_0000 | color,
+        size: (w, h),
+        pending: (0, 0),
+        configured: None,
+        closed: false,
+        click: None,
+        popup_configured: None,
+    };
     let mut buffer: Option<wl_buffer::WlBuffer> = None;
+    let mut open: Option<(wl_surface::WlSurface, xdg_surface::XdgSurface, xdg_popup::XdgPopup, Option<wl_buffer::WlBuffer>)> = None;
     while !s.closed {
         q.blocking_dispatch(&mut s).unwrap();
+        if let (Some(serial), Some(seat), None) = (s.click.take(), &seat, &open) {
+            let ps = compositor.create_surface(&qh, ());
+            let pxs = wm.get_xdg_surface(&ps, &qh, Popup);
+            let pos = wm.create_positioner(&qh, ());
+            pos.set_size(200, 150);
+            pos.set_anchor_rect(50, 50, 1, 1);
+            pos.set_anchor(xdg_positioner::Anchor::TopLeft);
+            pos.set_gravity(xdg_positioner::Gravity::BottomRight);
+            let p = pxs.get_popup(Some(&xs), &pos, &qh, ());
+            pos.destroy();
+            p.grab(seat, serial);
+            ps.commit();
+            open = Some((ps, pxs, p, None));
+        }
+        if let (Some(serial), Some((ps, pxs, _, pb))) = (s.popup_configured.take(), &mut open) {
+            pxs.ack_configure(serial);
+            if pb.is_none() {
+                let b = draw(&shm, &qh, 200, 150, 0xff20_c0c0);
+                ps.attach(Some(&b), 0, 0);
+                ps.damage_buffer(0, 0, 200, 150);
+                *pb = Some(b);
+                println!("popup open");
+            }
+            ps.commit();
+        }
         if let Some(serial) = s.configured.take() {
             xs.ack_configure(serial);
             if s.pending.0 > 0 && s.pending.1 > 0 {
@@ -91,6 +140,30 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for S {
     }
 }
 
+impl Dispatch<xdg_surface::XdgSurface, Popup> for S {
+    fn event(s: &mut Self, _: &xdg_surface::XdgSurface, ev: xdg_surface::Event, _: &Popup, _: &Connection, _: &QueueHandle<Self>) {
+        if let xdg_surface::Event::Configure { serial } = ev {
+            s.popup_configured = Some(serial);
+        }
+    }
+}
+
+impl Dispatch<xdg_popup::XdgPopup, ()> for S {
+    fn event(_: &mut Self, _: &xdg_popup::XdgPopup, ev: xdg_popup::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let xdg_popup::Event::PopupDone = ev {
+            println!("popup done");
+        }
+    }
+}
+
+impl Dispatch<wl_pointer::WlPointer, ()> for S {
+    fn event(s: &mut Self, _: &wl_pointer::WlPointer, ev: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let wl_pointer::Event::Button { serial, state: wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed), .. } = ev {
+            s.click = Some(serial);
+        }
+    }
+}
+
 impl Dispatch<xdg_toplevel::XdgToplevel, ()> for S {
     fn event(s: &mut Self, _: &xdg_toplevel::XdgToplevel, ev: xdg_toplevel::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         match ev {
@@ -114,6 +187,8 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for S {
 }
 
 wayland_client::delegate_noop!(S: wl_compositor::WlCompositor);
+wayland_client::delegate_noop!(S: ignore wl_seat::WlSeat);
+wayland_client::delegate_noop!(S: xdg_positioner::XdgPositioner);
 wayland_client::delegate_noop!(S: ignore wl_surface::WlSurface);
 wayland_client::delegate_noop!(S: ignore wl_shm::WlShm);
 wayland_client::delegate_noop!(S: wl_shm_pool::WlShmPool);
