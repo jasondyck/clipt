@@ -305,6 +305,7 @@ clipt.exe full -c            # the whole desktop to the clipboard
 clipt.exe record             # pick an area or window, Enter records
 clipt.exe record --stop      # stop it (or Ctrl+C where it runs)
 clipt.exe tray               # the tray icon; its menu has Start with Windows
+clipt.exe update             # update to the latest release (--check: just check)
 ```
 
 Windows 11 gives Print Screen to the Snipping Tool. To have it open clipt,

@@ -26,7 +26,6 @@ mod session;
 mod text;
 #[cfg(wayland_x11)]
 mod tray;
-#[cfg(wayland_x11)]
 mod update;
 #[cfg(windows)]
 mod win32;

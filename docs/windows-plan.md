@@ -4,8 +4,8 @@ Status, 2026-11-04: phases 0, 1 and 2 are built (screenshots, the tray and
 its hotkey), checked under Wine and in CI, and not yet tried on a real PC.
 Phase 3 (recording) works from the command line and the overlay, checked
 under Wine; the tray's recording controls and the red frame are next.
-Of phase 5, releases carry `clipt-vX-x86_64-windows.zip`; the updater and
-package manifests are still to do.
+Of phase 5, releases carry `clipt-vX-x86_64-windows.zip` and
+`clipt update` installs it; package manifests are still to do.
 A tester at work can try each phase's build; see *Testing* below.
 
 ## Done
@@ -149,7 +149,8 @@ count). `--audio`, volumes, separate tracks and `duck` then work unchanged.
 
 **5. Release.** A zip on GitHub releases (`clipt-vX-x86_64-windows.zip`,
 done: `.github/scripts/pack-windows.sh`), the updater replacing a running
-exe (rename, then copy), and winget or Scoop manifests if people want them.
+exe (rename, then copy; done, and CI's `windows` job updates a copy from
+the latest release), and winget or Scoop manifests if people want them.
 
 ## Testing
 

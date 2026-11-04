@@ -1,6 +1,6 @@
 //! clipt on Windows: screenshots, with the same editor as on Linux and
-//! macOS, and the tray with a hotkey. Recording and `clipt update` aren't
-//! there yet; see docs/windows-plan.md.
+//! macOS, recording (without sound yet), the tray with a hotkey, and
+//! `clipt update`; see docs/windows-plan.md.
 
 mod capture;
 mod clipboard;
@@ -34,6 +34,7 @@ USAGE:
     clipt record --pause / --resume / --toggle-pause
     clipt tray            Notification-area icon, with the hotkey (Print Screen)
     clipt config [KEY [VALUE]]  Show the settings, one setting, or set it
+    clipt update          Update to the latest release (--check: only check)
 
 OPTIONS:
     -o, --output PATH     Write the PNG to PATH ('-' for stdout) instead of the save dir
@@ -70,10 +71,12 @@ sound yet.
 ";
 
 pub fn run(args: Args, cfg: Config) -> Result<()> {
+    crate::update::cleanup();
     match args.cmd.as_str() {
         "gui" | "full" | "screen" | "list" | "tray" => {}
+        "update" => return crate::update::cli(args.check),
         "record" => return record_cmd(args, &cfg),
-        "update" | "gnome-extension" => bail!("`clipt {}` isn't available on Windows yet", args.cmd),
+        "gnome-extension" => bail!("`clipt {}` is for GNOME", args.cmd),
         other => bail!("unknown command '{other}' (try --help)"),
     }
     if args.backend.is_some() {

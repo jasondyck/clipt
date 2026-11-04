@@ -1,6 +1,6 @@
-//! clipt on macOS: screenshots, with the same editor as on Linux, and the
-//! menu bar icon. Recording and `clipt update` aren't there yet; see
-//! docs/macos-plan.md.
+//! clipt on macOS: screenshots, with the same editor as on Linux, the menu
+//! bar icon, and `clipt update` outside clipt.app. Recording isn't there
+//! yet; see docs/macos-plan.md.
 
 mod capture;
 mod clipboard;
@@ -24,6 +24,7 @@ USAGE:
     clipt list            Show the displays
     clipt tray            Menu bar icon, with the shortcuts (what opening clipt.app does)
     clipt config [KEY [VALUE]]  Show the settings, one setting, or set it
+    clipt update          Update to the latest release (--check: only check)
 
 OPTIONS:
     -o, --output PATH     Write the PNG to PATH ('-' for stdout) instead of the save dir
@@ -59,7 +60,8 @@ pub fn run(args: Args, cfg: Config) -> Result<()> {
     }
     match args.cmd.as_str() {
         "gui" | "full" | "screen" | "list" => {}
-        "record" | "update" | "gnome-extension" => bail!("`clipt {}` isn't available on macOS yet", args.cmd),
+        "update" => return crate::update::cli(args.check),
+        "record" | "gnome-extension" => bail!("`clipt {}` isn't available on macOS yet", args.cmd),
         other => bail!("unknown command '{other}' (try --help)"),
     }
     if args.backend.is_some() {

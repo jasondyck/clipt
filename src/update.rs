@@ -1,8 +1,9 @@
 //! `clipt update`: check GitHub for a newer release and, for installs that
-//! clipt owns (install.sh into a user directory), replace the binary.
+//! clipt owns (install.sh into a user directory, or an unpacked release
+//! zip or tarball), replace the binary.
 //!
 //! Network access goes through the system `curl`, so clipt carries no TLS
-//! stack of its own. Nothing here runs unless asked: the CLI command, the tray
+//! stack of its own; Windows 10 and 11 ship `curl.exe` and `tar.exe` too. Nothing here runs unless asked: the CLI command, the tray
 //! menu item, or `check_updates = true` in the config.
 
 use anyhow::{Context, Result, bail};
@@ -44,7 +45,8 @@ pub enum Install {
     /// The binary inside clipt.app: replacing it alone would break the
     /// bundle's signature, so a new app comes from the release page.
     AppBundle,
-    /// /usr/bin and friends: the distro package manager owns it.
+    /// /usr/bin and friends: the distro package manager owns it. On
+    /// Windows, a folder we can't write, such as Program Files.
     Package,
 }
 
@@ -77,6 +79,7 @@ impl Install {
             Install::Nix => "update your flake input",
             Install::Flatpak => "run `flatpak update` or use your software centre",
             Install::AppBundle => "download the new clipt.app from the release page",
+            Install::Package if cfg!(windows) => "download the new zip from the release page",
             Install::Package => "update it with your package manager",
         }
     }
@@ -103,7 +106,21 @@ pub fn current_exe() -> PathBuf {
 }
 
 fn writable(dir: &Path) -> bool {
-    rustix::fs::access(dir, rustix::fs::Access::WRITE_OK).is_ok()
+    // Trying is the only test that works everywhere: Windows' ACLs and
+    // macOS's sandbox both answer differently from the permission bits.
+    let probe = dir.join(format!(".clipt-probe-{}", std::process::id()));
+    let ok = std::fs::File::create(&probe).is_ok();
+    let _ = std::fs::remove_file(&probe);
+    ok
+}
+
+/// A system tool, by its full path on Windows: Git for Windows and MSYS put
+/// GNU versions on PATH, and GNU tar can't unpack a zip.
+fn tool(name: &str) -> PathBuf {
+    match std::env::var_os("SystemRoot") {
+        Some(root) if cfg!(windows) => Path::new(&root).join("System32").join(format!("{name}.exe")),
+        _ => name.into(),
+    }
 }
 
 fn repo() -> &'static str {
@@ -112,7 +129,7 @@ fn repo() -> &'static str {
 
 fn curl(args: &[&str]) -> Result<Vec<u8>> {
     let ua = concat!("clipt/", env!("CARGO_PKG_VERSION"));
-    let out = Command::new("curl")
+    let out = Command::new(tool("curl"))
         .args(["-fsSL", "--proto", "=https", "--max-time", "60", "-A", ua])
         .args(args)
         .output()
@@ -126,17 +143,33 @@ fn curl(args: &[&str]) -> Result<Vec<u8>> {
 /// The newest published release (drafts and prereleases excluded by GitHub).
 pub fn latest() -> Result<Release> {
     let url = format!("{API}/{}/releases/latest", repo());
-    let body = curl(&["-H", "Accept: application/vnd.github+json", &url]).map_err(|e| {
+    // CI's runners share their address, and with it GitHub's limit on
+    // anonymous requests; CI hands over its token. Only for this request,
+    // and only under this name, so a GITHUB_TOKEN set for other tools
+    // isn't sent.
+    let auth = std::env::var("CLIPT_GITHUB_TOKEN").ok().map(|t| format!("Authorization: Bearer {t}"));
+    let mut args = vec!["-H", "Accept: application/vnd.github+json"];
+    if let Some(a) = &auth {
+        args.extend(["-H", a]);
+    }
+    args.push(&url);
+    let body = curl(&args).map_err(|e| {
         // GitHub answers 404 until the first release is published.
         if format!("{e}").contains("404") { anyhow::anyhow!("no releases have been published yet") } else { e }
     })?;
     serde_json::from_slice(&body).context("unexpected reply from GitHub")
 }
 
+/// This build's version. CI sets `CLIPT_UPDATE_AS=0.0.0` to have a fresh
+/// build update itself from the latest release, testing the whole path.
+fn current_version() -> String {
+    std::env::var("CLIPT_UPDATE_AS").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").into())
+}
+
 /// `Some(release)` when it's newer than this build.
 pub fn check() -> Result<Option<Release>> {
     let r = latest()?;
-    Ok(newer(r.version(), env!("CARGO_PKG_VERSION")).then_some(r))
+    Ok(newer(r.version(), &current_version()).then_some(r))
 }
 
 /// Semantic-version comparison of "x.y.z[-pre]": a prerelease sorts before
@@ -163,16 +196,26 @@ pub fn newer(candidate: &str, current: &str) -> bool {
     }
 }
 
-/// The release tarball for this machine: one per architecture on Linux, one
-/// universal binary for both kinds of Mac.
+/// The release archive for this machine, without its extension: one per
+/// architecture on Linux, one universal binary for both kinds of Mac, and
+/// x86_64 for Windows (which runs it on ARM too, emulated).
 fn platform() -> String {
-    if cfg!(target_os = "macos") { "universal-macos".into() } else { format!("{}-linux", std::env::consts::ARCH) }
+    if cfg!(target_os = "macos") {
+        "universal-macos".into()
+    } else if cfg!(windows) {
+        "x86_64-windows".into()
+    } else {
+        format!("{}-linux", std::env::consts::ARCH)
+    }
 }
 
-/// Download `r`'s tarball for this machine, verify its checksum and swap
+const ARCHIVE: &str = if cfg!(windows) { ".zip" } else { ".tar.gz" };
+const BIN: &str = if cfg!(windows) { "clipt.exe" } else { "clipt" };
+
+/// Download `r`'s archive for this machine, verify its checksum and swap
 /// the binary at `exe` for the new one. Returns the new binary's path.
 pub fn install(r: &Release, exe: &Path) -> Result<PathBuf> {
-    let name = format!("clipt-{}-{}.tar.gz", r.tag_name, platform());
+    let name = format!("clipt-{}-{}{ARCHIVE}", r.tag_name, platform());
     let find = |n: &str| r.assets.iter().find(|a| a.name == n).map(|a| a.browser_download_url.clone());
     let url = find(&name).with_context(|| format!("release {} has no build for {}", r.tag_name, platform()))?;
     let sum_url = find(&format!("{name}.sha256")).context("release has no checksum file")?;
@@ -180,35 +223,78 @@ pub fn install(r: &Release, exe: &Path) -> Result<PathBuf> {
     let dir = exe.parent().context("binary has no parent directory")?;
     let work = tempdir(dir)?;
     let result = (|| -> Result<PathBuf> {
-        let tarball = work.join(&name);
-        std::fs::write(&tarball, curl(&[&url])?)?;
+        let archive = work.join(&name);
+        std::fs::write(&archive, curl(&[&url])?)?;
         let want = String::from_utf8(curl(&[&sum_url])?)?;
         let want = want.split_whitespace().next().context("empty checksum file")?.to_lowercase();
-        let got = sha256(&tarball)?;
+        let got = sha256(&archive)?;
         anyhow::ensure!(got == want, "checksum mismatch: expected {want}, got {got}");
 
-        let st = Command::new("tar").arg("xzf").arg(&tarball).arg("-C").arg(&work).status().context("running tar")?;
+        // bsdtar (macOS, and Windows' tar.exe) reads zips as well as tarballs.
+        let st = Command::new(tool("tar")).arg("-xf").arg(&archive).arg("-C").arg(&work).status().context("running tar")?;
         anyhow::ensure!(st.success(), "couldn't unpack {name}");
-        let new = work.join(name.trim_end_matches(".tar.gz")).join("clipt");
-        anyhow::ensure!(new.is_file(), "tarball has no clipt binary");
+        let new = work.join(name.trim_end_matches(ARCHIVE)).join(BIN);
+        anyhow::ensure!(new.is_file(), "{name} has no {BIN}");
         let out = Command::new(&new).arg("--version").output().context("running the new binary")?;
         anyhow::ensure!(out.status.success(), "the new binary doesn't run on this system");
-
-        // Same directory, so the rename is atomic: running copies keep their
-        // old image and new launches get the new one.
-        let staged = dir.join(".clipt.new");
-        std::fs::copy(&new, &staged)?;
-        std::fs::set_permissions(&staged, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
-        std::fs::rename(&staged, exe)?;
+        replace(&new, exe, dir)?;
         Ok(exe.to_path_buf())
     })();
     let _ = std::fs::remove_dir_all(&work);
     result
 }
 
+/// Put `new` at `exe`. Same directory, so the rename is atomic: running
+/// copies keep their old image and new launches get the new one.
+#[cfg(unix)]
+fn replace(new: &Path, exe: &Path, dir: &Path) -> Result<()> {
+    let staged = dir.join(".clipt.new");
+    std::fs::copy(new, &staged)?;
+    std::fs::set_permissions(&staged, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+    std::fs::rename(&staged, exe)?;
+    Ok(())
+}
+
+/// Windows won't overwrite or delete a running exe, and this one is
+/// running, but it will rename it. So: move it aside, put the new one in
+/// its place, and let the next start delete the old one ([`cleanup`]).
+#[cfg(windows)]
+fn replace(new: &Path, exe: &Path, dir: &Path) -> Result<()> {
+    let staged = dir.join("clipt.exe.new");
+    std::fs::copy(new, &staged)?;
+    cleanup();
+    // A tray or editor from before an earlier update may still hold the
+    // usual name; then pick one that's free.
+    let old = (0..100)
+        .map(|i| dir.join(if i == 0 { "clipt.exe.old".into() } else { format!("clipt.exe.old{i}") }))
+        .find(|p| !p.exists())
+        .context("too many old copies of clipt.exe")?;
+    std::fs::rename(exe, &old).context("moving the running clipt.exe aside")?;
+    if let Err(e) = std::fs::rename(&staged, exe) {
+        let _ = std::fs::rename(&old, exe);
+        return Err(e).context("putting the new clipt.exe in place");
+    }
+    Ok(())
+}
+
+/// Delete what an update moved aside, once nothing runs it. Called at
+/// every start on Windows; a copy still running stays until next time.
+#[cfg(windows)]
+pub fn cleanup() {
+    let exe = current_exe();
+    let Some(dir) = exe.parent() else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        if e.file_name().to_string_lossy().starts_with("clipt.exe.old") {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
 fn tempdir(near: &Path) -> Result<PathBuf> {
     let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
+        .or_else(|| std::env::var_os("LOCALAPPDATA").map(PathBuf::from))
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
         .unwrap_or_else(|| near.to_path_buf());
     let d = base.join(format!("clipt/update-{}", std::process::id()));
@@ -217,6 +303,14 @@ fn tempdir(near: &Path) -> Result<PathBuf> {
 }
 
 fn sha256(p: &Path) -> Result<String> {
+    if cfg!(windows) {
+        // certutil prints a heading line, then the hash.
+        let out = Command::new(tool("certutil")).arg("-hashfile").arg(p).arg("SHA256").output().context("running certutil")?;
+        anyhow::ensure!(out.status.success(), "certutil failed");
+        let text = String::from_utf8_lossy(&out.stdout);
+        let hash = text.lines().nth(1).unwrap_or_default().replace(' ', "");
+        return Ok(hash.trim().to_lowercase());
+    }
     // macOS has no sha256sum; its shasum prints the same format.
     let (cmd, args): (&str, &[&str]) = if cfg!(target_os = "macos") { ("shasum", &["-a", "256"]) } else { ("sha256sum", &[]) };
     let out = Command::new(cmd).args(args).arg(p).output().with_context(|| format!("running {cmd}"))?;
@@ -226,7 +320,7 @@ fn sha256(p: &Path) -> Result<String> {
 
 /// `clipt update [--check]`.
 pub fn cli(check_only: bool) -> Result<()> {
-    let current = env!("CARGO_PKG_VERSION");
+    let current = current_version();
     if flatpak() {
         bail!("this clipt is a Flatpak: {}", Install::Flatpak.how_to_update());
     }
@@ -242,7 +336,8 @@ pub fn cli(check_only: bool) -> Result<()> {
         Install::SelfManaged(exe) => {
             println!("updating {} …", exe.display());
             install(&r, &exe)?;
-            println!("updated to {}; restart `clipt tray` if it's running", r.version());
+            let tray = if cfg!(target_os = "macos") { "the menu bar icon" } else { "`clipt tray`" };
+            println!("updated to {}; restart {tray} if it's running", r.version());
             Ok(())
         }
         other => bail!("this clipt is managed elsewhere: {}", other.how_to_update()),
