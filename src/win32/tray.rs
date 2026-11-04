@@ -1,6 +1,7 @@
 //! `clipt tray` on Windows: an icon in the notification area with the
-//! Linux tray's screenshot actions, and a global hotkey (Print Screen by
-//! default).
+//! Linux tray's actions (screenshots, recording, updates), and a global
+//! hotkey (Print Screen by default). The icon gets a red dot while
+//! recording, amber while paused.
 //!
 //! As on Linux and macOS, the tray never captures anything itself: each
 //! action starts a fresh `clipt` with no console window. Screenshot
@@ -14,7 +15,7 @@ use anyhow::{Context, Result, bail};
 use std::cell::RefCell;
 use std::os::windows::process::CommandExt;
 use std::process::{Command, Stdio};
-use windows_sys::Win32::Foundation::{GetLastError, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -31,14 +32,18 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, AppendMenuW, CreateIconIndirect, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
     DestroyWindow, DispatchMessageW, FindWindowW, GetCursorPos, GetMessageW, GetSystemMetrics, HICON, ICONINFO, MF_CHECKED, MF_SEPARATOR,
     MF_STRING, MSG, PostMessageW, PostQuitMessage, RegisterClassExW, RegisterWindowMessageW, SM_CXSMICON, SMTO_ABORTIFHUNG, SW_SHOWNORMAL,
-    SendMessageTimeoutW, SetForegroundWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, TranslateMessage, WM_APP, WM_CONTEXTMENU,
-    WM_COPYDATA, WM_DESTROY, WM_HOTKEY, WM_NULL, WNDCLASSEXW,
+    SendMessageTimeoutW, SetForegroundWindow, SetTimer, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, TranslateMessage, WM_APP,
+    WM_CONTEXTMENU, WM_COPYDATA, WM_DESTROY, WM_HOTKEY, WM_NULL, WM_TIMER, WNDCLASSEXW,
 };
 
 /// Long enough for the menu to fade out of the shot.
 const CLICK_DELAY: &str = "0.2";
 const CLASS: &str = "CliptTray";
 const CALLBACK: u32 = WM_APP + 1;
+/// From the update thread: the new clipt.exe is in place; restart on it.
+const RESTART: u32 = WM_APP + 2;
+/// A notification's "path" meaning: clicking it installs the update.
+const UPDATE: &str = "clipt:update";
 /// `COPYDATASTRUCT.dwData` for a notification from a screenshot process.
 const NOTIFY: usize = 0x636c_6970; // "clip"
 /// Enter or space on the icon (NIN_SELECT | NINF_KEY).
@@ -51,11 +56,19 @@ enum Action {
     Region,
     RegionDelayed,
     Full,
+    RecordRegion,
+    RecordScreen,
+    ToggleGif,
+    PauseRecording,
+    ResumeRecording,
+    StopRecording,
     OpenFolder,
+    OpenVideos,
     ToggleCopy,
     ToggleNotify,
     OpenSettings,
     Startup,
+    CheckUpdates,
     Quit,
 }
 
@@ -65,20 +78,59 @@ const MENU: &[Option<(&str, Action)>] = &[
     Some(("Capture region in 3 seconds", Action::RegionDelayed)),
     Some(("Copy full desktop", Action::Full)),
     None,
+    Some(("Record region…", Action::RecordRegion)),
+    Some(("Record screen", Action::RecordScreen)),
+    Some(("Record as GIF", Action::ToggleGif)),
+    Some(("Pause recording", Action::PauseRecording)),
+    Some(("Resume recording", Action::ResumeRecording)),
+    Some(("Stop recording", Action::StopRecording)),
+    None,
     Some(("Open screenshots folder", Action::OpenFolder)),
+    Some(("Open recordings folder", Action::OpenVideos)),
     None,
     Some(("Copy when saving", Action::ToggleCopy)),
     Some(("Notifications", Action::ToggleNotify)),
     Some(("Settings…", Action::OpenSettings)),
     None,
     Some(("Start with Windows", Action::Startup)),
+    Some(("Check for updates…", Action::CheckUpdates)),
     Some(("Quit clipt", Action::Quit)),
 ];
 
+/// Recording state, as the tray last saw it: also the index of its icon.
+const IDLE: usize = 0;
+const RECORDING: usize = 1;
+const PAUSED: usize = 2;
+
+fn rec_state() -> usize {
+    match crate::record::status() {
+        None => IDLE,
+        Some(false) => RECORDING,
+        Some(true) => PAUSED,
+    }
+}
+
+/// Whether the menu shows `a` in recording state `rec`: what starts a
+/// recording while there's none, what controls one while there is.
+fn shown(a: Action, rec: usize) -> bool {
+    match a {
+        Action::RecordRegion | Action::RecordScreen | Action::ToggleGif => rec == IDLE,
+        Action::PauseRecording => rec == RECORDING,
+        Action::ResumeRecording => rec == PAUSED,
+        Action::StopRecording => rec != IDLE,
+        _ => true,
+    }
+}
+
 struct State {
     hwnd: HWND,
-    icon: HICON,
+    /// Idle, recording, paused.
+    icons: [HICON; 3],
+    rec: usize,
+    /// Held while the tray runs; let go before restarting after an update.
+    mutex: HANDLE,
     save_dir: String,
+    video_dir: String,
     /// The file the last notification was about, opened when it's clicked.
     last: Option<String>,
     /// Explorer's broadcast when the taskbar comes back after a restart.
@@ -130,15 +182,30 @@ pub fn run(cfg: &Config) -> Result<()> {
     };
     anyhow::ensure!(!hwnd.is_null(), "creating the tray window failed");
     let taskbar_created = unsafe { RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()) };
-    let icon = make_icon()?;
+    let icons = [make_icon(None)?, make_icon(Some((0xef, 0x44, 0x44)))?, make_icon(Some((0xf5, 0x9e, 0x0b)))?];
     STATE.set(Some(State {
         hwnd,
-        icon,
+        icons,
+        rec: rec_state(),
+        mutex,
         save_dir: crate::config::expand(&cfg.save_dir).display().to_string(),
+        video_dir: crate::config::expand(&cfg.video_dir).display().to_string(),
         last: None,
         taskbar_created,
     }));
     add_icon()?;
+    // Recordings run in their own processes: look at their state each second.
+    unsafe { SetTimer(hwnd, 1, 1000, None) };
+    if cfg.check_updates {
+        // Once shortly after sign-in, then daily.
+        std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            loop {
+                updates(false);
+                std::thread::sleep(std::time::Duration::from_secs(24 * 3600));
+            }
+        });
+    }
 
     for (id, spec) in [(1, cfg.hotkey.as_str()), (2, cfg.hotkey_full.as_str())] {
         if spec.is_empty() {
@@ -198,8 +265,15 @@ fn icon_data(flags: u32) -> NOTIFYICONDATAW {
         nid.uID = 1;
         nid.uFlags = flags;
         nid.uCallbackMessage = CALLBACK;
-        nid.hIcon = s.icon;
-        copy_into(&mut nid.szTip, "clipt");
+        nid.hIcon = s.icons[s.rec];
+        copy_into(
+            &mut nid.szTip,
+            match s.rec {
+                RECORDING => "clipt — recording (click: stop)",
+                PAUSED => "clipt — recording paused (click: stop)",
+                _ => "clipt",
+            },
+        );
         nid
     })
 }
@@ -239,15 +313,23 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
     let taskbar_created = STATE.with_borrow(|s| s.as_ref().map_or(0, |s| s.taskbar_created));
     match msg {
         CALLBACK => match (l & 0xffff) as u32 {
-            NIN_SELECT | NIN_KEYSELECT => run_action(Action::Region),
-            WM_CONTEXTMENU => show_menu(h),
-            NIN_BALLOONUSERCLICK => {
-                if let Some(p) = STATE.with_borrow(|s| s.as_ref().and_then(|s| s.last.clone())) {
-                    open(&p);
-                }
+            // As on Linux: a click captures a region, or stops the recording.
+            NIN_SELECT | NIN_KEYSELECT => {
+                let idle = STATE.with_borrow(|s| s.as_ref().is_none_or(|s| s.rec == IDLE));
+                run_action(if idle { Action::Region } else { Action::StopRecording })
             }
+            WM_CONTEXTMENU => show_menu(h),
+            NIN_BALLOONUSERCLICK => match STATE.with_borrow(|s| s.as_ref().and_then(|s| s.last.clone())) {
+                Some(p) if p == UPDATE => {
+                    std::thread::spawn(install_update);
+                }
+                Some(p) => open(&p),
+                None => {}
+            },
             _ => {}
         },
+        WM_TIMER => poll_recording(),
+        RESTART => restart(),
         WM_HOTKEY => run_action(if w == 2 { Action::Full } else { Action::Region }),
         WM_COPYDATA => {
             let cds = unsafe { &*(l as *const COPYDATASTRUCT) };
@@ -278,18 +360,46 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
     0
 }
 
+/// Show the recording's state on the icon when it changes.
+fn poll_recording() {
+    let now = rec_state();
+    let changed = STATE.with_borrow_mut(|s| match s.as_mut() {
+        Some(s) if s.rec != now => {
+            s.rec = now;
+            true
+        }
+        _ => false,
+    });
+    if changed {
+        if std::env::var_os("CLIPT_DEBUG").is_some() {
+            eprintln!("clipt: recording state: {}", ["idle", "recording", "paused"][now]);
+        }
+        let nid = icon_data(NIF_ICON | NIF_TIP | NIF_SHOWTIP);
+        unsafe { Shell_NotifyIconW(NIM_MODIFY, &nid) };
+    }
+}
+
 fn show_menu(h: HWND) {
     let cfg = Config::load().unwrap_or_default();
+    poll_recording();
+    let rec = STATE.with_borrow(|s| s.as_ref().map_or(IDLE, |s| s.rec));
     let menu = unsafe { CreatePopupMenu() };
+    let mut last_separator = true;
     for (i, entry) in MENU.iter().enumerate() {
         match entry {
+            // Never two in a row, where hidden items left a section empty.
+            None if last_separator => {}
             None => unsafe {
                 AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
+                last_separator = true;
             },
+            Some((_, a)) if !shown(*a, rec) => {}
             Some((label, a)) => {
+                last_separator = false;
                 let on = match a {
                     Action::ToggleCopy => cfg.copy_on_save,
                     Action::ToggleNotify => cfg.notify,
+                    Action::ToggleGif => cfg.record_format == "gif",
                     Action::Startup => startup_enabled(),
                     _ => false,
                 };
@@ -321,10 +431,28 @@ fn run_action(a: Action) {
         Action::Region => &["gui", "-d", CLICK_DELAY],
         Action::RegionDelayed => &["gui", "-d", "3"],
         Action::Full => &["full", "-c", "-d", CLICK_DELAY],
-        Action::OpenFolder => {
-            let dir = STATE.with_borrow(|s| s.as_ref().map(|s| s.save_dir.clone())).unwrap_or_default();
+        Action::RecordRegion => &["record", "-d", CLICK_DELAY],
+        Action::RecordScreen => &["record", "screen", "-d", CLICK_DELAY],
+        Action::PauseRecording => &["record", "--pause"],
+        Action::ResumeRecording => &["record", "--resume"],
+        Action::StopRecording => &["record", "--stop"],
+        Action::OpenFolder | Action::OpenVideos => {
+            let dir = STATE
+                .with_borrow(|s| s.as_ref().map(|s| if a == Action::OpenFolder { s.save_dir.clone() } else { s.video_dir.clone() }))
+                .unwrap_or_default();
             let _ = std::fs::create_dir_all(&dir);
             return open(&dir);
+        }
+        Action::ToggleGif => {
+            let gif = Config::load().unwrap_or_default().record_format == "gif";
+            if let Err(e) = Config::set("record_format", if gif { "mp4" } else { "gif" }) {
+                eprintln!("clipt: {e:#}");
+            }
+            return;
+        }
+        Action::CheckUpdates => {
+            std::thread::spawn(|| updates(true));
+            return;
         }
         Action::OpenSettings => {
             let p = Config::path();
@@ -374,6 +502,74 @@ fn run_action(a: Action) {
     }
 }
 
+// ---- updates ----------------------------------------------------------------
+
+/// Check for a release and say so. `manual` also reports "up to date" and
+/// errors; the daily check only speaks up about a new version. Runs on its
+/// own thread, so it reaches the icon as other processes do (`notify`).
+fn updates(manual: bool) {
+    use crate::update::{self, Install};
+    let r = match update::check() {
+        Ok(r) => r,
+        Err(e) => {
+            if manual {
+                notify("Couldn't check for updates", &format!("{e:#}"), None);
+            }
+            return;
+        }
+    };
+    let Some(r) = r else {
+        if manual {
+            notify("clipt is up to date", &format!("You have the latest version, {}.", env!("CARGO_PKG_VERSION")), None);
+        }
+        return;
+    };
+    let title = format!("clipt {} is available", r.version());
+    let have = env!("CARGO_PKG_VERSION");
+    match Install::detect() {
+        Install::SelfManaged(_) => notify(&title, &format!("You have {have}. Click here to update."), Some(UPDATE.as_ref())),
+        other => notify(&title, &format!("You have {have}. To update, {}.", other.how_to_update()), Some(r.html_url.as_ref())),
+    }
+}
+
+/// Clicked "update": install the release over this clipt.exe, then have the
+/// tray restart on it.
+fn install_update() {
+    use crate::update::{self, Install};
+    let r = match update::check() {
+        Ok(Some(r)) => r,
+        Ok(None) => return notify("clipt is up to date", "", None),
+        Err(e) => return notify("Couldn't update", &format!("{e:#}"), None),
+    };
+    let Install::SelfManaged(exe) = Install::detect() else { return };
+    match update::install(&r, &exe) {
+        Ok(_) => {
+            notify(&format!("Updated to clipt {}", r.version()), "The tray icon restarts on the new version.", None);
+            let hwnd = unsafe { FindWindowW(wide(CLASS).as_ptr(), std::ptr::null()) };
+            unsafe { PostMessageW(hwnd, RESTART, 0, 0) };
+        }
+        Err(e) => notify("Update failed", &format!("{e:#}"), None),
+    }
+}
+
+/// Start the tray again on the clipt.exe now in place, and quit this one.
+fn restart() {
+    let (mutex, hwnd) = STATE.with_borrow(|s| s.as_ref().map_or((std::ptr::null_mut(), std::ptr::null_mut()), |s| (s.mutex, s.hwnd)));
+    // The new tray takes the mutex, and the icon's place.
+    unsafe { CloseHandle(mutex) };
+    let r = Command::new(crate::update::current_exe())
+        .arg("tray")
+        .creation_flags(DETACHED_PROCESS)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    if let Err(e) = r {
+        eprintln!("clipt tray: restarting failed: {e}");
+    }
+    unsafe { DestroyWindow(hwnd) };
+}
+
 /// No console at all, so none flashes up.
 pub const DETACHED_PROCESS: u32 = 0x0000_0008;
 
@@ -410,16 +606,15 @@ fn set_startup(on: bool) -> Result<()> {
 }
 
 /// The tray icon at the notification area's size, from the same drawing as
-/// the other platforms'.
-fn make_icon() -> Result<HICON> {
+/// the other platforms', with a dot of `badge`'s colour for recording.
+fn make_icon(badge: Option<(u8, u8, u8)>) -> Result<HICON> {
     let size = unsafe { GetSystemMetrics(SM_CXSMICON) }.clamp(16, 64) as u32;
-    let pm = crate::icon::render(size);
+    let argb = crate::icon::argb32(size, badge);
     let dib = super::capture::Dib::new(size as i32, size as i32)?;
     let bits = unsafe { std::slice::from_raw_parts_mut(dib.bits, (size * size * 4) as usize) };
     // Icons take straight (not premultiplied) alpha, BGRA.
-    for (d, p) in bits.as_chunks_mut::<4>().0.iter_mut().zip(pm.pixels()) {
-        let c = p.demultiply();
-        *d = [c.blue(), c.green(), c.red(), c.alpha()];
+    for (d, &[a, r, g, b]) in bits.as_chunks_mut::<4>().0.iter_mut().zip(argb.as_chunks::<4>().0) {
+        *d = [b, g, r, a];
     }
     let zeros = vec![0u8; (size * size / 8) as usize];
     let mask = unsafe { CreateBitmap(size as i32, size as i32, 1, 1, zeros.as_ptr().cast()) };
@@ -473,6 +668,18 @@ impl Hotkey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn menu_follows_the_recording() {
+        let labels = |rec| MENU.iter().flatten().filter(|(_, a)| shown(*a, rec)).map(|(l, _)| *l).collect::<Vec<_>>();
+        let idle = labels(IDLE);
+        assert!(idle.contains(&"Record region…") && idle.contains(&"Record as GIF") && !idle.contains(&"Stop recording"));
+        let rec = labels(RECORDING);
+        assert!(rec.contains(&"Pause recording") && rec.contains(&"Stop recording"));
+        assert!(!rec.contains(&"Record screen") && !rec.contains(&"Resume recording"));
+        let paused = labels(PAUSED);
+        assert!(paused.contains(&"Resume recording") && !paused.contains(&"Pause recording"));
+    }
 
     #[test]
     fn parses_hotkeys() {

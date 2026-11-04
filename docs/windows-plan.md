@@ -2,8 +2,8 @@
 
 Status, 2026-11-04: phases 0, 1 and 2 are built (screenshots, the tray and
 its hotkey), checked under Wine and in CI, and not yet tried on a real PC.
-Phase 3 (recording) works from the command line and the overlay, checked
-under Wine; the tray's recording controls and the red frame are next.
+Phase 3 (recording) works from the command line, the overlay and the tray,
+checked under Wine; the red frame around a recording is still to do.
 Of phase 5, releases carry `clipt-vX-x86_64-windows.zip` and
 `clipt update` installs it; package manifests are still to do.
 A tester at work can try each phase's build; see *Testing* below.
@@ -40,7 +40,9 @@ A tester at work can try each phase's build; see *Testing* below.
   file in %TEMP% saying whether it's paused, and a named pipe per session
   for stop, pause and resume; Ctrl+C reaches it through
   `SetConsoleCtrlHandler`. Encoders tried: NVENC, Quick Sync, AMF, Media
-  Foundation (hardware only), libx264. Sound says it isn't there yet.
+  Foundation (hardware only), libx264. Sound says it isn't there yet. The
+  tray polls the recording's state each second for its menu and icon (red
+  dot, amber when paused), as recordings run in their own processes.
 
 Choices made on the way, where they differ from the plan below:
 

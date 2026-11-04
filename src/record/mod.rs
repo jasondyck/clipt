@@ -30,10 +30,7 @@ use crate::win32::record as host;
 #[cfg(wayland_x11)]
 use linux as host;
 
-// The Windows tray doesn't show the recording state yet.
-#[cfg(wayland_x11)]
-pub use control::status;
-pub use control::{PauseCmd, ensure_idle, pause, stop};
+pub use control::{PauseCmd, ensure_idle, pause, status, stop};
 pub use encode::Balance;
 
 use control::{CMD_STOP, Lock, PAUSED, PAUSED_AT, RESUMED_AT, STOP, STOPPED_AT, apply, free_bytes, instant_at};

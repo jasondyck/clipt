@@ -107,6 +107,16 @@ if [ -f /ffmpeg.exe ]; then
   $R record -g "0,0 200x100" --gif -o 'Z:\tmp\out\r.gif' & p=$!
   started '/tmp/out/.r.recording.mp4'; sleep 1; $R record --stop; wait $p
   check "--gif makes a GIF ($(size "/tmp/out/r.gif[0]"))" '[ "$(size "/tmp/out/r.gif[0]")" = 200x100 ]'
+  # The tray follows a recording it didn't start, and hears when it's saved.
+  CLIPT_DEBUG=1 $R tray 2>/tmp/tray2.err & tp=$!; sleep 3
+  $R record -g "0,0 200x100" -o 'Z:\tmp\out\t.mp4' & p=$!
+  started /tmp/out/t.mp4
+  $R record --pause; sleep 2; $R record --stop; wait $p; sleep 2
+  check "the tray's icon shows recording, then paused, then idle" \
+    'sed -n "s/.*recording state: //p" /tmp/tray2.err | tr -d "\r" | tr "\n" " " | grep -q "recording paused idle"'
+  check "and it shows \"Recording saved\"" 'grep -q "notification: Recording saved" /tmp/tray2.err'
+  kill $tp; wait $tp 2>/dev/null
+
 fi
 
 echo "== $pass passed, $fail failed"
