@@ -168,6 +168,14 @@ p=$(paste_png | magick - -format "%[pixel:p{150,125}]" info: 2>/dev/null)
 check "the capture still shows the popup ($p)" 'echo "$p" | grep -Eq "srgba?\(32,192,192"'
 gerr
 
+echo "-- interactive: a popup holding only the pointer grab is closed too"
+popup --pointer-only
+gui
+check "the popup got Escape and closed" '! kill -0 $gp 2>/dev/null'
+drag 560 260 760 400; key Return; sleep 0.8
+check "and the editor still works" '[ "$(pastesize)" = 200x140 ]'
+gerr
+
 echo "-- interactive: a grab that ignores Escape still fails with a message"
 popup --ignore-escape
 /clipt gui 2>/tmp/gui.err; rc=$?

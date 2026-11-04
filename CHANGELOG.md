@@ -6,6 +6,11 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- X11: the editor still gave up with "couldn't grab the pointer" when the
+  program in the way held only the pointer, as some menus do: clipt's
+  Escape went to itself rather than to the menu.
+
 ## [0.7.0] - 2026-11-04
 
 ### Added
