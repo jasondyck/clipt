@@ -93,8 +93,7 @@ impl Config {
 
     #[cfg(not(windows))]
     pub fn path() -> PathBuf {
-        let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".config"));
-        base.join("clipt/config.toml")
+        config_home().join("clipt/config.toml")
     }
 
     pub fn load() -> anyhow::Result<Self> {
@@ -241,6 +240,13 @@ fn fresh_path(dir: &std::path::Path, pattern: &str, ext: &str) -> PathBuf {
         n += 1;
     }
     p
+}
+
+/// `$XDG_CONFIG_HOME`, or `~/.config` when it's unset, empty or relative
+/// (the XDG spec says to ignore those).
+#[cfg(not(windows))]
+pub fn config_home() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home().join(".config"))
 }
 
 pub fn home() -> PathBuf {

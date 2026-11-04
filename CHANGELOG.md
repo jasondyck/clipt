@@ -39,6 +39,9 @@ All notable changes are listed here. The format follows
   toolbar buttons until something else changed.
 - Right-clicking in Video mode didn't clear the selection if anything had
   been drawn in Screenshot mode, though the drawing isn't shown there.
+- An empty or relative `XDG_CONFIG_HOME` was used as a folder name, so
+  clipt read its config from (and wrote it to) a path relative to wherever
+  it was started. It now falls back to `~/.config`, as the XDG spec says.
 - macOS: the editor's tooltips said Ctrl+Z, Ctrl+S and so on, where the keys
   are Cmd+Z and Cmd+S.
 
