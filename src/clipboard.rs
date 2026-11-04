@@ -106,6 +106,16 @@ pub fn write_paste(mut pipe: impl Write + std::os::fd::AsFd, data: &[u8]) {
     }
 }
 
+/// Whether the compositor offers a data-control protocol, so
+/// `copy_and_serve` can work. GNOME doesn't.
+pub fn has_data_control() -> bool {
+    let Ok(conn) = crate::capture::wayland::connection() else { return false };
+    let Ok((globals, _)) = registry_queue_init::<State>(&conn) else { return false };
+    globals
+        .contents()
+        .with_list(|l| l.iter().any(|g| g.interface == "ext_data_control_manager_v1" || g.interface == "zwlr_data_control_manager_v1"))
+}
+
 /// Claim the clipboard and block until someone else replaces it.
 pub fn copy_and_serve(png: Vec<u8>, before_serving: impl FnOnce()) -> Result<()> {
     let conn = crate::capture::wayland::connection()?;

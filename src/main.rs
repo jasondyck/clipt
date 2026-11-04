@@ -262,11 +262,7 @@ fn browser_host() -> Result<()> {
             ready();
             daemonize();
         };
-        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-            clipboard::copy_and_serve(png, serving)
-        } else {
-            x11::clip::copy_and_serve(png, serving)
-        }
+        copy_and_serve(png, std::env::var_os("WAYLAND_DISPLAY").is_some(), serving)
     };
     browser::serve(&cfg, copy, |summary, body, path| {
         if cfg.notify {
@@ -730,10 +726,7 @@ fn deliver(cfg: &Config, args: &Args, img: image::Image, kind: capture::DisplayK
         }
         // Hand freed pages back before lingering as the clipboard owner.
         crate::trim_heap();
-        match kind {
-            capture::DisplayKind::Wayland => clipboard::copy_and_serve(png, daemonize)?,
-            capture::DisplayKind::X11 => x11::clip::copy_and_serve(png, daemonize)?,
-        }
+        copy_and_serve(png, kind == capture::DisplayKind::Wayland, daemonize)?;
     } else if let (true, Some(p)) = (cfg.notify && args.output.is_none(), &path) {
         notify::send("Screenshot saved", &p.display().to_string(), Some(p));
     }
@@ -821,6 +814,22 @@ pub fn trim_heap() {
     unsafe {
         libc::malloc_trim(0);
     }
+}
+
+/// Own the clipboard without a window, and serve the PNG until something
+/// else is copied. A Wayland compositor without data-control (GNOME) gets
+/// the X11 clipboard through XWayland instead, which it passes on to
+/// Wayland apps.
+#[cfg(wayland_x11)]
+fn copy_and_serve(png: Vec<u8>, wayland: bool, before_serving: impl FnOnce()) -> Result<()> {
+    if !wayland {
+        return x11::clip::copy_and_serve(png, before_serving);
+    }
+    if clipboard::has_data_control() || std::env::var_os("DISPLAY").is_none() {
+        return clipboard::copy_and_serve(png, before_serving);
+    }
+    x11::clip::copy_and_serve(png, before_serving)
+        .context("this compositor has no data-control protocol, and the X11 clipboard through XWayland didn't work either")
 }
 
 /// Fork into the background: the parent exits immediately, the child carries
