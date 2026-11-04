@@ -30,6 +30,9 @@ All notable changes are listed here. The format follows
   would cover the selection.
 
 ### Changed
+- Copying a screenshot is ready to paste sooner (at 4K, 51 ms rather than
+  190 ms for `clipt full -c`): a PNG that only goes to the clipboard skips
+  the slower, smaller second compression pass. Saved files still get it.
 - The overlay opens about 13 ms sooner at 4K: its first frame is painted
   on several threads (21 ms → 8 ms).
 - The Copy button's tooltip shows Ctrl+C rather than Enter (both still copy).
