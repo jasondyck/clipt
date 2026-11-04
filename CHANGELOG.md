@@ -6,6 +6,8 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-04
+
 ### Added
 - Recording on Windows: `clipt record` (a region, a monitor or a window,
   which it follows), `--stop`, `--pause` and `--resume`, Ctrl+R in the
