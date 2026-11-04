@@ -105,8 +105,9 @@ pub fn run(args: Args, cfg: Config) -> Result<()> {
         if let Some(g) = &args.geometry {
             img = crop_geometry(&img, &shots, g)?;
         }
-        let png = img.encode_png()?;
-        let path = if args.output.is_some() || !args.clipboard { write_png(&cfg, args.output.as_deref(), &png)? } else { None };
+        let save = args.output.is_some() || !args.clipboard;
+        let png = if save { img.encode_png()? } else { img.encode_png_quick()? };
+        let path = if save { write_png(&cfg, args.output.as_deref(), &png)? } else { None };
         if let Some(p) = &path
             && args.output.is_none()
         {
@@ -147,12 +148,13 @@ pub fn run(args: Args, cfg: Config) -> Result<()> {
     let img = session.editor().export().context("nothing selected")?;
     session.hide();
     drop(session);
-    let png = img.encode_png()?;
+    let save = outcome == Outcome::Save || args.output.is_some();
+    let png = if save { img.encode_png()? } else { img.encode_png_quick()? };
     let want_copy = outcome == Outcome::Copy || cfg.copy_on_save;
     if want_copy {
         clipboard::copy(&img, &png)?;
     }
-    let saved = if outcome == Outcome::Save || args.output.is_some() { write_png(&cfg, args.output.as_deref(), &png)? } else { None };
+    let saved = if save { write_png(&cfg, args.output.as_deref(), &png)? } else { None };
     if cfg.notify {
         match (&saved, want_copy) {
             (Some(p), true) => tray::notify("Screenshot saved and copied", &p.display().to_string(), Some(p)),

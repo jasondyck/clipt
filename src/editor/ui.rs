@@ -435,23 +435,43 @@ fn background(ed: &Editor, idx: usize, pm: &mut PixmapMut, origin: (i32, i32)) {
         (x0.round().max(0.0) as usize, y0.round().max(0.0) as usize, x1.round().max(0.0) as usize, y1.round().max(0.0) as usize)
     });
     let src = scr.bg.data();
-    let dst = pm.data_mut();
-    for y in 0..ph.min(bh.saturating_sub(oy)) {
-        let sy = oy + y;
-        let srow = &src[(sy * bw + ox) * 4..(sy * bw + ox + cols) * 4];
-        let drow = &mut dst[y * pw * 4..(y * pw + cols) * 4];
-        match sel_px {
-            Some((x0, y0, x1, y1)) if sy >= y0 && sy < y1 => {
-                // [dim | clean | dim], in this pixmap's columns
-                let a = x0.saturating_sub(ox).min(cols);
-                let b = x1.saturating_sub(ox).min(cols);
-                dim_copy(&mut drow[..a * 4], &srow[..a * 4]);
-                drow[a * 4..b * 4].copy_from_slice(&srow[a * 4..b * 4]);
-                dim_copy(&mut drow[b * 4..], &srow[b * 4..]);
+    let rows = ph.min(bh.saturating_sub(oy));
+    // Rows `y0..` of the pixmap, into `dst`, which starts at row y0.
+    let band = |y0: usize, dst: &mut [u8]| {
+        for (i, drow) in dst.chunks_exact_mut(pw * 4).enumerate() {
+            let sy = oy + y0 + i;
+            let srow = &src[(sy * bw + ox) * 4..(sy * bw + ox + cols) * 4];
+            let drow = &mut drow[..cols * 4];
+            match sel_px {
+                Some((x0, y0, x1, y1)) if sy >= y0 && sy < y1 => {
+                    // [dim | clean | dim], in this pixmap's columns
+                    let a = x0.saturating_sub(ox).min(cols);
+                    let b = x1.saturating_sub(ox).min(cols);
+                    dim_copy(&mut drow[..a * 4], &srow[..a * 4]);
+                    drow[a * 4..b * 4].copy_from_slice(&srow[a * 4..b * 4]);
+                    dim_copy(&mut drow[b * 4..], &srow[b * 4..]);
+                }
+                _ => dim_copy(drow, srow),
             }
-            _ => dim_copy(drow, srow),
         }
+    };
+    let dst = &mut pm.data_mut()[..rows * pw * 4];
+    // A full frame (the first one, or after a mode switch) is mostly the
+    // kernel faulting in a fresh shm buffer: at 4K it took 21 ms on one
+    // core. Bands on several threads fault and copy in parallel; small
+    // repaints aren't worth the threads.
+    let threads = if rows * pw >= 1 << 20 { std::thread::available_parallelism().map_or(1, |n| n.get().min(8)) } else { 1 };
+    if threads == 1 {
+        band(0, dst);
+        return;
     }
+    let per = rows.div_ceil(threads);
+    std::thread::scope(|sc| {
+        for (i, chunk) in dst.chunks_mut(per * pw * 4).enumerate() {
+            let band = &band;
+            sc.spawn(move || band(i * per, chunk));
+        }
+    });
 }
 
 /// The picked shape: a dashed box around it, and its handles.

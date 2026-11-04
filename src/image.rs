@@ -89,6 +89,17 @@ impl Image {
     ///   it is re-encoded with `Balanced`, which for such content is cheap
     ///   (70-140 ms) and 1.7-4x smaller.
     pub fn encode_png(&self) -> anyhow::Result<Vec<u8>> {
+        self.encode(true)
+    }
+
+    /// `Fast` only, for the clipboard: the paste is ready ~200 ms sooner at
+    /// 4K, and the size doesn't matter there (a 4K desktop with text: 1.9 MB
+    /// rather than 1.2 MB).
+    pub fn encode_png_quick(&self) -> anyhow::Result<Vec<u8>> {
+        self.encode(false)
+    }
+
+    fn encode(&self, small: bool) -> anyhow::Result<Vec<u8>> {
         let rgb = self.to_rgb_if_opaque();
         let (data, color) = match &rgb {
             Some(rgb) => (&rgb[..], png::ColorType::Rgb),
@@ -104,7 +115,7 @@ impl Image {
             Ok(out)
         };
         let fast = encode(png::Compression::Fast)?;
-        if fast.len() * 10 < data.len() {
+        if small && fast.len() * 10 < data.len() {
             let small = encode(png::Compression::Balanced)?;
             if small.len() < fast.len() {
                 return Ok(small);
