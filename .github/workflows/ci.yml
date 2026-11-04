@@ -144,6 +144,7 @@ jobs:
           [ "$v" = "clipt ${want#v}" ]
         env:
           GH_TOKEN: ${{ github.token }}
+          CLIPT_GITHUB_TOKEN: ${{ github.token }}
       # Zipped with ditto: an artifact upload drops the executable bit, and
       # with it the app.
       - run: |
@@ -194,6 +195,7 @@ jobs:
           test ! -e "$d/clipt.exe.old"
         env:
           GH_TOKEN: ${{ github.token }}
+          CLIPT_GITHUB_TOKEN: ${{ github.token }}
       # The release workflow's packing, so a broken step shows up here
       # rather than halfway through a release.
       - name: pack as a release would

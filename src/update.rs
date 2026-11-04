@@ -143,7 +143,17 @@ fn curl(args: &[&str]) -> Result<Vec<u8>> {
 /// The newest published release (drafts and prereleases excluded by GitHub).
 pub fn latest() -> Result<Release> {
     let url = format!("{API}/{}/releases/latest", repo());
-    let body = curl(&["-H", "Accept: application/vnd.github+json", &url]).map_err(|e| {
+    // CI's runners share their address, and with it GitHub's limit on
+    // anonymous requests; CI hands over its token. Only for this request,
+    // and only under this name, so a GITHUB_TOKEN set for other tools
+    // isn't sent.
+    let auth = std::env::var("CLIPT_GITHUB_TOKEN").ok().map(|t| format!("Authorization: Bearer {t}"));
+    let mut args = vec!["-H", "Accept: application/vnd.github+json"];
+    if let Some(a) = &auth {
+        args.extend(["-H", a]);
+    }
+    args.push(&url);
+    let body = curl(&args).map_err(|e| {
         // GitHub answers 404 until the first release is published.
         if format!("{e}").contains("404") { anyhow::anyhow!("no releases have been published yet") } else { e }
     })?;
