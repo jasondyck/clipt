@@ -5,11 +5,16 @@
 mod capture;
 mod clipboard;
 mod overlay;
+pub mod record;
 mod tray;
 mod windows;
 
+pub use tray::notify;
+
 use crate::config::Config;
 use crate::editor::{Editor, Outcome};
+use crate::record::Target;
+use crate::record::audio::Source;
 use crate::{Args, crop_geometry, parse_geometry, stitch, write_png};
 use anyhow::{Context, Result, bail};
 
@@ -21,15 +26,24 @@ USAGE:
     clipt full            Capture the whole desktop
     clipt screen [NAME]   Capture one monitor (default: the main one)
     clipt list            Show the monitors
+    clipt record          Pick an area or window to record (Enter starts), saved as MP4
+    clipt record screen [NAME]  Record one monitor (default: the main one)
+    clipt record window APP     Record APP's frontmost window, e.g. notepad
+    clipt record -g GEOM  Record a region (within one monitor)
+    clipt record --stop   Stop the running recording
+    clipt record --pause / --resume / --toggle-pause
     clipt tray            Notification-area icon, with the hotkey (Print Screen)
     clipt config [KEY [VALUE]]  Show the settings, one setting, or set it
 
 OPTIONS:
     -o, --output PATH     Write the PNG to PATH ('-' for stdout) instead of the save dir
+                          (record: the .mp4/.mkv/.mov/.gif file)
     -c, --clipboard       Copy to the clipboard (full/screen)
     -g, --geometry GEOM   Crop to \"X,Y WxH\" (full)
     -d, --delay SECS      Wait before capturing
         --cursor          Include the pointer
+        --fps N           Recording frame rate (default 30)
+        --gif             Save the recording as a GIF (at most 15 fps)
     -h, --help            Show this help
     -V, --version         Show the version
 
@@ -41,18 +55,25 @@ EDITOR KEYS:
     Shift                 square / 45°    arrows         nudge (Shift resizes)
     Enter, Ctrl+C, dbl-click  copy        Ctrl+S         save
     Ctrl+Z / Ctrl+Shift+Z undo / redo     Esc / right-click  cancel / back
+    Ctrl+R                switch between screenshot and video (or click
+                          Screenshot / Video at the bottom of the screen)
 
 Config: %APPDATA%\\clipt\\config.toml (save_dir, filename, color, palette,
-width, copy_on_save, notify, cursor, font, hotkey, hotkey_full). hotkey is
-the tray's shortcut for a region, default \"print\" (Print Screen), or
-e.g. \"ctrl+shift+s\"; \"\" turns it off. Notifications need the tray.
-Screenshots go to Pictures\\Screenshots, where Windows keeps its own.
+width, copy_on_save, notify, cursor, font, hotkey, hotkey_full, video_dir,
+video_filename, record_fps, record_codec, record_format, max_duration).
+hotkey is the tray's shortcut for a region, default \"print\" (Print
+Screen), or e.g. \"ctrl+shift+s\"; \"\" turns it off. Notifications need
+the tray. Screenshots go to Pictures\\Screenshots and recordings to
+Videos\\Captures, where Windows keeps its own. Recording needs ffmpeg
+(winget install Gyan.FFmpeg, or ffmpeg.exe beside clipt.exe); there's no
+sound yet.
 ";
 
 pub fn run(args: Args, cfg: Config) -> Result<()> {
     match args.cmd.as_str() {
         "gui" | "full" | "screen" | "list" | "tray" => {}
-        "record" | "update" | "gnome-extension" => bail!("`clipt {}` isn't available on Windows yet", args.cmd),
+        "record" => return record_cmd(args, &cfg),
+        "update" | "gnome-extension" => bail!("`clipt {}` isn't available on Windows yet", args.cmd),
         other => bail!("unknown command '{other}' (try --help)"),
     }
     if args.backend.is_some() {
@@ -134,9 +155,21 @@ pub fn run(args: Args, cfg: Config) -> Result<()> {
     let mut ed = Editor::new(shots, fonts, true, cfg.color.saturating_sub(1), cfg.width);
     ed.windows = wins.join().unwrap_or_default();
     ed.palette = cfg.palette_rgb();
+    // It can switch to recording the selection (Ctrl+R, or its buttons).
+    ed.can_switch = true;
+    ed.gif = crate::wants_gif(&cfg, &args);
+    let audio = Source::parse(args.audio.as_deref().unwrap_or(&cfg.record_audio)).unwrap_or_default();
+    let (system, mic) = Source::toggles(&audio);
+    ed.sound = crate::editor::SoundToggles { system, mic };
 
     let mut session = overlay::Session::new(ed, &desk)?;
     let outcome = session.run()?;
+    crate::remember_gif(&cfg, &args, session.editor());
+    if outcome == Outcome::Record {
+        let picked = recording_picked(session)?;
+        crate::record::ensure_idle()?;
+        return record(&cfg, &args, picked, audio);
+    }
     if session.editor().palette_changed
         && let Err(e) = Config::save_palette(&session.editor().palette)
     {
@@ -164,6 +197,103 @@ pub fn run(args: Args, cfg: Config) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The overlay's choice of what to record: the window or area, the sound
+/// toggles, and whether to make a GIF.
+type Picked = (Target, crate::editor::SoundToggles, bool);
+
+/// `clipt record`, and `--stop`, `--pause` and friends.
+fn record_cmd(mut args: Args, cfg: &Config) -> Result<()> {
+    if args.backend.is_some() {
+        bail!("--backend: Windows has only the one");
+    }
+    if args.stop {
+        return crate::record::stop();
+    }
+    if let Some(cmd) = args.pause.take() {
+        return crate::record::pause(cmd);
+    }
+    crate::record::ensure_idle()?;
+    // Before the overlay: a bad setting stops here.
+    let audio = Source::parse(args.audio.as_deref().unwrap_or(&cfg.record_audio))?;
+    crate::record::Balance::parse(args.audio_balance.as_deref().unwrap_or(&cfg.record_audio_balance))?;
+    if !audio.is_empty() {
+        crate::record::audio::check(&audio)?;
+    }
+    capture::dpi_aware();
+    if args.delay > 0.0 {
+        std::thread::sleep(std::time::Duration::from_secs_f64(args.delay));
+    }
+    let (system, mic) = Source::toggles(&audio);
+    let sound = crate::editor::SoundToggles { system, mic };
+    let gif = crate::wants_gif(cfg, &args);
+    let picked = match (args.record_mode.as_deref(), &args.geometry) {
+        (_, Some(g)) => (Target::Geometry(g.clone()), sound, gif),
+        (Some("screen"), None) => (Target::Screen(args.screen.clone()), sound, gif),
+        (Some("window"), None) if args.screen.is_some() => {
+            let app = args.screen.as_deref().unwrap_or_default();
+            let desk = capture::Desktop::get()?;
+            let w = windows::list(desk.scale)
+                .into_iter()
+                .find(|w| w.app.eq_ignore_ascii_case(app) || w.app.eq_ignore_ascii_case(&format!("{app}.exe")))
+                .with_context(|| format!("no window of the app '{app}'"))?;
+            (Target::Window(w), sound, gif)
+        }
+        (None | Some("region" | "window"), None) => {
+            let desk = capture::Desktop::get()?;
+            let cursor = args.cursor || cfg.cursor;
+            let font_path = cfg.font.clone();
+            let fonts = std::thread::spawn(move || crate::text::Fonts::load(font_path.as_deref()));
+            let scale = desk.scale;
+            let wins = std::thread::spawn(move || windows::list(scale));
+            let shots = desk.capture(&(0..desk.outputs.len()).collect::<Vec<_>>(), cursor)?;
+            let fonts = fonts.join().map_err(|_| anyhow::anyhow!("font loader panicked"))??;
+            let mut ed = Editor::new(shots, fonts, true, cfg.color.saturating_sub(1), cfg.width);
+            ed.record = true;
+            ed.sound = sound;
+            ed.gif = gif;
+            ed.windows = wins.join().unwrap_or_default();
+            let mut session = overlay::Session::new(ed, &desk)?;
+            let outcome = session.run()?;
+            crate::remember_gif(cfg, &args, session.editor());
+            if outcome != Outcome::Record {
+                return Ok(()); // cancelled
+            }
+            recording_picked(session)?
+        }
+        (Some(m), None) => bail!("unknown recording mode '{m}' (screen, region, window, or -g GEOM)"),
+    };
+    record(cfg, &args, picked, audio)
+}
+
+/// What a record-mode overlay picked; takes the overlay down.
+fn recording_picked(mut session: overlay::Session) -> Result<Picked> {
+    let target = crate::recording_target(session.editor())?;
+    let (sound, gif) = (session.editor().sound, session.editor().gif);
+    session.hide();
+    drop(session);
+    // Let DWM take the overlay off the screen before the first frame.
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    Ok((target, sound, gif))
+}
+
+fn record(cfg: &Config, args: &Args, (target, sound, gif): Picked, audio: Vec<Source>) -> Result<()> {
+    let audio = Source::with_toggles(audio, sound.system, sound.mic);
+    if !audio.is_empty() {
+        crate::record::audio::check(&audio)?;
+    }
+    let opts = crate::record::Options {
+        target,
+        output: args.output.clone(),
+        fps: args.fps,
+        cursor: args.cursor || cfg.cursor,
+        gif: Some(gif),
+        audio,
+        separate_audio: args.separate_audio || cfg.record_separate_audio,
+        balance: crate::record::Balance::parse(args.audio_balance.as_deref().unwrap_or(&cfg.record_audio_balance))?,
+    };
+    crate::record::run(cfg, opts)
 }
 
 /// Started with a console of its own (double-clicked, or from a shortcut),

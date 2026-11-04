@@ -69,7 +69,8 @@ impl Default for Config {
             cursor: false,
             font: None,
             check_updates: false,
-            video_dir: "~/Videos/Screencasts".into(),
+            // Windows' Game Bar keeps its clips in Videos\Captures.
+            video_dir: if cfg!(windows) { "~/Videos/Captures" } else { "~/Videos/Screencasts" }.into(),
             video_filename: "Recording_%Y-%m-%d_%H-%M-%S".into(),
             record_fps: 30,
             record_codec: "auto".into(),

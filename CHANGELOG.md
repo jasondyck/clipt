@@ -6,6 +6,13 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Recording on Windows: `clipt record` (a region, a monitor or a window,
+  which it follows), `--stop`, `--pause` and `--resume`, Ctrl+R in the
+  screenshot overlay, and GIFs, without sound yet. It needs ffmpeg, and
+  uses NVIDIA's, Intel's or AMD's encoder where there is one. Recordings go
+  to `Videos\Captures`.
+
 ## [0.7.1] - 2026-11-04
 
 ### Fixed

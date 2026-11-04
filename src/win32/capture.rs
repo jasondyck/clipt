@@ -185,7 +185,7 @@ fn grab(r: RECT, cursor: bool) -> Result<Image> {
 }
 
 /// The pointer as it is now, at its hotspot.
-unsafe fn draw_cursor(dc: HDC, r: RECT) {
+pub unsafe fn draw_cursor(dc: HDC, r: RECT) {
     let mut ci: CURSORINFO = unsafe { std::mem::zeroed() };
     ci.cbSize = size_of::<CURSORINFO>() as u32;
     if unsafe { GetCursorInfo(&mut ci) } == 0 || ci.flags & CURSOR_SHOWING == 0 || ci.hCursor.is_null() {

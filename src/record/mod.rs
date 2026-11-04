@@ -30,12 +30,17 @@ use crate::win32::record as host;
 #[cfg(wayland_x11)]
 use linux as host;
 
-pub use control::{PauseCmd, ensure_idle, pause, status, stop};
+// The Windows tray doesn't show the recording state yet.
+#[cfg(wayland_x11)]
+pub use control::status;
+pub use control::{PauseCmd, ensure_idle, pause, stop};
 pub use encode::Balance;
 
 use control::{CMD_STOP, Lock, PAUSED, PAUSED_AT, RESUMED_AT, STOP, STOPPED_AT, apply, free_bytes, instant_at};
 
-use crate::capture::{Backend, LogicalRect, Output, VideoFrame};
+#[cfg(wayland_x11)]
+use crate::capture::Backend;
+use crate::capture::{LogicalRect, Output, VideoFrame};
 use crate::config::Config;
 use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
@@ -62,6 +67,7 @@ pub struct Options {
     pub output: Option<String>,
     pub fps: Option<u32>,
     pub cursor: bool,
+    #[cfg(wayland_x11)]
     pub backend: Option<Backend>,
     /// GIF or not, over `record_format`: from `--gif` or the overlay's
     /// toggle. A `.gif` output name also makes a GIF.
@@ -237,7 +243,10 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         Ok(stats) => {
             println!("{}", target.display());
             if cfg.notify {
+                #[cfg(wayland_x11)]
                 crate::notify::send("Recording saved", &format!("{}  ·  {}", target.display(), stats), None);
+                #[cfg(windows)]
+                crate::win32::notify("Recording saved", &format!("{}  ·  {}", target.display(), stats), Some(&target));
             }
         }
         Err(_) if path.exists() => eprintln!("clipt: the partial recording is in {}", path.display()),
@@ -247,7 +256,7 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
 }
 
 /// The output to capture and the crop within it (output-logical coordinates).
-fn resolve_target(outputs: &[Output], target: &Target) -> Result<(Output, Option<LogicalRect>)> {
+pub fn resolve_target(outputs: &[Output], target: &Target) -> Result<(Output, Option<LogicalRect>)> {
     match target {
         Target::Screen(None) => Ok((outputs[0].clone(), None)),
         Target::Screen(Some(n)) => {

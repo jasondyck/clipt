@@ -2,6 +2,8 @@
 
 Status, 2026-11-04: phases 0, 1 and 2 are built (screenshots, the tray and
 its hotkey), checked under Wine and in CI, and not yet tried on a real PC.
+Phase 3 (recording) works from the command line and the overlay, checked
+under Wine; the tray's recording controls and the red frame are next.
 Of phase 5, releases carry `clipt-vX-x86_64-windows.zip`; the updater and
 package manifests are still to do.
 A tester at work can try each phase's build; see *Testing* below.
@@ -30,9 +32,24 @@ A tester at work can try each phase's build; see *Testing* below.
   clicking one opens the file. Actions start `clipt` with no console, and a
   `clipt` double-clicked or started from a shortcut starts again without
   its console window. One tray per session (a named mutex).
+- **Phase 3, so far.** `src/win32/record.rs` grabs frames with GDI at the
+  recording's frame rate and follows a window by its DWM frame bounds;
+  everything after the frame (pausing, the camera, the Matroska stream to
+  ffmpeg, GIFs) is the Linux code, now shared. Recording control
+  (`src/record/control.rs`) is a named mutex `Local\clipt-record`, a state
+  file in %TEMP% saying whether it's paused, and a named pipe per session
+  for stop, pause and resume; Ctrl+C reaches it through
+  `SetConsoleCtrlHandler`. Encoders tried: NVENC, Quick Sync, AMF, Media
+  Foundation (hardware only), libx264. Sound says it isn't there yet.
 
 Choices made on the way, where they differ from the plan below:
 
+- **GDI for recording too, for now.** At 1080p a `BitBlt` takes a few
+  milliseconds, enough for 30 fps; Desktop Duplication would cost less at
+  4K but needs COM interfaces by hand. Worth measuring on the tester's PC.
+- **Vendor encoders before Media Foundation.** ffmpeg's `h264_mf` picks
+  whatever encoder MFT the system offers and has coarser rate control, so
+  it comes after NVENC, Quick Sync and AMF rather than first.
 - **GDI, not Desktop Duplication, for screenshots.** `BitBlt` is a few calls,
   works in remote desktop sessions, and needs no COM (`windows-sys` has no
   COM interfaces). Desktop Duplication comes with recording (phase 3), and

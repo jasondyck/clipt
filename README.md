@@ -292,14 +292,18 @@ a checklist for testers.
 Screenshots work on Windows: `clipt` (the editor), `clipt full` and
 `clipt screen`, with copy and save as on Linux, and `clipt tray` puts an
 icon in the notification area with **Print Screen** to capture a region.
-There's no recording yet, and it hasn't been tried on a real PC. Releases
-have `clipt-vX-x86_64-windows.zip` (unsigned, so Windows asks before the
-first run); builds of `main` come from the `windows` CI job (the
+`clipt record` records a region, a monitor or a window, as on Linux but
+without sound yet, into `Videos\Captures`; it needs ffmpeg (`winget install
+Gyan.FFmpeg`, or `ffmpeg.exe` beside `clipt.exe`). It hasn't been tried on
+a real PC. Releases have `clipt-vX-x86_64-windows.zip` (unsigned, so
+Windows asks before the first run); builds of `main` come from the `windows` CI job (the
 `clipt-windows` artifact):
 
 ```
 clipt.exe                    # select, annotate, copy (Enter) or save (Ctrl+S)
 clipt.exe full -c            # the whole desktop to the clipboard
+clipt.exe record             # pick an area or window, Enter records
+clipt.exe record --stop      # stop it (or Ctrl+C where it runs)
 clipt.exe tray               # the tray icon; its menu has Start with Windows
 ```
 

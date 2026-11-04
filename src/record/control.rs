@@ -242,10 +242,10 @@ mod win {
     use std::sync::OnceLock;
     use std::time::Instant;
     use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, PIPE_ACCESS_INBOUND, ReadFile};
+    use windows_sys::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, PIPE_ACCESS_INBOUND, ReadFile, SYNCHRONIZE};
     use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
     use windows_sys::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_TYPE_BYTE, PIPE_WAIT};
-    use windows_sys::Win32::System::Threading::{CreateMutexW, OpenMutexW, SYNCHRONIZE};
+    use windows_sys::Win32::System::Threading::{CreateMutexW, OpenMutexW};
 
     const MUTEX: &str = r"Local\clipt-record";
 
@@ -271,8 +271,15 @@ mod win {
         BASE.get_or_init(Instant::now).elapsed().as_nanos() as u64 + 1
     }
 
-    unsafe extern "system" fn on_ctrl(_: u32) -> i32 {
+    unsafe extern "system" fn on_ctrl(event: u32) -> i32 {
+        const CTRL_BREAK_EVENT: u32 = 1;
         apply(CMD_STOP);
+        // Closing the console, logging off and shutting down end the
+        // process as soon as this returns (and after 5 s regardless), so
+        // hold on while the recording finishes its file and exits.
+        if event > CTRL_BREAK_EVENT {
+            std::thread::sleep(std::time::Duration::from_secs(10));
+        }
         // Handled: the recording ends itself, and with it the process.
         1
     }
