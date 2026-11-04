@@ -165,6 +165,19 @@ jobs:
           dist/clipt.exe list
           dist/clipt.exe full -o dist/full.png
           file dist/full.png
+      # Packed as the release workflow's windows job packs it, so a broken
+      # step shows up here rather than halfway through a release.
+      - name: pack as a release would
+        shell: bash
+        run: |
+          name="clipt-vci-x86_64-windows"
+          mkdir -p "$name"
+          cp target/release/clipt.exe README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "$name/"
+          "$name/clipt.exe" --version
+          7z a "$name.zip" "$name" >/dev/null
+          sha256sum "$name.zip" > "$name.zip.sha256"
+          cat "$name.zip.sha256"
+          7z l "$name.zip" | tail -3
       - uses: actions/upload-artifact@v7
         with:
           name: clipt-windows

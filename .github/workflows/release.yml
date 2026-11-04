@@ -7,6 +7,7 @@ name: release
 #   * Push a tag like v0.2.0 yourself, after bumping by hand.
 # Either way: x86_64 and aarch64 tarballs, .deb and .rpm, a universal macOS
 # tarball (signed and notarised, with the secrets docs/macos-plan.md lists),
+# a Windows zip,
 # a published GitHub release (prerelease for tags like v0.2.0-rc1) with that
 # version's CHANGELOG section as notes, and crates.io when a
 # CARGO_REGISTRY_TOKEN is configured.
@@ -168,8 +169,36 @@ jobs:
             clipt-*.tar.gz*
             clipt-*-macos-app.zip*
 
+  # clipt.exe in a zip, unsigned (Windows warns before the first run; see
+  # docs/windows-plan.md). Screenshots and the tray; no recording yet.
+  windows:
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked
+      - name: pack
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          name="clipt-${TAG}-x86_64-windows"
+          mkdir -p "$name"
+          cp target/release/clipt.exe README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "$name/"
+          "$name/clipt.exe" --version
+          7z a "$name.zip" "$name" >/dev/null
+          sha256sum "$name.zip" > "$name.zip.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: clipt-*-windows.zip*
+
   release:
-    needs: [prepare, build, macos]
+    needs: [prepare, build, macos, windows]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -185,7 +214,7 @@ jobs:
         run: |
           v=${TAG#v}
           awk -v v="$v" '/^## \[/{p = index($0, "[" v "]") > 0; next} p' CHANGELOG.md > notes.md
-          sha256sum clipt-*.tar.gz clipt-*-macos-app.zip clipt*.deb clipt*.rpm > SHA256SUMS
+          sha256sum clipt-*.tar.gz clipt-*-macos-app.zip clipt-*-windows.zip clipt*.deb clipt*.rpm > SHA256SUMS
           case "$TAG" in *-*) echo "PRERELEASE=true" >> "$GITHUB_ENV" ;; *) echo "PRERELEASE=false" >> "$GITHUB_ENV" ;; esac
       - uses: softprops/action-gh-release@v2
         with:
@@ -196,6 +225,7 @@ jobs:
           files: |
             clipt-*.tar.gz*
             clipt-*-macos-app.zip*
+            clipt-*-windows.zip*
             clipt*.deb
             clipt*.rpm
             SHA256SUMS

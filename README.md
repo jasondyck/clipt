@@ -292,8 +292,10 @@ a checklist for testers.
 Screenshots work on Windows: `clipt` (the editor), `clipt full` and
 `clipt screen`, with copy and save as on Linux, and `clipt tray` puts an
 icon in the notification area with **Print Screen** to capture a region.
-There's no recording yet, and it hasn't been tried on a real PC. Builds of
-`main` come from the `windows` CI job (the `clipt-windows` artifact):
+There's no recording yet, and it hasn't been tried on a real PC. Releases
+have `clipt-vX-x86_64-windows.zip` (unsigned, so Windows asks before the
+first run); builds of `main` come from the `windows` CI job (the
+`clipt-windows` artifact):
 
 ```
 clipt.exe                    # select, annotate, copy (Enter) or save (Ctrl+S)
