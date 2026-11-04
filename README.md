@@ -301,6 +301,7 @@ first run); builds of `main` come from the `windows` CI job (the
 clipt.exe                    # select, annotate, copy (Enter) or save (Ctrl+S)
 clipt.exe full -c            # the whole desktop to the clipboard
 clipt.exe tray               # the tray icon; its menu has Start with Windows
+clipt.exe update             # update to the latest release (--check: just check)
 ```
 
 Windows 11 gives Print Screen to the Snipping Tool. To have it open clipt,
