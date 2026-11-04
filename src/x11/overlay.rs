@@ -164,6 +164,13 @@ impl Session {
                 return Ok(());
             }
             if taken && (i == 20 || i == 60) {
+                // Some popups grab only the pointer. Holding the keyboard
+                // ourselves would send the Escape to us, so let it go and
+                // let the key reach the focused window, usually the popup's.
+                if kb {
+                    self.x.conn.ungrab_keyboard(x11rb::CURRENT_TIME)?;
+                    kb = false;
+                }
                 self.press_escape();
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -172,7 +179,7 @@ impl Session {
     }
 
     /// A synthetic Escape press and release, which goes to whoever holds the
-    /// keyboard grab. Best effort: without XTest the grab just fails as before.
+    /// keyboard grab, or else to the focused window. Best effort: without XTest the grab just fails as before.
     fn press_escape(&self) {
         let Some(code) = self.keymap.code(0xff1b) else { return };
         if std::env::var_os("CLIPT_DEBUG").is_some() {
