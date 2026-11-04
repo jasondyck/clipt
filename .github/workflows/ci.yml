@@ -140,7 +140,8 @@ jobs:
           d=$(mktemp -d) && cp dist/clipt "$d/"
           CLIPT_UPDATE_AS=0.0.0 "$d/clipt" update
           want=$(gh release view --json tagName -q .tagName)
-          "$d/clipt" --version | tee /dev/stderr | grep -qx "clipt ${want#v}"
+          v=$("$d/clipt" --version) && echo "$v"
+          [ "$v" = "clipt ${want#v}" ]
         env:
           GH_TOKEN: ${{ github.token }}
       # Zipped with ditto: an artifact upload drops the executable bit, and
@@ -185,7 +186,8 @@ jobs:
           CLIPT_UPDATE_AS=0.0.0 "$d/clipt.exe" update
           ls "$d"
           want=$(gh release view --json tagName -q .tagName)
-          "$d/clipt.exe" --version | tee /dev/stderr | tr -d '\r' | grep -qx "clipt ${want#v}"
+          v=$("$d/clipt.exe" --version | tr -d '\r') && echo "$v"
+          [ "$v" = "clipt ${want#v}" ]
           "$d/clipt.exe" list
           test ! -e "$d/clipt.exe.old"
         env:
