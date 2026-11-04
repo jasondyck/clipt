@@ -37,6 +37,7 @@
     <binary>clipt</binary>
   </provides>
   <releases>
+    <release version="0.7.1" date="2026-11-04"/>
     <release version="0.7.0" date="2026-11-04"/>
     <release version="0.6.1" date="2026-11-03"/>
     <release version="0.6.0" date="2026-11-03"/>
