@@ -94,6 +94,10 @@ struct Slot {
     audio: std::collections::VecDeque<(usize, audio::Chunk)>,
     /// How many sound threads have read everything up to the stop.
     audio_done: usize,
+    /// Whether ffmpeg has taken the first frame. Until then the writer can be
+    /// held up for seconds while it starts (under Wine, say), so sound piling
+    /// up then isn't a stall.
+    encoding: bool,
     error: Option<String>,
     done: bool,
 }
@@ -197,7 +201,7 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
             let r = cap.run(|c| {
                 let (m, cv) = &*slot;
                 let mut s = m.lock().unwrap();
-                if s.audio.len() >= MAX_QUEUED_AUDIO * sources {
+                if s.encoding && s.audio.len() >= MAX_QUEUED_AUDIO * sources {
                     s.error = Some("ffmpeg isn't keeping up with the sound".into());
                     cv.notify_one();
                     return false;
@@ -486,6 +490,16 @@ fn write_loop(
         };
         let ts = stamp(at, t0.unwrap(), paused_total, &mut last_ts);
         e.write(&out.data, ts)?;
+        if written == 0 {
+            // ffmpeg is running and reading: take the sound that piled up
+            // while it started, and from now on too much means a stall.
+            let mut s = m.lock().unwrap();
+            for (i, _) in &s.audio {
+                heard[*i] = true;
+            }
+            pending.extend(s.audio.drain(..));
+            s.encoding = true;
+        }
         written += 1;
         last_write = due;
         fresh = false;
