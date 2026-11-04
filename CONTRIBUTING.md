@@ -58,7 +58,7 @@ Run the **release** workflow from the Actions tab (or
 sets the version in `Cargo.toml`, turns the CHANGELOG's `[Unreleased]`
 section into `[0.2.0] - <date>`, commits, tags `v0.2.0` and publishes a
 GitHub release with Linux tarballs, `.deb`, `.rpm`, a signed and notarised
-universal macOS tarball, and `SHA256SUMS`. A version with
+universal macOS tarball, a Windows zip, and `SHA256SUMS`. A version with
 a suffix (`0.2.0-rc1`) is marked as a prerelease, which `clipt update`
 ignores. Keep `[Unreleased]` up to date as you go; it becomes the release
 notes.

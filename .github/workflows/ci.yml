@@ -165,6 +165,13 @@ jobs:
           dist/clipt.exe list
           dist/clipt.exe full -o dist/full.png
           file dist/full.png
+      # The release workflow's packing, so a broken step shows up here
+      # rather than halfway through a release.
+      - name: pack as a release would
+        shell: bash
+        run: |
+          .github/scripts/pack-windows.sh vci
+          cat clipt-vci-x86_64-windows.zip.sha256
       - uses: actions/upload-artifact@v7
         with:
           name: clipt-windows
