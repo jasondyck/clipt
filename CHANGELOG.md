@@ -6,6 +6,11 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `clipt update` on Windows and macOS. On Windows it updates an unpacked
+  release zip, moving the running `clipt.exe` aside (the next start deletes
+  it); on macOS, a copy of the command-line binary outside `clipt.app`.
+
 ## [0.7.1] - 2026-11-04
 
 ### Fixed

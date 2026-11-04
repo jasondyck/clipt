@@ -133,6 +133,16 @@ jobs:
         run: |
           dist/clipt full -o dist/full.png
           file dist/full.png
+      # A copy outside any app bundle updates itself from the latest release:
+      # download, checksum, unpack and swap, as someone's would.
+      - name: update
+        run: |
+          d=$(mktemp -d) && cp dist/clipt "$d/"
+          CLIPT_UPDATE_AS=0.0.0 "$d/clipt" update
+          want=$(gh release view --json tagName -q .tagName)
+          "$d/clipt" --version | tee /dev/stderr | grep -qx "clipt ${want#v}"
+        env:
+          GH_TOKEN: ${{ github.token }}
       # Zipped with ditto: an artifact upload drops the executable bit, and
       # with it the app.
       - run: |
@@ -165,6 +175,21 @@ jobs:
           dist/clipt.exe list
           dist/clipt.exe full -o dist/full.png
           file dist/full.png
+      # The copy updates itself from the latest release while running, which
+      # Windows only allows by moving the running exe aside; the next start
+      # deletes what was moved.
+      - name: update
+        shell: bash
+        run: |
+          d=$(mktemp -d) && cp dist/clipt.exe "$d/"
+          CLIPT_UPDATE_AS=0.0.0 "$d/clipt.exe" update
+          ls "$d"
+          want=$(gh release view --json tagName -q .tagName)
+          "$d/clipt.exe" --version | tee /dev/stderr | tr -d '\r' | grep -qx "clipt ${want#v}"
+          "$d/clipt.exe" list
+          test ! -e "$d/clipt.exe.old"
+        env:
+          GH_TOKEN: ${{ github.token }}
       # The release workflow's packing, so a broken step shows up here
       # rather than halfway through a release.
       - name: pack as a release would
