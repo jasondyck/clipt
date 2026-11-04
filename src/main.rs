@@ -565,12 +565,13 @@ fn gui(cfg: &Config, args: &Args, mut ed: Editor, kind: capture::DisplayKind, ba
     let want_copy = outcome == Outcome::Copy || cfg.copy_on_save;
     let clip = if want_copy { session.claim_clipboard().map_err(|e| eprintln!("clipt: {e:#}")).ok() } else { None };
     session.hide()?;
-    let png = img.encode_png()?;
+    let save = outcome == Outcome::Save || args.output.is_some();
+    let png = if save { img.encode_png()? } else { img.encode_png_quick()? };
     if let Some(c) = &clip {
         c.set(png.clone());
     }
 
-    let saved = if outcome == Outcome::Save || args.output.is_some() { Some(write_png(cfg, args.output.as_deref(), &png)?) } else { None };
+    let saved = if save { Some(write_png(cfg, args.output.as_deref(), &png)?) } else { None };
     if cfg.notify {
         match (&saved, want_copy) {
             (Some(Some(p)), true) => notify::send("Screenshot saved and copied", &p.display().to_string(), Some(p)),
@@ -711,10 +712,11 @@ fn record_picked(
 
 #[cfg(wayland_x11)]
 fn deliver(cfg: &Config, args: &Args, img: image::Image, kind: capture::DisplayKind) -> Result<()> {
-    let png = img.encode_png()?;
+    let save = args.output.is_some() || !args.clipboard;
+    let png = if save { img.encode_png()? } else { img.encode_png_quick()? };
     let (iw, ih) = (img.width, img.height);
     drop(img);
-    let path = if args.output.is_some() || !args.clipboard { write_png(cfg, args.output.as_deref(), &png)? } else { None };
+    let path = if save { write_png(cfg, args.output.as_deref(), &png)? } else { None };
     if let Some(p) = &path
         && args.output.is_none()
     {
