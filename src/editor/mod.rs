@@ -205,6 +205,43 @@ pub struct SoundToggles {
     pub mic: bool,
 }
 
+/// Editing an image rather than a screenshot (`clipt edit`, the browser
+/// extension's full pages): `screens` holds one virtual screen the size of
+/// the image, padded to at least the display's size, and the overlay shows
+/// one display's worth of it at a time, `scroll` logical pixels down.
+pub struct Doc {
+    /// The monitor it's shown on.
+    pub display: Output,
+    /// Its physical pixels per logical one.
+    pub scale: f32,
+    /// How far down the virtual screen the display starts, in its logical
+    /// pixels.
+    pub scroll: f32,
+    /// The image within the virtual screen.
+    pub page: Rect,
+}
+
+impl Doc {
+    /// The display's size in physical pixels: what the overlay draws.
+    pub fn pixels(&self) -> (u32, u32) {
+        ((self.display.width as f32 * self.scale).round() as u32, (self.display.height as f32 * self.scale).round() as u32)
+    }
+
+    /// Where the display starts in the virtual screen, in physical pixels:
+    /// the origin the overlay renders from.
+    pub fn origin(&self) -> (i32, i32) {
+        (0, (self.scroll * self.scale).round() as i32)
+    }
+
+    /// The part of the virtual screen on the display.
+    pub fn visible(&self) -> Rect {
+        Rect::from_xywh(0.0, self.scroll, self.display.width as f32, self.display.height as f32).unwrap()
+    }
+}
+
+/// Logical pixels one notch of the wheel scrolls a document.
+const WHEEL_STEP: f32 = 90.0;
+
 pub struct Editor {
     pub screens: Vec<Screen>,
     pub swap_rb: bool,
@@ -253,6 +290,8 @@ pub struct Editor {
     pub width_hint: bool,
     /// The `?` sheet of shortcuts, open on this screen.
     pub help: Option<usize>,
+    /// Editing an image larger than the display; see `Doc`.
+    pub doc: Option<Doc>,
     /// The last `?`, to tell a held key's repeats from a second press.
     help_key_at: Option<std::time::Instant>,
     /// Bumped whenever committed shapes change; forces a full redraw.
@@ -308,6 +347,7 @@ impl Editor {
             last_click: None,
             width_hint: false,
             help: None,
+            doc: None,
             help_key_at: None,
             revision: 0,
             drawn_revision: None,
@@ -348,6 +388,74 @@ impl Editor {
         }
         self.drawn_revision = Some(self.revision);
         if full { Damage::Full } else { Damage::Rects(out) }
+    }
+
+    /// The editor on `img` rather than on a screenshot, shown on `display`
+    /// at `scale` (the display's physical pixels per logical one), one
+    /// image pixel to one physical pixel. It starts with the whole image
+    /// selected.
+    pub fn for_image(img: &Image, display: Output, scale: f32, fonts: Fonts, color: usize, width: f32) -> Self {
+        let lw = (img.width as f32 / scale).ceil();
+        let lh = (img.height as f32 / scale).ceil();
+        let vw = lw.max(display.width as f32);
+        let vh = lh.max(display.height as f32);
+        // Centred across, and down too when it's shorter than the display.
+        let left = ((vw - lw) / 2.0).floor();
+        let top = ((vh - lh) / 2.0).floor();
+        let (pw, ph) = ((vw * scale).round() as u32, (vh * scale).round() as u32);
+        let mut canvas = Image::new(pw, ph);
+        for px in canvas.data.chunks_exact_mut(4) {
+            px.copy_from_slice(&[0x20, 0x20, 0x24, 255]);
+        }
+        let (x0, y0) = ((left * scale).round() as usize, (top * scale).round() as usize);
+        let row = img.width as usize * 4;
+        for (y, src) in img.data.chunks_exact(row).enumerate().take(ph as usize - y0) {
+            let at = ((y0 + y) * pw as usize + x0) * 4;
+            let n = row.min(canvas.data.len() - at).min((pw as usize - x0) * 4);
+            canvas.data[at..at + n].copy_from_slice(&src[..n]);
+        }
+        let output = Output {
+            index: 0,
+            name: "image".into(),
+            description: String::new(),
+            x: 0,
+            y: 0,
+            width: vw as u32,
+            height: vh as u32,
+            native: (pw, ph),
+        };
+        let mut ed = Self::new(vec![Shot { output, image: canvas }], fonts, true, color, width);
+        let page = Rect::from_xywh(left, top, lw, lh).unwrap();
+        ed.sel = Some(page);
+        ed.doc = Some(Doc { display, scale, scroll: 0.0, page });
+        ed
+    }
+
+    /// The mouse wheel: in a document it scrolls the page (with Ctrl, the
+    /// stroke width, as the wheel does elsewhere). `dy` is in notches,
+    /// positive downwards.
+    pub fn wheel(&mut self, dy: f32, mods: Mods) -> bool {
+        let Some(doc) = &mut self.doc else { return self.scroll(dy) };
+        if mods.ctrl {
+            return self.scroll(dy);
+        }
+        let max = (self.screens[0].bounds().height() - doc.display.height as f32).max(0.0);
+        let to = (doc.scroll + dy * WHEEL_STEP).clamp(0.0, max);
+        let moved = to - doc.scroll;
+        if moved == 0.0 {
+            return false;
+        }
+        doc.scroll = to;
+        // The pointer stays put on the display, so it moves on the page; a
+        // drag in progress follows it.
+        let p = (self.pointer.0, self.pointer.1 + moved);
+        self.revision += 1;
+        if matches!(self.drag, Drag::None) {
+            self.pointer = p;
+        } else {
+            self.pointer_motion(p, mods);
+        }
+        true
     }
 
     pub fn set_swap_rb(&mut self, swap: bool) {
@@ -709,7 +817,8 @@ impl Editor {
             } else if self.selected.take().is_some() {
                 self.revision += 1;
             } else if self.shapes.is_empty() || self.record {
-                self.sel = None;
+                // A document has nothing behind it to select instead.
+                self.sel = self.doc.as_ref().map(|d| d.page);
                 self.tool = Tool::Select;
             }
             return true;

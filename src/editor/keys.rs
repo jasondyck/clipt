@@ -32,8 +32,11 @@ fn group(title: &'static str, column: usize, keys: &[(&str, &'static str)]) -> G
 
 /// The sheet for the editor as it is: screenshot or record mode, whether it
 /// can switch between them, and whether it knows where windows are.
-pub fn sheet(record: bool, can_switch: bool, windows: bool) -> Vec<Group> {
+pub fn sheet(record: bool, can_switch: bool, windows: bool, doc: bool) -> Vec<Group> {
     let mut select = vec![("Drag", "Select an area")];
+    if doc {
+        select.insert(0, ("Scroll", "Move through the page"));
+    }
     if windows {
         select.extend([("Click", "The highlighted window or screen"), ("Tab", "Window or its whole screen")]);
     } else {
@@ -69,6 +72,8 @@ pub fn sheet(record: bool, can_switch: bool, windows: bool) -> Vec<Group> {
         keys: std::iter::once(Tool::Select).chain(Tool::DRAWING).map(|t| (t.hotkey().to_ascii_uppercase().to_string(), t.name())).collect(),
     };
     tools.keys.push(("Shift".into(), "Square, circle or 45° line"));
+    // In a document the wheel scrolls, and changes the width with Ctrl.
+    let width_wheel = if doc { cmd!("Scroll") } else { "Scroll" };
     let style = group(
         "Style",
         2,
@@ -77,7 +82,7 @@ pub fn sheet(record: bool, can_switch: bool, windows: bool) -> Vec<Group> {
             ("Right-click", "On a colour: change it"),
             ("[", "Thinner"),
             ("]", "Thicker"),
-            ("Scroll", "Thinner or thicker"),
+            (width_wheel, "Thinner or thicker"),
         ],
     );
     let edit = group(
@@ -105,8 +110,8 @@ pub fn sheet(record: bool, can_switch: bool, windows: bool) -> Vec<Group> {
 /// keys. Labels are the Linux and Windows ones; the README says Cmd for Mac.
 #[cfg(test)]
 pub fn markdown() -> String {
-    let mut groups = sheet(false, true, true);
-    groups.extend(sheet(true, true, true).into_iter().filter(|g| g.title == "Record"));
+    let mut groups = sheet(false, true, true, false);
+    groups.extend(sheet(true, true, true, false).into_iter().filter(|g| g.title == "Record"));
     let mut out = String::from("| Key | |\n|---|---|\n");
     for g in groups {
         out += &format!("| **{}** | |\n", g.title);
@@ -137,7 +142,7 @@ mod tests {
 
     #[test]
     fn record_mode_lists_only_what_works_there() {
-        let groups = sheet(true, false, false);
+        let groups = sheet(true, false, false, false);
         assert_eq!(groups.iter().map(|g| g.title).collect::<Vec<_>>(), ["Select", "Record"]);
         let all: Vec<&str> = groups.iter().flat_map(|g| g.keys.iter().map(|(k, _)| k.as_str())).collect();
         assert!(!all.contains(&"Tab"), "no windows to switch from");

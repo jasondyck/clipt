@@ -127,8 +127,15 @@ pub fn toolbar_layout(ed: &Editor) -> Option<(Rect, Vec<(Rect, Button)>)> {
             })
             .sum::<f32>();
     let height = B + PAD * 2.0;
+    // In a document, the toolbar keeps to the part on the display.
+    let (sel, scr) = match &ed.doc {
+        Some(d) => (sel.intersect(&d.visible()).unwrap_or_else(|| d.visible()), d.visible()),
+        None => {
+            let center = (sel.left() + sel.width() / 2.0, sel.top() + sel.height() / 2.0);
+            (sel, ed.screens.iter().map(|s| s.bounds()).find(|b| b.contains(center.0, center.1)).unwrap_or_else(|| ed.desktop()))
+        }
+    };
     let center = (sel.left() + sel.width() / 2.0, sel.top() + sel.height() / 2.0);
-    let scr = ed.screens.iter().map(|s| s.bounds()).find(|b| b.contains(center.0, center.1)).unwrap_or_else(|| ed.desktop());
     let margin = 10.0;
     let y = if sel.bottom() + margin + height <= scr.bottom() - 6.0 {
         sel.bottom() + margin
@@ -716,6 +723,9 @@ fn hint_items(ed: &Editor) -> Vec<(&'static str, &'static str)> {
             v
         }
         (true, true) => vec![("Enter", "Record"), ("Right-click", "Select again")],
+        (true, false) if ed.doc.is_some() && ed.shapes.is_empty() && ed.selected.is_none() => {
+            vec![("Scroll", "Move down the page"), ("Enter", "Copy"), (cmd!("S"), "Save")]
+        }
         (true, false) if ed.shapes.is_empty() && ed.selected.is_none() => {
             vec![("Enter", "Copy"), (cmd!("S"), "Save"), ("Right-click", "Select again")]
         }
@@ -741,12 +751,19 @@ fn hint_width(ed: &Editor) -> f32 {
     w + 16.0
 }
 
+/// Where the hint bar and the `?` sheet go on screen `b`: in a document,
+/// the part of it on the display.
+fn chrome_bounds(ed: &Editor, b: Rect) -> Rect {
+    ed.doc.as_ref().map_or(b, |d| d.visible())
+}
+
 /// At the top of screen `b`, or at the bottom when that would cover the
 /// selection or the toolbar; None if it would cover them there too.
 pub(super) fn hint_rect(ed: &Editor, b: Rect) -> Option<Rect> {
     if hint_items(ed).is_empty() {
         return None;
     }
+    let b = chrome_bounds(ed, b);
     let w = hint_width(ed);
     let x = b.left() + (b.width() - w) / 2.0;
     let low = mode_switch_layout(ed, b).map_or(b.bottom() - 24.0, |(p, _)| p.top() - 12.0) - HINT_H;
@@ -808,8 +825,8 @@ pub(super) fn help_rect(ed: &Editor) -> Option<Rect> {
 
 /// The sheet, centred on the screen it was opened on.
 fn help_layout(ed: &Editor) -> Option<HelpLayout> {
-    let b = ed.screens.get(ed.help?)?.bounds();
-    let groups = keys::sheet(ed.record, ed.can_switch, !ed.windows.is_empty());
+    let b = chrome_bounds(ed, ed.screens.get(ed.help?)?.bounds());
+    let groups = keys::sheet(ed.record, ed.can_switch, !ed.windows.is_empty(), ed.doc.is_some());
     let ncol = groups.iter().map(|g| g.column + 1).max().unwrap_or(1);
     // Each column's key cap width and description width.
     let mut cols = vec![(0.0f32, 0.0f32); ncol];

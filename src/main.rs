@@ -74,8 +74,9 @@ USAGE:
                           e.g. clipt config record_format gif
     clipt gnome-extension Install the GNOME Shell extension that lets the
                           overlay highlight windows on GNOME
-    clipt browser-extension  Set up the Chrome/Edge extension that copies or
-                          saves a whole web page
+    clipt browser-extension  Set up the Chrome/Edge extension that opens a
+                          whole web page in the editor
+    clipt edit FILE       Open a PNG in the editor (- reads standard input)
 
 OPTIONS:
     -o, --output PATH     Write the PNG to PATH ('-' for stdout) instead of the save dir
@@ -189,6 +190,10 @@ fn parse_args() -> Result<Args> {
                 positional += 1;
             }
             Value(v) if positional == 1 && a.cmd == "list" => {
+                a.screen = Some(v.string()?);
+                positional += 1;
+            }
+            Value(v) if positional == 1 && a.cmd == "edit" => {
                 a.screen = Some(v.string()?);
                 positional += 1;
             }
@@ -479,6 +484,28 @@ fn run() -> Result<()> {
             drop(shots);
             deliver(&cfg, &args, img, kind)
         }
+        "edit" => {
+            let path = args.screen.as_deref().context("which image? clipt edit FILE, or - to read it from standard input")?;
+            let bytes = if path == "-" {
+                let mut b = Vec::new();
+                std::io::Read::read_to_end(&mut std::io::stdin().lock(), &mut b).context("reading standard input")?;
+                b
+            } else {
+                let p = config::expand(path);
+                std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?
+            };
+            let img = image::Image::decode_png(&bytes).context("clipt edit opens PNG images")?;
+            drop(bytes);
+            // One image pixel to one physical pixel on the first display.
+            let display = outputs[0].clone();
+            let scale = if display.native.0 > 0 { display.native.0 as f32 / display.width as f32 } else { 1.0 };
+            let kind = cap.kind();
+            drop(cap);
+            let fonts = fonts.join().map_err(|_| anyhow::anyhow!("font loader panicked"))??;
+            let ed = Editor::for_image(&img, display, scale, fonts, cfg.color.saturating_sub(1), cfg.width);
+            drop(img);
+            gui(&cfg, &args, ed, kind, backend, &lap)
+        }
         "gui" => {
             lap("connected");
             // Window positions are fetched while the screen is captured.
@@ -527,8 +554,8 @@ fn run() -> Result<()> {
 #[cfg(wayland_x11)]
 fn gui(cfg: &Config, args: &Args, mut ed: Editor, kind: capture::DisplayKind, backend: Option<Backend>, lap: &dyn Fn(&str)) -> Result<()> {
     // It can switch to recording the selection (Ctrl+R, or its buttons),
-    // with the sound the settings would record.
-    ed.can_switch = true;
+    // with the sound the settings would record; not when it's an image.
+    ed.can_switch = ed.doc.is_none();
     ed.palette = cfg.palette_rgb();
     ed.gif = wants_gif(cfg, args);
     let audio = record::audio::Source::parse(args.audio.as_deref().unwrap_or(&cfg.record_audio)).unwrap_or_default();

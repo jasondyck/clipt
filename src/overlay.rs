@@ -144,7 +144,14 @@ impl Session {
             seats: SeatState::new(&globals, &qh),
             outputs: OutputState::new(&globals, &qh),
             // Room for two full frames per output, so the pool never regrows.
-            pool: SlotPool::new(editor.screens.iter().map(|s| s.bg.data().len() * 2).sum::<usize>().max(4096), &shm)?,
+            pool: SlotPool::new(
+                match &editor.doc {
+                    Some(d) => d.pixels().0 as usize * d.pixels().1 as usize * 4 * 2,
+                    None => editor.screens.iter().map(|s| s.bg.data().len() * 2).sum::<usize>(),
+                }
+                .max(4096),
+                &shm,
+            )?,
             compositor,
             shm,
             format: wl_shm::Format::Argb8888,
@@ -174,7 +181,8 @@ impl Session {
 
         let wl_outputs: Vec<_> = ov.outputs.outputs().collect();
         for (i, scr) in ov.editor.screens.iter().enumerate() {
-            let out = &scr.output;
+            // A document's one virtual screen goes on its display.
+            let out = ov.editor.doc.as_ref().map_or(&scr.output, |d| &d.display);
             let wl_out = wl_outputs
                 .iter()
                 .find(|o| ov.outputs.info(o).and_then(|i| i.name).as_deref() == Some(out.name.as_str()))
@@ -302,6 +310,9 @@ impl Overlay {
 
     fn global(&self, surface: &wl_surface::WlSurface, pos: (f64, f64)) -> Option<(f32, f32)> {
         let s = self.surfs.iter().find(|s| s.role.surface() == surface)?;
+        if let Some(d) = &self.editor.doc {
+            return Some((pos.0 as f32, d.scroll + pos.1 as f32));
+        }
         let o = &self.editor.screens[s.screen].output;
         Some((o.x as f32 + pos.0 as f32, o.y as f32 + pos.1 as f32))
     }
@@ -318,8 +329,15 @@ impl Overlay {
 
     fn draw(&mut self, qh: &QueueHandle<Self>, i: usize) {
         let scr_idx = self.surfs[i].screen;
-        let (w, h) = (self.editor.screens[scr_idx].bg.width(), self.editor.screens[scr_idx].bg.height());
-        let out = self.editor.screens[scr_idx].output.clone();
+        // A document draws its display's worth of the virtual screen, from
+        // the scroll position down.
+        let (w, h, out, origin) = match &self.editor.doc {
+            Some(d) => (d.pixels().0, d.pixels().1, d.display.clone(), d.origin()),
+            None => {
+                let scr = &self.editor.screens[scr_idx];
+                (scr.bg.width(), scr.bg.height(), scr.output.clone(), (0, 0))
+            }
+        };
         let t = std::time::Instant::now();
 
         // Reuse a buffer the compositor has released; allocate up to three.
@@ -340,12 +358,14 @@ impl Overlay {
         // Repaint only what this buffer is missing; fall back to a full frame
         // when the damage covers most of the screen anyway.
         let full_area = (w * h) as i64;
-        let rects = stale.map(merge).filter(|v| v.iter().map(|r| (r.w * r.h) as i64).sum::<i64>() < full_area / 2);
+        // (A document's damage is in the virtual screen's pixels, and
+        // scrolling moves everything: it always gets a full frame.)
+        let rects = stale.filter(|_| self.editor.doc.is_none()).map(merge).filter(|v| v.iter().map(|r| (r.w * r.h) as i64).sum::<i64>() < full_area / 2);
         let mut painted = 0i64;
         match &rects {
             None => {
                 if let Some(mut pm) = tiny_skia::PixmapMut::from_bytes(canvas, w, h) {
-                    crate::editor::ui::render(&self.editor, scr_idx, &mut pm, (0, 0));
+                    crate::editor::ui::render(&self.editor, scr_idx, &mut pm, origin);
                 }
                 painted = full_area;
             }
@@ -604,8 +624,11 @@ impl PointerHandler for Overlay {
                     self.editor.button_release(p, button == BTN_LEFT)
                 }
                 PointerEventKind::Axis { vertical, .. } => {
-                    let d = if vertical.discrete != 0 { vertical.discrete as f32 } else { vertical.absolute as f32 / 10.0 };
-                    d != 0.0 && self.editor.scroll(d)
+                    // Notches; without them (touchpads, some compositors), the
+                    // distance, at libinput's 15 per notch. Stroke width only
+                    // looks at the sign; a document scrolls by the amount.
+                    let d = if vertical.discrete != 0 { vertical.discrete as f32 } else { vertical.absolute as f32 / 15.0 };
+                    d != 0.0 && self.editor.wheel(d, self.mods)
                 }
             };
         }

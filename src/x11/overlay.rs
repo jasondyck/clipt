@@ -73,7 +73,8 @@ impl Session {
 
         let mut wins = Vec::new();
         for (i, scr) in editor.screens.iter().enumerate() {
-            let o = &scr.output;
+            // A document's one virtual screen goes on its display.
+            let o = editor.doc.as_ref().map_or(&scr.output, |d| &d.display);
             let id = x.conn.generate_id()?;
             let events = EventMask::EXPOSURE
                 | EventMask::KEY_PRESS
@@ -101,7 +102,8 @@ impl Session {
             x.conn.change_property8(PropMode::REPLACE, id, AtomEnum::WM_NAME, AtomEnum::STRING, b"clipt")?;
             let gc = x.conn.generate_id()?;
             x.conn.create_gc(gc, id, &CreateGCAux::new().graphics_exposures(0))?;
-            let len = (scr.bg.width() * scr.bg.height() * 4) as usize;
+            let (bw, bh) = editor.doc.as_ref().map_or((scr.bg.width(), scr.bg.height()), |d| d.pixels());
+            let len = (bw * bh * 4) as usize;
             let buf = if shm { shm_buffer(&x, len).unwrap_or_else(|_| Buffer::Plain(vec![0; len])) } else { Buffer::Plain(vec![0; len]) };
             wins.push(Win { id, gc, screen: i, buf, full: true });
         }
@@ -180,22 +182,23 @@ impl Session {
             }
             Event::MotionNotify(e) => {
                 self.last_time = e.time;
-                self.editor.pointer_motion((e.root_x as f32, e.root_y as f32), mods(e.state))
+                let p = self.at(e.root_x, e.root_y);
+                self.editor.pointer_motion(p, mods(e.state))
             }
             Event::ButtonPress(e) => {
                 self.last_time = e.time;
-                let p = (e.root_x as f32, e.root_y as f32);
+                let p = self.at(e.root_x, e.root_y);
                 match e.detail {
                     1 => self.editor.button_press(p, true, mods(e.state)),
                     3 => self.editor.button_press(p, false, mods(e.state)),
-                    4 => self.editor.scroll(-1.0),
-                    5 => self.editor.scroll(1.0),
+                    4 => self.editor.wheel(-1.0, mods(e.state)),
+                    5 => self.editor.wheel(1.0, mods(e.state)),
                     _ => false,
                 }
             }
             Event::ButtonRelease(e) => {
                 self.last_time = e.time;
-                let p = (e.root_x as f32, e.root_y as f32);
+                let p = self.at(e.root_x, e.root_y);
                 match e.detail {
                     1 => self.editor.button_release(p, true),
                     3 => self.editor.button_release(p, false),
@@ -216,13 +219,28 @@ impl Session {
         Ok(())
     }
 
+    /// The editor's coordinates for a point on the root window: in a
+    /// document, on the virtual screen, scrolled.
+    fn at(&self, x: i16, y: i16) -> (f32, f32) {
+        match &self.editor.doc {
+            Some(d) => ((x as i32 - d.display.x) as f32, (y as i32 - d.display.y) as f32 + d.scroll),
+            None => (x as f32, y as f32),
+        }
+    }
+
     fn draw(&mut self) -> Result<()> {
         let damage = self.editor.take_damage();
         for i in 0..self.wins.len() {
             let scr_idx = self.wins[i].screen;
-            let (w, h) = (self.editor.screens[scr_idx].bg.width(), self.editor.screens[scr_idx].bg.height());
+            // A document draws its display's worth of the virtual screen
+            // from the scroll position down, always whole: scrolling moves
+            // everything.
+            let (w, h, origin) = match &self.editor.doc {
+                Some(d) => (d.pixels().0, d.pixels().1, d.origin()),
+                None => (self.editor.screens[scr_idx].bg.width(), self.editor.screens[scr_idx].bg.height(), (0, 0)),
+            };
             let rects = match (&damage, self.wins[i].full) {
-                (Damage::Rects(rs), false) => Some(merge(screen_rects(&self.editor.screens[scr_idx], rs))),
+                (Damage::Rects(rs), false) if self.editor.doc.is_none() => Some(merge(screen_rects(&self.editor.screens[scr_idx], rs))),
                 _ => None,
             };
             let win = &mut self.wins[i];
@@ -230,7 +248,7 @@ impl Session {
             let regions = match rects {
                 None => {
                     if let Some(mut pm) = tiny_skia::PixmapMut::from_bytes(buf, w, h) {
-                        crate::editor::ui::render(&self.editor, scr_idx, &mut pm, (0, 0));
+                        crate::editor::ui::render(&self.editor, scr_idx, &mut pm, origin);
                     }
                     vec![IRect { x: 0, y: 0, w: w as i32, h: h as i32 }]
                 }

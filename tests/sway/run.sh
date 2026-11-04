@@ -199,6 +199,35 @@ fi
 check "Ctrl+S also copied (copy_on_save)" '[ "$(wl-paste -t image/png 2>/dev/null | magick identify -format %wx%h - 2>/dev/null)" = "$(logical 400 300)" ]'
 gerr
 
+if [ "$LAYOUT" = single ]; then
+echo "-- clipt edit: an image taller than the screen"
+# 600x3000 in six coloured bands, centred on the 1280x720 output (x 340-940).
+magick -size 600x500 xc:'#fca5a5' xc:'#fdba74' xc:'#fde047' xc:'#86efac' xc:'#93c5fd' xc:'#c4b5fd' -append /tmp/page.png
+/clipt edit /tmp/page.png 2>/tmp/gui.err & sleep 0.8
+act "key Return"; sleep 0.8
+wl-paste -t image/png > /tmp/edit0.png 2>/dev/null
+check "Enter copies the whole page (600x3000, got $(size /tmp/edit0.png))" '[ "$(size /tmp/edit0.png)" = 600x3000 ]'
+d=$(magick compare -metric AE /tmp/edit0.png /tmp/page.png null: 2>&1 | cut -d" " -f1)
+check "  pixel for pixel (AE=$d)" '[ "${d%.*}" = 0 ]'
+gerr
+/clipt edit /tmp/page.png 2>/tmp/gui.err & sleep 0.8
+act "move 600 300" "scroll 10"; sleep 0.3
+act "key r"; drag 500 200 700 300
+act "key Return"; sleep 0.8
+wl-paste -t image/png > /tmp/edit1.png 2>/dev/null
+box=$(magick /tmp/edit1.png -fuzz 15% -fill black +opaque '#ef4444' -format '%@' info: 2>/dev/null)
+# Drawn at screen y 200-300 after scrolling 900: page y 1100-1200; its left
+# edge at screen x 500 is page x 160.
+check "drawn 900 px down the page after scrolling (red at $box)" 'px /tmp/edit1.png 160,1150 | grep -Eq "srgba?\((2[0-9][0-9]|1[6-9][0-9]),[0-9]{1,2},[0-9]{1,2}"'
+check "  and not where it would be unscrolled ($(px /tmp/edit1.png 160,250))" '! px /tmp/edit1.png 160,250 | grep -Eq "srgba?\((2[0-9][0-9]|1[6-9][0-9]),[0-9]{1,2},[0-9]{1,2}"'
+gerr
+/clipt edit - < /tmp/page.png 2>/tmp/gui.err & sleep 0.8
+check "reads standard input (overlay up)" 'pgrep -f "^/clipt edit -" >/dev/null'
+act "key Escape"; sleep 0.5
+check "  and Esc closes it" '! pgrep -f "^/clipt edit -" >/dev/null'
+gerr
+fi
+
 echo "-- interactive: Esc cancels, clipboard untouched"
 echo marker | wl-copy; sleep 0.3
 gui
