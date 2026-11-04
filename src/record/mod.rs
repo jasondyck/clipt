@@ -882,6 +882,10 @@ fn write_loop(
         if paused || !(fresh || animating) || last_write.elapsed() < interval && enc.is_some() {
             continue;
         }
+        // Pace from when this frame is due, not from when its write ends:
+        // rendering and the pipe take a few milliseconds at 4K, and adding
+        // them to every interval turned 30 fps into about 27.
+        let due = Instant::now();
         // A new capture is stamped with its capture time; a frame that only
         // moves the zoom along, with now.
         let at = if fresh { last_at } else { Instant::now() };
@@ -903,7 +907,7 @@ fn write_loop(
         let ts = stamp(at, t0.unwrap(), paused_total, &mut last_ts);
         e.write(&out.data, ts)?;
         written += 1;
-        last_write = Instant::now();
+        last_write = due;
         fresh = false;
     }
 

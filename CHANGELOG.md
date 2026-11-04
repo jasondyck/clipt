@@ -30,9 +30,16 @@ All notable changes are listed here. The format follows
   would cover the selection.
 
 ### Changed
+- Copying a screenshot is ready to paste sooner (at 4K, 51 ms rather than
+  190 ms for `clipt full -c`): a PNG that only goes to the clipboard skips
+  the slower, smaller second compression pass. Saved files still get it.
+- The overlay opens about 13 ms sooner at 4K: its first frame is painted
+  on several threads (21 ms → 8 ms).
 - The Copy button's tooltip shows Ctrl+C rather than Enter (both still copy).
 
 ### Fixed
+- Recordings of a busy screen came out at about 27 fps rather than 30: the
+  time each frame took to hand to ffmpeg was added to every frame interval.
 - `--gif` was ignored for a recording started from the screenshot overlay's
   Video mode.
 - Turning the sound or microphone on or off with S or M didn't redraw their
