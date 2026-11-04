@@ -21,7 +21,9 @@ All notable changes are listed here. The format follows
   annotate, copy, save), `clipt full` and `clipt screen`, on Windows 10 and
   11, and `clipt tray`: an icon in the notification area with the Linux
   tray's screenshot actions, Print Screen to capture a region (`hotkey`),
-  notifications, and *Start with Windows*. No recording yet.
+  notifications, and *Start with Windows*. No recording yet. Releases
+  include it as `clipt-vX-x86_64-windows.zip` (unsigned: Windows asks
+  before the first run).
 - **?** in the editor shows every shortcut, including ones that were only in
   the code (arrows nudge the selection, Alt+arrows by 10 pixels, Ctrl+A
   takes the whole screen). The README has the same list.
