@@ -117,6 +117,33 @@ if [ -f /ffmpeg.exe ]; then
   check "and it shows \"Recording saved\"" 'grep -q "notification: Recording saved" /tmp/tray2.err'
   kill $tp; wait $tp 2>/dev/null
 
+  echo "-- recording: sound (WASAPI, which Wine serves from PulseAudio)"
+  . /audio.sh
+  sound_server
+  out=$($R list sound 2>&1)
+  check "list sound: the null sinks, the default marked ($(echo "$out" | grep -c .) devices)" 'echo "$out" | grep -q "(system)"'
+  tone_on; sleep 0.5
+  CLIPT_DEBUG=1 $R record -g "0,0 320x240" --audio -o 'Z:\tmp\out\snd.mp4' 2>/tmp/snd.err & p=$!
+  started /tmp/out/snd.mp4; sleep 3; $R record --stop; wait $p; rc=$?
+  tone_off
+  check "--audio records the computer's sound (rc=$rc, $(a_codec /tmp/out/snd.mp4))" '[ $rc = 0 ] && [ "$(a_codec /tmp/out/snd.mp4)" = aac ]'
+  m=$(band_db /tmp/out/snd.mp4 0 1000)
+  check "the 1 kHz tone is in it (${m:-?} dB)" 'awk "BEGIN{exit !(${m:--99} > -40)}"'
+  va=$(s_dur /tmp/out/snd.mp4 v) aa=$(s_dur /tmp/out/snd.mp4 a)
+  check "sound and video last as long ($aa s, $va s)" '[ -n "$aa" ] && awk "BEGIN{d=$aa-$va; exit !(d < 0.3 && d > -0.3)}"'
+  # Silence: the loopback delivers nothing, and clipt fills the gap.
+  $R record -g "0,0 320x240" --audio -o 'Z:\tmp\out\quiet.mp4' & p=$!
+  started /tmp/out/quiet.mp4; sleep 2; tone_on; sleep 2; tone_off; $R record --stop; wait $p
+  va=$(s_dur /tmp/out/quiet.mp4 v) aa=$(s_dur /tmp/out/quiet.mp4 a)
+  check "silence is filled: sound still lasts as long ($aa s, $va s)" '[ -n "$aa" ] && awk "BEGIN{d=$aa-$va; exit !(d < 0.3 && d > -0.3)}"'
+  mic_tone_on; sleep 0.5
+  $R record -g "0,0 320x240" --audio=mic -o 'Z:\tmp\out\mic.mp4' & p=$!
+  started /tmp/out/mic.mp4; sleep 3; $R record --stop; wait $p
+  mic_tone_off
+  m=$(band_db /tmp/out/mic.mp4 0 440)
+  check "--audio=mic records the microphone's 440 Hz (${m:-?} dB)" 'awk "BEGIN{exit !(${m:--99} > -40)}"'
+  out=$($R record -g "0,0 320x240" --audio=nosuch 2>&1)
+  check "an unknown device is refused (${out##*: })" 'echo "$out" | grep -q "no sound device .nosuch"'
 fi
 
 echo "== $pass passed, $fail failed"

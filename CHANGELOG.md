@@ -17,6 +17,10 @@ All notable changes are listed here. The format follows
   while recording (amber while paused); clicking the icon stops it. It also
   has *Open recordings folder* and *Check for updates…*, and checks daily
   with `check_updates = true`; clicking the notification updates.
+- Sound in Windows recordings, through WASAPI: `--audio` records the
+  computer's sound (a loopback of the default output), `mic` the default
+  microphone, or any device from `clipt list sound`, with volumes, ducking
+  and separate tracks as on Linux. The tray has *Record sound*.
 - `clipt update` on Windows and macOS. On Windows it updates an unpacked
   release zip, moving the running `clipt.exe` aside (the next start deletes
   it); on macOS, a copy of the command-line binary outside `clipt.app`.

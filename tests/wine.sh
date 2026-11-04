@@ -13,5 +13,5 @@ PATH=$PWD/tests/wine/bin:$PATH CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-
 ffmpeg=()
 [ -n "${CLIPT_FFMPEG_EXE:-}" ] && ffmpeg=(-v "$(realpath "$CLIPT_FFMPEG_EXE"):/ffmpeg.exe:ro")
 docker run --rm --shm-size=512m -v $PWD/target/x86_64-pc-windows-gnu/release/clipt.exe:/clipt.exe:ro "${ffmpeg[@]}" \
-  -v $PWD/tests/wine/run.sh:/run.sh:ro clipt-wine /run.sh 2>&1 | grep -E "^(==|  (PASS|FAIL))"
+  -v $PWD/tests/wine/run.sh:/run.sh:ro -v $PWD/tests/audio.sh:/audio.sh:ro clipt-wine /run.sh 2>&1 | grep -E "^(==|  (PASS|FAIL))"
 exit ${PIPESTATUS[0]}

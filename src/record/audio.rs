@@ -1,6 +1,6 @@
 //! Sound for recordings: which sources to record, and the 20 ms chunks
 //! each one's capture hands over. The sound server's side is in `pulse`
-//! (Wayland and X11); Windows has none yet.
+//! (Wayland and X11) and `wasapi` (Windows).
 //!
 //! Chunks are stamped by a sample clock rather than by when each read
 //! returns: the server hands audio over in its own blocks (PipeWire's are
@@ -16,7 +16,9 @@ mod pulse;
 #[cfg(wayland_x11)]
 pub use pulse::{check, devices, open};
 #[cfg(windows)]
-pub use unsupported::{check, open};
+mod wasapi;
+#[cfg(windows)]
+pub use wasapi::{check, devices, open};
 
 pub const RATE: u32 = 48_000;
 pub const CHANNELS: u32 = 2;
@@ -169,31 +171,6 @@ impl SampleClock {
         } else {
             self.base.checked_sub(Duration::from_secs_f64(-start)).unwrap_or(self.base)
         }
-    }
-}
-
-/// Windows: no sound capture yet (WASAPI is phase 4 of
-/// docs/windows-plan.md), so asking for sound fails before recording.
-#[cfg(windows)]
-mod unsupported {
-    use super::{Chunk, Source};
-    use anyhow::{Result, bail};
-
-    pub enum Capture {}
-
-    impl Capture {
-        pub fn run(self, _: impl FnMut(Chunk) -> bool) -> Result<()> {
-            match self {}
-        }
-    }
-
-    pub fn check(_: &[Source]) -> Result<()> {
-        bail!("recording sound isn't available on Windows yet (record_audio = \"none\")")
-    }
-
-    pub fn open(src: &Source) -> Result<Capture> {
-        check(std::slice::from_ref(src))?;
-        unreachable!()
     }
 }
 

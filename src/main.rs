@@ -556,7 +556,7 @@ fn gui(cfg: &Config, args: &Args, mut ed: Editor, kind: capture::DisplayKind, ba
 
 /// `clipt list sound`: what `--audio` can record, marking what `system` and
 /// `mic` stand for.
-#[cfg(wayland_x11)]
+#[cfg(any(wayland_x11, windows))]
 fn list_sound() -> Result<()> {
     for d in record::audio::devices()? {
         let mark = match (d.is_system, d.is_mic) {

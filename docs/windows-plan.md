@@ -4,6 +4,7 @@ Status, 2026-11-04: phases 0, 1 and 2 are built (screenshots, the tray and
 its hotkey), checked under Wine and in CI, and not yet tried on a real PC.
 Phase 3 (recording) works from the command line, the overlay and the tray,
 checked under Wine; the red frame around a recording is still to do.
+Phase 4 (sound) is built, checked under Wine against PulseAudio.
 Of phase 5, releases carry `clipt-vX-x86_64-windows.zip` and
 `clipt update` installs it; package manifests are still to do.
 A tester at work can try each phase's build; see *Testing* below.
@@ -40,9 +41,16 @@ A tester at work can try each phase's build; see *Testing* below.
   file in %TEMP% saying whether it's paused, and a named pipe per session
   for stop, pause and resume; Ctrl+C reaches it through
   `SetConsoleCtrlHandler`. Encoders tried: NVENC, Quick Sync, AMF, Media
-  Foundation (hardware only), libx264. Sound says it isn't there yet. The
+  Foundation (hardware only), libx264. The
   tray polls the recording's state each second for its menu and icon (red
   dot, amber when paused), as recordings run in their own processes.
+- **Phase 4, sound** (`src/record/audio/wasapi.rs`). WASAPI in shared
+  mode: `system` is a loopback of the default output, `mic` the default
+  input, and a name from `clipt list sound` picks any device (an output by
+  loopback). AUTOCONVERTPCM has Windows convert to 48 kHz 16-bit stereo,
+  so the chunks are the PulseAudio ones and everything after is shared.
+  A loopback delivers nothing while nothing plays, so clipt fills those
+  gaps with silence against the clock.
 
 Choices made on the way, where they differ from the plan below:
 

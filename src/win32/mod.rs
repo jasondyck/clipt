@@ -1,5 +1,5 @@
 //! clipt on Windows: screenshots, with the same editor as on Linux and
-//! macOS, recording (without sound yet), the tray with a hotkey, and
+//! macOS, recording with sound, the tray with a hotkey, and
 //! `clipt update`; see docs/windows-plan.md.
 
 mod capture;
@@ -26,6 +26,7 @@ USAGE:
     clipt full            Capture the whole desktop
     clipt screen [NAME]   Capture one monitor (default: the main one)
     clipt list            Show the monitors
+    clipt list sound      Show the sound devices recordings can use
     clipt record          Pick an area or window to record (Enter starts), saved as MP4
     clipt record screen [NAME]  Record one monitor (default: the main one)
     clipt record window APP     Record APP's frontmost window, e.g. notepad
@@ -45,6 +46,16 @@ OPTIONS:
         --cursor          Include the pointer
         --fps N           Recording frame rate (default 30)
         --gif             Save the recording as a GIF (at most 15 fps)
+        --audio[=SOURCES] Record sound too (default: system). SOURCES: system,
+                          mic, both, or device names from `clipt list sound`,
+                          comma-separated, each with an optional :PERCENT
+                          volume in the mix, e.g. system:70,mic:120
+        --audio-balance MODE
+                          Duck the other sound under the microphone: off,
+                          duck, or smart (duck, and say at the stop how
+                          clearly the voice came through). Default: off
+        --separate-audio  Also keep each sound source as its own track
+        --no-audio        Record without sound, whatever record_audio says
     -h, --help            Show this help
     -V, --version         Show the version
 
@@ -58,16 +69,17 @@ EDITOR KEYS:
     Ctrl+Z / Ctrl+Shift+Z undo / redo     Esc / right-click  cancel / back
     Ctrl+R                switch between screenshot and video (or click
                           Screenshot / Video at the bottom of the screen)
+    S / M (record mode)   computer sound / microphone on or off
 
 Config: %APPDATA%\\clipt\\config.toml (save_dir, filename, color, palette,
 width, copy_on_save, notify, cursor, font, hotkey, hotkey_full, video_dir,
-video_filename, record_fps, record_codec, record_format, max_duration).
+video_filename, record_fps, record_codec, record_format, record_audio,
+record_audio_balance, record_separate_audio, max_duration).
 hotkey is the tray's shortcut for a region, default \"print\" (Print
 Screen), or e.g. \"ctrl+shift+s\"; \"\" turns it off. Notifications need
 the tray. Screenshots go to Pictures\\Screenshots and recordings to
 Videos\\Captures, where Windows keeps its own. Recording needs ffmpeg
-(winget install Gyan.FFmpeg, or ffmpeg.exe beside clipt.exe); there's no
-sound yet.
+(winget install Gyan.FFmpeg, or ffmpeg.exe beside clipt.exe).
 ";
 
 pub fn run(args: Args, cfg: Config) -> Result<()> {
@@ -94,6 +106,13 @@ pub fn run(args: Args, cfg: Config) -> Result<()> {
     let cursor = args.cursor || cfg.cursor;
     if args.delay > 0.0 {
         std::thread::sleep(std::time::Duration::from_secs_f64(args.delay));
+    }
+    if args.cmd == "list" {
+        match args.screen.as_deref() {
+            Some("sound") => return crate::list_sound(),
+            Some(other) => bail!("unknown list '{other}' (clipt list, or clipt list sound)"),
+            None => {}
+        }
     }
     let desk = capture::Desktop::get()?;
     if args.cmd == "list" {

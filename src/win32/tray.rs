@@ -58,6 +58,7 @@ enum Action {
     Full,
     RecordRegion,
     RecordScreen,
+    ToggleSound,
     ToggleGif,
     PauseRecording,
     ResumeRecording,
@@ -80,6 +81,7 @@ const MENU: &[Option<(&str, Action)>] = &[
     None,
     Some(("Record region…", Action::RecordRegion)),
     Some(("Record screen", Action::RecordScreen)),
+    Some(("Record sound", Action::ToggleSound)),
     Some(("Record as GIF", Action::ToggleGif)),
     Some(("Pause recording", Action::PauseRecording)),
     Some(("Resume recording", Action::ResumeRecording)),
@@ -114,7 +116,7 @@ fn rec_state() -> usize {
 /// recording while there's none, what controls one while there is.
 fn shown(a: Action, rec: usize) -> bool {
     match a {
-        Action::RecordRegion | Action::RecordScreen | Action::ToggleGif => rec == IDLE,
+        Action::RecordRegion | Action::RecordScreen | Action::ToggleSound | Action::ToggleGif => rec == IDLE,
         Action::PauseRecording => rec == RECORDING,
         Action::ResumeRecording => rec == PAUSED,
         Action::StopRecording => rec != IDLE,
@@ -131,6 +133,11 @@ struct State {
     mutex: HANDLE,
     save_dir: String,
     video_dir: String,
+    /// The "Record sound" tick, and whether `record_audio` names sources:
+    /// if it does, a ticked box records those, otherwise the computer's
+    /// sound.
+    sound: bool,
+    sound_configured: bool,
     /// The file the last notification was about, opened when it's clicked.
     last: Option<String>,
     /// Explorer's broadcast when the taskbar comes back after a restart.
@@ -190,6 +197,8 @@ pub fn run(cfg: &Config) -> Result<()> {
         mutex,
         save_dir: crate::config::expand(&cfg.save_dir).display().to_string(),
         video_dir: crate::config::expand(&cfg.video_dir).display().to_string(),
+        sound: sound_configured(cfg),
+        sound_configured: sound_configured(cfg),
         last: None,
         taskbar_created,
     }));
@@ -400,6 +409,7 @@ fn show_menu(h: HWND) {
                     Action::ToggleCopy => cfg.copy_on_save,
                     Action::ToggleNotify => cfg.notify,
                     Action::ToggleGif => cfg.record_format == "gif",
+                    Action::ToggleSound => STATE.with_borrow(|s| s.as_ref().is_some_and(|s| s.sound)),
                     Action::Startup => startup_enabled(),
                     _ => false,
                 };
@@ -427,12 +437,25 @@ fn run_action(a: Action) {
         Ok(e) => e,
         Err(e) => return eprintln!("clipt: {e}"),
     };
+    let sound: &[&str] = match STATE.with_borrow(|s| s.as_ref().map_or((false, false), |s| (s.sound, s.sound_configured))) {
+        (false, _) => &["--no-audio"],
+        (true, true) => &[],
+        (true, false) => &["--audio"],
+    };
     let args: &[&str] = match a {
         Action::Region => &["gui", "-d", CLICK_DELAY],
         Action::RegionDelayed => &["gui", "-d", "3"],
         Action::Full => &["full", "-c", "-d", CLICK_DELAY],
-        Action::RecordRegion => &["record", "-d", CLICK_DELAY],
-        Action::RecordScreen => &["record", "screen", "-d", CLICK_DELAY],
+        Action::RecordRegion => &[&["record", "-d", CLICK_DELAY], sound].concat(),
+        Action::RecordScreen => &[&["record", "screen", "-d", CLICK_DELAY], sound].concat(),
+        Action::ToggleSound => {
+            STATE.with_borrow_mut(|s| {
+                if let Some(s) = s.as_mut() {
+                    s.sound = !s.sound;
+                }
+            });
+            return;
+        }
         Action::PauseRecording => &["record", "--pause"],
         Action::ResumeRecording => &["record", "--resume"],
         Action::StopRecording => &["record", "--stop"],
@@ -568,6 +591,10 @@ fn restart() {
         eprintln!("clipt tray: restarting failed: {e}");
     }
     unsafe { DestroyWindow(hwnd) };
+}
+
+fn sound_configured(cfg: &Config) -> bool {
+    crate::record::audio::Source::parse(&cfg.record_audio).is_ok_and(|s| !s.is_empty())
 }
 
 /// No console at all, so none flashes up.
