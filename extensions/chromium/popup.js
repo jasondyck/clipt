@@ -1,5 +1,5 @@
 const status = document.getElementById("status");
-const buttons = [...document.querySelectorAll("button")];
+const buttons = [...document.querySelectorAll("button, input")];
 
 function show(text, error) {
   status.textContent = text;
@@ -27,3 +27,7 @@ chrome.commands.getAll((cmds) => {
   const c = cmds.find((c) => c.name === "copy-full-page");
   if (c && c.shortcut) document.getElementById("copy-key").textContent = c.shortcut;
 });
+
+const exact = document.getElementById("exact");
+chrome.storage.local.get("exact").then((s) => (exact.checked = s.exact === true));
+exact.addEventListener("change", () => chrome.storage.local.set({ exact: exact.checked }));

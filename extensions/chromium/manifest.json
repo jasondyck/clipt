@@ -6,7 +6,7 @@
   "description": "Capture a whole web page, not just what's on screen, and copy or save it with clipt.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3Lnn2KYyPekYYAxA0Ln+KySv4BxJTRcOrbVB2rFtlC2kgi/U0t4LObDmEq/mm0eD/fosNtacLj9+npfOyezjHJgzXeJ8NWYkIxu7N9DZlb2qpGvKPFS9JJuN3o4dLvhLU5CP8tyZL/gxaKqnWw/UVRSQLTjZ06uzeHQ6aGKadgBvU9Vm4Qp/85mh13gGEFjjeyAZOuRRis2q7NvfOi5PqpQr8K3tlggOYXlS6WYQiyR1hdIZnySxj10jwuOUKq+oAgYr7oCDzkzdfjuLNiDRnECHayCYfGPoAzzMH7xsiKOQJTXQrCBfNATpUEeFnLoXZVoqMOSiL/qqkW4QeOIpSQIDAQAB",
   "minimum_chrome_version": "116",
-  "permissions": ["activeTab", "debugger", "nativeMessaging"],
+  "permissions": ["activeTab", "debugger", "nativeMessaging", "scripting", "storage"],
   "background": { "service_worker": "background.js" },
   "action": {
     "default_title": "clipt: capture the full page",

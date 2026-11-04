@@ -203,11 +203,14 @@ clipt browser-extension  # register clipt with your browsers; prints the folder 
 
 Then open `chrome://extensions` (`edge://extensions`), turn on Developer
 mode, click *Load unpacked* and choose that folder. Click clipt's toolbar
-icon, or press **Alt+Shift+P** to copy. Chrome shows an "is being debugged"
-bar while it captures. Pages that scroll inside a panel rather than the
-window (Gmail, many web apps) give just what's visible, very tall pages
-are scaled to fit 16384 pixels, and browsers from Flathub can't reach clipt
-outside their sandbox.
+icon, or press **Alt+Shift+P** to copy. It scrolls the page a screenful
+at a time and joins them (about two screenfuls a second), hiding fixed
+headers and banners after the first; *Exact mode* in its popup renders the
+page in one go instead, but the browser shows a "started debugging" bar
+while it does. Pages that scroll inside a panel rather than the window
+(Gmail, many web apps) give just what's visible, very tall pages are scaled
+to fit 16384 pixels, and browsers from Flathub can't reach clipt outside
+their sandbox.
 
 **Updates:** `clipt update` (or *Check for updates…* in the tray menu)
 asks GitHub for the latest release. When clipt was installed with
