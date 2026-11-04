@@ -38,7 +38,7 @@ wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 wayland-protocols-plasma = { version = "0.3", features = ["client"], optional = true }
-x11rb = { version = "0.14", default-features = false, features = ["damage", "randr", "shm", "xfixes", "xinerama"] }
+x11rb = { version = "0.14", default-features = false, features = ["damage", "randr", "shm", "xfixes", "xinerama", "xtest"] }
 xkeysym = "0.2"
 zbus = { version = "6", default-features = false, features = ["default-rt", "proxy", "service"] }
 
@@ -81,7 +81,7 @@ panic = "abort"
 opt-level = 3
 
 # For examples/vinput.rs and testwin.rs, the Linux end-to-end tests' input
-# driver and test window.
+# driver and test window (x11grab.rs needs only x11rb).
 [target.'cfg(all(unix, not(target_os = "macos")))'.dev-dependencies]
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
 

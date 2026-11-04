@@ -15,9 +15,10 @@ use x11rb::connection::{Connection, RequestConnection};
 use x11rb::protocol::Event;
 use x11rb::protocol::shm::ConnectionExt as _;
 use x11rb::protocol::xproto::{
-    AtomEnum, ConnectionExt as _, CreateGCAux, CreateWindowAux, EventMask, GrabMode, GrabStatus, ImageFormat, KeyButMask, PropMode, Window,
-    WindowClass,
+    AtomEnum, ConnectionExt as _, CreateGCAux, CreateWindowAux, EventMask, GrabMode, GrabStatus, ImageFormat, KEY_PRESS_EVENT,
+    KEY_RELEASE_EVENT, KeyButMask, PropMode, Window, WindowClass,
 };
+use x11rb::protocol::xtest::{self, ConnectionExt as _};
 use x11rb::wrapper::ConnectionExt as _;
 
 struct Win {
@@ -131,33 +132,59 @@ impl Session {
     }
 
     /// Grab keyboard and pointer. The hotkey that launched us may still be
-    /// held by the window manager, so retry for up to a second.
+    /// held by the window manager, so retry for up to a second. An open popup
+    /// (a browser's `<select>`, a menu) holds its grab until it closes, which
+    /// retrying alone never sees; the screen is already captured with the
+    /// popup in it, so press Escape through XTest to close it, as the user
+    /// would. Only after a few failed tries, to leave a hotkey grab alone.
     fn grab(&mut self) -> Result<()> {
         let w = self.wins[0].id;
         let mask = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
         let cursor = self.cursors.get(&self.x, CursorKind::Crosshair);
         let (mut kb, mut ptr) = (false, false);
-        for _ in 0..100 {
+        for i in 0..100 {
+            let mut taken = false;
             if !ptr {
-                ptr = self
+                let st = self
                     .x
                     .conn
                     .grab_pointer(false, w, mask, GrabMode::ASYNC, GrabMode::ASYNC, x11rb::NONE, cursor, x11rb::CURRENT_TIME)?
                     .reply()?
-                    .status
-                    == GrabStatus::SUCCESS;
+                    .status;
+                ptr = st == GrabStatus::SUCCESS;
+                taken |= st == GrabStatus::ALREADY_GRABBED;
             }
             if !kb {
-                kb = self.x.conn.grab_keyboard(false, w, x11rb::CURRENT_TIME, GrabMode::ASYNC, GrabMode::ASYNC)?.reply()?.status
-                    == GrabStatus::SUCCESS;
+                let st = self.x.conn.grab_keyboard(false, w, x11rb::CURRENT_TIME, GrabMode::ASYNC, GrabMode::ASYNC)?.reply()?.status;
+                kb = st == GrabStatus::SUCCESS;
+                taken |= st == GrabStatus::ALREADY_GRABBED;
             }
             if kb && ptr {
                 self.current_cursor = Some(CursorKind::Crosshair);
                 return Ok(());
             }
+            if taken && (i == 20 || i == 60) {
+                self.press_escape();
+            }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         bail!("couldn't grab the {} (another program holds it)", if kb { "pointer" } else { "keyboard" })
+    }
+
+    /// A synthetic Escape press and release, which goes to whoever holds the
+    /// keyboard grab. Best effort: without XTest the grab just fails as before.
+    fn press_escape(&self) {
+        let Some(code) = self.keymap.code(0xff1b) else { return };
+        if std::env::var_os("CLIPT_DEBUG").is_some() {
+            eprintln!("clipt: another program holds the grab; pressing Escape to close it");
+        }
+        let _ = (|| -> Result<()> {
+            self.x.conn.extension_information(xtest::X11_EXTENSION_NAME)?.context("no XTEST")?;
+            for t in [KEY_PRESS_EVENT, KEY_RELEASE_EVENT] {
+                self.x.conn.xtest_fake_input(t, code, x11rb::CURRENT_TIME, x11rb::NONE, 0, 0, 0)?.check()?;
+            }
+            Ok(())
+        })();
     }
 
     fn handle(&mut self, ev: Event) -> Result<()> {
@@ -418,6 +445,12 @@ impl Keymap {
         let (min, max) = (setup.min_keycode, setup.max_keycode);
         let r = x.conn.get_keyboard_mapping(min, max - min + 1)?.reply()?;
         Ok(Self { min, per: r.keysyms_per_keycode as usize, syms: r.keysyms })
+    }
+
+    /// The first keycode that produces `sym` unshifted.
+    fn code(&self, sym: u32) -> Option<u8> {
+        let i = self.syms.chunks(self.per.max(1)).position(|k| k.first() == Some(&sym))?;
+        u8::try_from(i).ok()?.checked_add(self.min)
     }
 
     fn key(&self, code: u8, m: Mods) -> Option<Key> {
