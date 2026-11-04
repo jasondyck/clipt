@@ -180,18 +180,15 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # prepare's gate runs on Linux; this one covers the Windows-only code.
+      - run: cargo clippy --bins --tests --locked -- -D warnings
+      - run: cargo test --locked --bins
       - run: cargo build --release --locked
       - name: pack
         shell: bash
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          name="clipt-${TAG}-x86_64-windows"
-          mkdir -p "$name"
-          cp target/release/clipt.exe README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "$name/"
-          "$name/clipt.exe" --version
-          7z a "$name.zip" "$name" >/dev/null
-          sha256sum "$name.zip" > "$name.zip.sha256"
+        run: .github/scripts/pack-windows.sh "${{ needs.prepare.outputs.tag }}"
       - uses: actions/upload-artifact@v7
         with:
           name: windows
