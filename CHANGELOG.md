@@ -11,7 +11,7 @@ All notable changes are listed here. The format follows
 ### Added
 - Recording on Windows: `clipt record` (a region, a monitor or a window,
   which it follows), `--stop`, `--pause` and `--resume`, Ctrl+R in the
-  screenshot overlay, and GIFs, without sound yet. It needs ffmpeg, and
+  screenshot overlay, and GIFs. It needs ffmpeg, and
   uses NVIDIA's, Intel's or AMD's encoder where there is one. Recordings go
   to `Videos\Captures`.
 - The Windows tray records too: *Record region…*, *Record screen*, *Record
