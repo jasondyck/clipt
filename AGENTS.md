@@ -75,4 +75,7 @@ Notes:
 - A PR description says what changed, why, and how it was tested. If an
   instruction was ambiguous (a length limit, a placement), say which reading
   you chose.
-- Never merge; a person merges every PR.
+- Coding agents never merge, not even their own work. Merges happen only
+  through the maintainer's merge automation, which merges the maintainer's
+  own PRs once every CI check is green and a review of the current commit
+  passed; everyone else's PRs are merged by a person.
