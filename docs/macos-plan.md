@@ -52,6 +52,14 @@ which needs no Accessibility permission: `hotkey` (a region, default
 Opening the app again while it runs captures a region. Each action starts a
 fresh `clipt`, as on Linux. The recording items come with phase 3.
 
+**2b. Whole windows in screenshots.** Clicking a window the frozen picture
+hides behind another fetches that window on its own (ScreenCaptureKit's
+`SCScreenshotManager` on macOS 14+, `CGWindowListCreateImage` before) and
+paints it over the picture, so the saved image shows it whole. Selecting
+anything else puts the screen back. Rounded corners still let a little of
+the covering window through; capturing the window together with what's
+really behind it is a follow-up.
+
 **3. Recording.** Done, without sound. `src/macos/record.rs`:
 ScreenCaptureKit (`SCStream`, macOS 12.3+, weakly linked so clipt still
 starts on 12.0) for frames, handed to the same writer as Linux through

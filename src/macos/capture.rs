@@ -117,19 +117,32 @@ fn create_image_fn() -> Option<CreateImage> {
 /// spaces (Display P3 on recent Macs), and a PNG without a profile is read
 /// as sRGB.
 fn to_image(img: &CGImage) -> Result<Image> {
+    to_rgba(img, false)
+}
+
+/// As `to_image`, keeping transparency (premultiplied): a window's rounded
+/// corners.
+pub(super) fn to_image_with_alpha(img: &CGImage) -> Result<Image> {
+    to_rgba(img, true)
+}
+
+fn to_rgba(img: &CGImage, alpha: bool) -> Result<Image> {
     let (w, h) = (CGImage::width(Some(img)), CGImage::height(Some(img)));
-    ensure!(w > 0 && h > 0, "empty display image");
+    ensure!(w > 0 && h > 0, "empty image");
     let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB })).context("no sRGB colour space")?;
     let mut out = Image::new(w as u32, h as u32);
-    // Bytes R, G, B, then one unused, which is set opaque below.
-    let info = CGImageAlphaInfo::NoneSkipLast.0 | CGImageByteOrderInfo::Order32Big.0;
+    // Bytes R, G, B, then alpha, or one unused, which is set opaque below.
+    let a = if alpha { CGImageAlphaInfo::PremultipliedLast } else { CGImageAlphaInfo::NoneSkipLast };
+    let info = a.0 | CGImageByteOrderInfo::Order32Big.0;
     let ctx = unsafe { CGBitmapContextCreate(out.data.as_mut_ptr().cast(), w, h, 8, w * 4, Some(&space), info) }
         .context("creating a bitmap context")?;
     let rect = CGRect { origin: CGPoint { x: 0.0, y: 0.0 }, size: CGSize { width: w as f64, height: h as f64 } };
     CGContext::draw_image(Some(&ctx), rect, Some(img));
     drop(ctx);
-    for px in out.data.as_chunks_mut::<4>().0 {
-        px[3] = 255;
+    if !alpha {
+        for px in out.data.as_chunks_mut::<4>().0 {
+            px[3] = 255;
+        }
     }
     Ok(out)
 }

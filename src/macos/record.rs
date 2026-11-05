@@ -39,12 +39,12 @@ const REPLY_LIMIT: Duration = Duration::from_secs(10);
 
 /// Objective-C objects made on the main thread and used on the capture
 /// thread. ScreenCaptureKit's objects are thread-safe; Rust can't know it.
-struct Sendable<T>(T);
+pub(super) struct Sendable<T>(pub(super) T);
 unsafe impl<T> Send for Sendable<T> {}
 
 impl<T> Sendable<T> {
     /// A method, so a closure captures the whole wrapper, not its field.
-    fn into_inner(self) -> T {
+    pub(super) fn into_inner(self) -> T {
         self.0
     }
 }
@@ -142,12 +142,13 @@ fn copy_frame(buffer: &CMSampleBuffer) -> Option<VideoFrame> {
 }
 
 /// An NSError from a completion handler, as text; `None` for no error.
-fn error_text(e: *mut NSError) -> Option<String> {
+pub(super) fn error_text(e: *mut NSError) -> Option<String> {
     unsafe { e.as_ref() }.map(|e| e.localizedDescription().to_string())
 }
 
-/// What's on screen now: displays and windows.
-fn shareable_content() -> Result<Retained<SCShareableContent>> {
+/// What's on screen now: displays and windows, if ScreenCaptureKit says
+/// within `limit`.
+pub(super) fn shareable_content(limit: Duration) -> Result<Retained<SCShareableContent>> {
     let (tx, rx) = mpsc::channel();
     let handler = RcBlock::new(move |content: *mut SCShareableContent, error: *mut NSError| {
         let r = match unsafe { Retained::retain(content) } {
@@ -157,10 +158,10 @@ fn shareable_content() -> Result<Retained<SCShareableContent>> {
         let _ = tx.send(r);
     });
     unsafe { SCShareableContent::getShareableContentWithCompletionHandler(&handler) };
-    match rx.recv_timeout(REPLY_LIMIT) {
+    match rx.recv_timeout(limit) {
         Ok(Ok(c)) => Ok(c.into_inner()),
         Ok(Err(e)) => bail!("ScreenCaptureKit can't list the screen's contents: {e}"),
-        Err(_) => bail!("ScreenCaptureKit didn't list the screen's contents within {} s", REPLY_LIMIT.as_secs()),
+        Err(_) => bail!("ScreenCaptureKit didn't list the screen's contents within {} s", limit.as_secs_f32()),
     }
 }
 
@@ -175,7 +176,7 @@ pub fn feed(opts: &Options, interval: Duration) -> Result<Feed> {
     super::capture::ensure_permission()?;
     let outputs = super::capture::outputs(mtm)?;
     anyhow::ensure!(!outputs.is_empty(), "no displays found");
-    let content = shareable_content()?;
+    let content = shareable_content(REPLY_LIMIT)?;
 
     let config = unsafe { SCStreamConfiguration::new() };
     let (filter, size) = match &opts.target {

@@ -79,7 +79,7 @@ dispatch2 = { version = "0.3", default-features = false, features = ["std", "obj
 objc2-core-media = { version = "0.3", default-features = false, features = ["std", "CMSampleBuffer", "CMTime", "CMBase", "CMFormatDescription", "CMSync", "CMAttachment", "objc2-core-video"] }
 objc2-core-video = { version = "0.3", default-features = false, features = ["std", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn", "CVBase"] }
 objc2-screen-capture-kit = { version = "0.3", default-features = false, features = [
-    "std", "block2", "dispatch2", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media", "SCError", "SCShareableContent", "SCStream",
+    "std", "block2", "dispatch2", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media", "SCError", "SCScreenshotManager", "SCShareableContent", "SCStream",
 ] }
 rustix = { version = "1", features = ["fs", "time"] }
 

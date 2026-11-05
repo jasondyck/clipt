@@ -7,6 +7,9 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- macOS: clicking a window in the screenshot overlay brings it to the
+  front. It's captured on its own, so the parts other windows covered show
+  and are saved.
 - macOS: recording, without sound so far (macOS 12.3+, and ffmpeg from
   Homebrew). `clipt record` picks an area or window as on Linux; `record
   screen`, `record window APP`, `-g`, `--stop` and `--pause` work too, and
@@ -16,6 +19,8 @@ All notable changes are listed here. The format follows
   encoder (`h264_videotoolbox`) is used on Apple silicon, libx264 otherwise.
 
 ### Fixed
+- With something selected, clicking a window outside it selected that
+  window's whole screen instead of the window.
 - Windows: `clipt update` recognises a Scoop install under any app name
   (from another bucket, say), not only `clipt`, and leaves it to Scoop.
 

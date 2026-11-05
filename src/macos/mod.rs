@@ -7,6 +7,7 @@ mod clipboard;
 mod overlay;
 pub(crate) mod record;
 mod tray;
+mod window_shot;
 mod windows;
 
 use crate::config::Config;

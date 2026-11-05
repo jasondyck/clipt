@@ -80,6 +80,8 @@ pub struct Session {
     /// Trackpads scroll in small steps; the editor takes whole ones.
     scroll: f64,
     dirty: bool,
+    /// The window last brought to the front (see `bring_forward`).
+    raised: Option<String>,
 }
 
 impl Session {
@@ -141,7 +143,7 @@ impl Session {
             wins.push(Win { window, layer, screen: i, buf: vec![0; len], full: true, surfaces, back: 0 });
         }
 
-        let mut s = Self { mtm, app, editor, wins, main_height, current_cursor: None, scroll: 0.0, dirty: true };
+        let mut s = Self { mtm, app, editor, wins, main_height, current_cursor: None, scroll: 0.0, dirty: true, raised: None };
         // Painted before they're shown, so the screen doesn't flash.
         s.draw()?;
         for w in &s.wins {
@@ -303,8 +305,41 @@ impl Session {
                 // Whatever else is queued, before the next frame.
                 next = Some(NSDate::distantPast());
             }
+            self.bring_forward();
             if let Some(o) = self.editor.outcome {
                 return Ok(o);
+            }
+        }
+    }
+
+    /// A covered window picked for a screenshot is fetched on its own and
+    /// painted over the frozen screen, so what covered it neither shows nor
+    /// is saved; selecting anything else puts the screen back. Not in record
+    /// mode, which records the live screen anyway.
+    fn bring_forward(&mut self) {
+        let picked = if self.editor.record { None } else { self.editor.selected_window().cloned() };
+        let id = picked.as_ref().map(|w| w.id.clone());
+        if self.raised == id {
+            return;
+        }
+        self.raised = id;
+        // Lowered first: whether the new one is covered depends on the
+        // original stacking.
+        let mut changed = self.editor.lower_window();
+        if let Some(w) = picked.filter(|w| self.editor.window_covered(&w.id)) {
+            let scale = self.editor.scale_at((w.x + w.width / 2.0, w.y + w.height / 2.0));
+            match super::window_shot::capture(&w, scale as f64) {
+                Ok(img) => {
+                    self.editor.raise_window(&w.id, img);
+                    changed = true;
+                }
+                Err(e) => crate::record::debug(&format!("bringing the window forward: {e:#}")),
+            }
+        }
+        if changed {
+            self.dirty = true;
+            for win in &mut self.wins {
+                win.full = true;
             }
         }
     }
