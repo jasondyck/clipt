@@ -91,15 +91,11 @@ impl Install {
     }
 }
 
-/// Installed by Scoop: `ROOT\apps\clipt\VERSION\clipt.exe` (or `current`
-/// for VERSION, as its shim starts it), with Scoop's `ROOT\shims` beside.
+/// Installed by Scoop, under any app name (a fork's bucket, a local
+/// manifest): Scoop writes these two beside every app it installs, in
+/// `ROOT\apps\NAME\VERSION`, which its shim reaches through `current`.
 fn scoop(exe: &Path) -> bool {
-    let named = |p: &Path, name: &str| p.file_name().is_some_and(|n| n.eq_ignore_ascii_case(name));
-    let mut up = exe.ancestors().skip(2);
-    match (up.next(), up.next(), up.next()) {
-        (Some(app), Some(apps), Some(root)) => named(app, "clipt") && named(apps, "apps") && root.join("shims").is_dir(),
-        _ => false,
-    }
+    exe.parent().is_some_and(|dir| dir.join("install.json").is_file() && dir.join("manifest.json").is_file())
 }
 
 /// Running inside a Flatpak sandbox. Flatpak puts this file in every sandbox.
@@ -382,13 +378,15 @@ mod tests {
     #[test]
     fn scoop_install() {
         let root = std::env::temp_dir().join(format!("clipt-scoop-{}", std::process::id()));
-        std::fs::create_dir_all(root.join("apps/clipt/current")).unwrap();
-        let exe = root.join("apps/clipt/current/clipt.exe");
-        assert!(!scoop(&exe), "no shims folder: not Scoop");
-        std::fs::create_dir(root.join("shims")).unwrap();
+        let dir = root.join("apps/clipt-dev/current");
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("clipt.exe");
+        assert!(!scoop(&exe), "a plain folder: not Scoop");
+        std::fs::write(dir.join("install.json"), "{}").unwrap();
+        assert!(!scoop(&exe), "only one of Scoop's two files");
+        std::fs::write(dir.join("manifest.json"), "{}").unwrap();
         assert!(scoop(&exe));
-        assert!(scoop(&root.join("Apps/Clipt/0.9.0/clipt.exe")));
-        assert!(!scoop(&root.join("apps/other/current/clipt.exe")));
+        assert!(!scoop(&root.join("apps/clipt.exe")));
         assert!(!scoop(Path::new("clipt.exe")));
         std::fs::remove_dir_all(&root).unwrap();
     }
