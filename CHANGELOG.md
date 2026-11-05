@@ -6,6 +6,10 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Windows: `clipt update` recognises a Scoop install under any app name
+  (from another bucket, say), not only `clipt`, and leaves it to Scoop.
+
 ## [0.9.0] - 2026-11-05
 
 ### Added
