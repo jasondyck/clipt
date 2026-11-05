@@ -10,6 +10,15 @@ All notable changes are listed here. The format follows
 - Windows: the red frame around a region being recorded, as on Linux,
   just outside it so it isn't in the video, and amber while paused.
 
+### Fixed
+- On GNOME, `clipt full -c` failed ("no data-control protocol"): GNOME
+  doesn't let a program without a window set the Wayland clipboard. clipt
+  now sets the X11 clipboard through XWayland instead, which GNOME passes
+  on to Wayland apps.
+- An empty or relative `XDG_CONFIG_HOME` was used as a folder name, so
+  clipt read its config from (and wrote it to) a path relative to wherever
+  it was started. It now falls back to `~/.config`, as the XDG spec says.
+
 ## [0.8.0] - 2026-11-04
 
 ### Added
