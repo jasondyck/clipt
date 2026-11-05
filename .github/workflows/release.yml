@@ -170,7 +170,7 @@ jobs:
             clipt-*-macos-app.zip*
 
   # clipt.exe in a zip, unsigned (Windows warns before the first run; see
-  # docs/windows-plan.md). Screenshots and the tray; no recording yet.
+  # docs/windows-plan.md).
   windows:
     needs: prepare
     runs-on: windows-latest
