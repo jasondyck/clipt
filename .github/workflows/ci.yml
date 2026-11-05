@@ -35,6 +35,9 @@ jobs:
       - run: .github/scripts/apt-install.sh libxkbcommon-dev
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
+      # Only developers build the profiler's zones, so only this catches
+      # a tracy-client change that breaks them.
+      - run: cargo clippy --all-targets --locked --features tracy -- -D warnings
 
   test:
     runs-on: ubuntu-latest
