@@ -29,6 +29,8 @@ enum Area {
 pub fn feed(opts: &Options, interval: Duration) -> Result<Feed> {
     super::capture::dpi_aware();
     let desk = Desktop::get()?;
+    // The red frame goes around a region, not a whole monitor or a window.
+    let mut frame = None;
     let (area, zoom) = match &opts.target {
         Target::Window(w) if w.id.parse::<usize>().is_ok() => (Area::Window(w.id.parse()?), true),
         t => {
@@ -48,12 +50,20 @@ pub fn feed(opts: &Options, interval: Duration) -> Result<Feed> {
                 None => m,
             };
             ensure!(r.right > r.left && r.bottom > r.top, "the area to record is empty");
+            if crop.is_some() {
+                frame = Some((m, r, desk.scale));
+            }
             (Area::Fixed(r), false)
         }
     };
     let cursor = opts.cursor;
     let stream = Box::new(move |sink: Sink| stream(area, cursor, interval, sink));
-    Ok(Feed { stream, zoom, start: Box::new(|| {}) })
+    let start = Box::new(move || {
+        if let Some((m, r, scale)) = frame {
+            std::thread::spawn(move || super::frame::run(m, r, scale));
+        }
+    });
+    Ok(Feed { stream, zoom, start })
 }
 
 fn stream(area: Area, cursor: bool, interval: Duration, mut sink: Sink) -> Result<()> {

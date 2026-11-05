@@ -2,8 +2,8 @@
 
 Status, 2026-11-04: phases 0, 1 and 2 are built (screenshots, the tray and
 its hotkey), checked under Wine and in CI, and not yet tried on a real PC.
-Phase 3 (recording) works from the command line, the overlay and the tray,
-checked under Wine; the red frame around a recording is still to do.
+Phase 3 (recording) is built: the command line, the overlay, the tray and
+the red frame around a region, checked under Wine.
 Phase 4 (sound) is built, checked under Wine against PulseAudio.
 Of phase 5, releases carry `clipt-vX-x86_64-windows.zip` and
 `clipt update` installs it; package manifests are still to do.
@@ -33,7 +33,7 @@ A tester at work can try each phase's build; see *Testing* below.
   clicking one opens the file. Actions start `clipt` with no console, and a
   `clipt` double-clicked or started from a shortcut starts again without
   its console window. One tray per session (a named mutex).
-- **Phase 3, so far.** `src/win32/record.rs` grabs frames with GDI at the
+- **Phase 3.** `src/win32/record.rs` grabs frames with GDI at the
   recording's frame rate and follows a window by its DWM frame bounds;
   everything after the frame (pausing, the camera, the Matroska stream to
   ffmpeg, GIFs) is the Linux code, now shared. Recording control
@@ -41,9 +41,11 @@ A tester at work can try each phase's build; see *Testing* below.
   file in %TEMP% saying whether it's paused, and a named pipe per session
   for stop, pause and resume; Ctrl+C reaches it through
   `SetConsoleCtrlHandler`. Encoders tried: NVENC, Quick Sync, AMF, Media
-  Foundation (hardware only), libx264. The
-  tray polls the recording's state each second for its menu and icon (red
-  dot, amber when paused), as recordings run in their own processes.
+  Foundation (hardware only), libx264. The tray polls the recording's
+  state each second for its menu and icon (red dot, amber when paused), as
+  recordings run in their own processes. The frame around a region
+  (`src/win32/frame.rs`) is four click-through topmost strips outside it,
+  also excluded from capture (`WDA_EXCLUDEFROMCAPTURE`).
 - **Phase 4, sound** (`src/record/audio/wasapi.rs`). WASAPI in shared
   mode: `system` is a loopback of the default output, `mic` the default
   input, and a name from `clipt list sound` picks any device (an output by
