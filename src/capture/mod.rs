@@ -66,10 +66,17 @@ pub type LogicalRect = (f64, f64, f64, f64);
 pub enum PixelOrder {
     Bgrx,
     Rgbx,
+    /// Not four bytes a pixel: the luma plane (width x height), then the
+    /// chroma plane (width x height / 2, U and V interleaved), as macOS
+    /// hands frames to the encoder in. Even sizes only; frames in it can't
+    /// go through the camera.
+    #[cfg(target_os = "macos")]
+    Nv12,
 }
 
-/// One frame of a recording: packed rows (stride = width * 4), in whatever
-/// byte order the compositor handed over, so the common case is a row copy.
+/// One frame of a recording: packed rows (stride = width * 4, or NV12's
+/// planes), in whatever order the compositor handed over, so the common
+/// case is a row copy.
 pub struct VideoFrame {
     pub width: u32,
     pub height: u32,

@@ -254,8 +254,6 @@ pub struct Editor {
     /// The screenshot overlay may switch to record mode and back (Ctrl+R or
     /// the toolbar). `clipt record`'s picker can't: it only records.
     pub can_switch: bool,
-    /// Record mode has sound toggles. Off where recording has no sound yet.
-    pub can_sound: bool,
     last_click: Option<(std::time::Instant, Pt)>,
     /// Show the size/width hint pill until the next pointer move.
     pub width_hint: bool,
@@ -315,7 +313,6 @@ impl Editor {
             sound: SoundToggles::default(),
             gif: false,
             can_switch: false,
-            can_sound: true,
             last_click: None,
             width_hint: false,
             help: None,
@@ -1041,11 +1038,11 @@ impl Editor {
     /// Keys in record mode: selecting and adjusting, and the sound toggles.
     fn record_key(&mut self, key: Key, mods: Mods) -> bool {
         match key {
-            Key::Char('s' | 'S') if !mods.ctrl && self.can_sound => {
+            Key::Char('s' | 'S') if !mods.ctrl => {
                 self.sound.system = !self.sound.system;
                 return true;
             }
-            Key::Char('m' | 'M') if !mods.ctrl && self.can_sound => {
+            Key::Char('m' | 'M') if !mods.ctrl => {
                 self.sound.mic = !self.sound.mic;
                 return true;
             }
@@ -1695,15 +1692,6 @@ mod tests {
         ed.key(Key::Escape, Mods::default());
         assert_eq!(ed.outcome, Some(Outcome::Cancel));
         assert!(ed.record, "record mode survives reused key handling");
-
-        // Where there's no sound to record: the GIF toggle stays, S does nothing.
-        ed.outcome = None;
-        ed.can_sound = false;
-        let (_, buttons) = ui::toolbar_layout(&ed).unwrap();
-        assert_eq!(buttons.iter().map(|b| b.1).collect::<Vec<_>>(), vec![ui::Button::Record, ui::Button::Gif, ui::Button::Close]);
-        let before = ed.sound;
-        ed.key(Key::Char('s'), Mods::default());
-        assert_eq!(ed.sound, before, "nor the S key");
     }
 
     #[test]

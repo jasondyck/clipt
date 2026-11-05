@@ -1,6 +1,6 @@
 //! Sound for recordings: which sources to record, and the 20 ms chunks
 //! each one's capture hands over. The sound server's side is in `pulse`
-//! (Wayland and X11) and `wasapi` (Windows).
+//! (Wayland and X11), `wasapi` (Windows) and `macos/sound.rs`.
 //!
 //! Chunks are stamped by a sample clock rather than by when each read
 //! returns: the server hands audio over in its own blocks (PipeWire's are
@@ -17,28 +17,10 @@ mod pulse;
 pub use pulse::{check, devices, open};
 #[cfg(windows)]
 mod wasapi;
+#[cfg(target_os = "macos")]
+pub use crate::macos::sound::{check, open};
 #[cfg(windows)]
 pub use wasapi::{check, devices, open};
-// Sound lands with ScreenCaptureKit's audio. Until then the recorder still
-// names these, and a recording here has no sources.
-#[cfg(target_os = "macos")]
-mod none {
-    use super::*;
-
-    pub struct Capture;
-
-    pub fn open(_src: &Source) -> Result<Capture> {
-        bail!("recording sound isn't available on macOS yet")
-    }
-
-    impl Capture {
-        pub fn run(self, _sink: impl FnMut(Chunk) -> bool) -> Result<()> {
-            Ok(())
-        }
-    }
-}
-#[cfg(target_os = "macos")]
-pub use none::open;
 
 pub const RATE: u32 = 48_000;
 pub const CHANNELS: u32 = 2;

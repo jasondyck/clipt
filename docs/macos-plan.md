@@ -71,12 +71,23 @@ Intel Macs fall back to libx264), found on PATH or where Homebrew and
 MacPorts put it. `--stop` and `--pause` use the same pid file and FIFO as
 Linux, in the user's own temporary directory (`_CS_DARWIN_USER_TEMP_DIR`).
 The menu bar icon has Record Region, Record Screen, and while recording,
-Pause and Stop, and turns into a red record symbol. Not yet: a frame
-around the area being recorded (the main thread is busy writing, and
-AppKit draws only there), and sound.
+Pause and Stop, and turns into a red record symbol. Frames arrive as NV12
+(420v), the encoder's own format. Not yet: a frame around the area being
+recorded (the main thread is busy writing, and AppKit draws only there).
 
-**4. Sound.** ScreenCaptureKit's system audio (macOS 13+) and the
-microphone, fed to the writer as PulseAudio is now.
+Known limitation: while a whole Retina display is recorded, a video
+playing in an app that isn't frontmost on that display stutters, on
+screen and in the recording; QuickTime's recording of the same screen
+doesn't. It happens with the stream alone, every frame dropped on arrival,
+so it isn't the copying or the encoder. clipt is aimed at recording UI
+interactions, which it records smoothly.
+
+**4. Sound.** Done. `src/macos/sound.rs`, behind the same `check`, `open`
+and `Capture::run` as PulseAudio's. `system` is ScreenCaptureKit's audio
+(macOS 13+) from the picture's own stream (`capturesAudio`), leaving
+clipt's own sound out; `mic` is the default input through an Audio Queue,
+which converts to 48 kHz 16-bit stereo itself (`NSMicrophoneUsageDescription`
+in Info.plist; macOS asks once). Not yet: devices by name, and `clipt list sound`.
 
 **App bundle.** `packaging/macos/build-app.sh` wraps the binary in
 `clipt.app` (bundle ID `io.github.jasondyck.clipt`, no Dock icon, the icon

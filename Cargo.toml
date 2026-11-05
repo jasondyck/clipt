@@ -76,7 +76,7 @@ objc2-quartz-core = { version = "0.3", default-features = false, features = ["st
 # Weakly linked (build.rs); rustix is the pidfile lock, as on Linux.
 block2 = "0.6"
 dispatch2 = { version = "0.3", default-features = false, features = ["std", "objc2"] }
-objc2-core-media = { version = "0.3", default-features = false, features = ["std", "CMSampleBuffer", "CMTime", "CMBase", "CMFormatDescription", "CMSync", "CMAttachment", "objc2-core-video"] }
+objc2-core-media = { version = "0.3", default-features = false, features = ["std", "CMSampleBuffer", "CMTime", "CMBase", "CMFormatDescription", "CMSync", "CMAttachment", "CMBlockBuffer", "objc2-core-video"] }
 objc2-core-video = { version = "0.3", default-features = false, features = ["std", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn", "CVBase"] }
 objc2-screen-capture-kit = { version = "0.3", default-features = false, features = [
     "std", "block2", "dispatch2", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media", "SCError", "SCScreenshotManager", "SCShareableContent", "SCStream",

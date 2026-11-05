@@ -4,9 +4,10 @@
 //! A display is captured with `sourceRect` cropping it to the area, so the
 //! window server does the cropping and scaling; a window is captured on its
 //! own (`desktopIndependentWindow`), even while something covers it, at the
-//! size it had when recording started. Frames arrive as BGRA pixel buffers
-//! on a dispatch queue of ours, are copied out and go to the writer's
-//! newest-frame slot; a still screen sends nothing.
+//! size it had when recording started. Frames arrive as NV12 pixel buffers,
+//! the encoder's own format, on a dispatch queue of ours, are copied out and
+//! go to the writer's newest-frame slot; a still screen sends nothing. The
+//! computer's sound, when recorded, comes on the same stream (`sound.rs`).
 
 use crate::capture::{PixelOrder, VideoFrame};
 use crate::record::{Feed, Options, Sink, Target, resolve_target};
@@ -20,8 +21,9 @@ use objc2_app_kit::NSApplication;
 use objc2_core_foundation::{CFDictionary, CGPoint, CGRect, CGSize};
 use objc2_core_media::{CMSampleBuffer, CMTime};
 use objc2_core_video::{
-    CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow, CVPixelBufferGetHeight, CVPixelBufferGetWidth, CVPixelBufferLockBaseAddress,
-    CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress, kCVPixelFormatType_32BGRA,
+    CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRowOfPlane, CVPixelBufferGetHeight, CVPixelBufferGetHeightOfPlane,
+    CVPixelBufferGetWidth, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
+    kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
 };
 use objc2_foundation::{NSArray, NSError, NSNumber, NSObject, NSObjectProtocol, NSString};
 use objc2_screen_capture_kit::{
@@ -75,6 +77,9 @@ define_class!(
     unsafe impl SCStreamOutput for Output {
         #[unsafe(method(stream:didOutputSampleBuffer:ofType:))]
         fn did_output(&self, _stream: &SCStream, buffer: &CMSampleBuffer, kind: SCStreamOutputType) {
+            if kind == SCStreamOutputType::Audio {
+                return super::sound::system_sound(buffer);
+            }
             if kind != SCStreamOutputType::Screen {
                 return;
             }
@@ -121,24 +126,31 @@ fn complete(buffer: &CMSampleBuffer) -> bool {
     unsafe { status.as_ref() }.is_some_and(|n| matches!(SCFrameStatus(n.integerValue()), SCFrameStatus::Complete | SCFrameStatus::Started))
 }
 
-/// The picture in a sample buffer, as packed BGRx rows.
+/// The picture in a sample buffer: NV12, its two planes packed.
 fn copy_frame(buffer: &CMSampleBuffer) -> Option<VideoFrame> {
     let px = unsafe { buffer.image_buffer() }?;
     if unsafe { CVPixelBufferLockBaseAddress(&px, CVPixelBufferLockFlags::ReadOnly) } != 0 {
         return None;
     }
-    let (w, h, stride) = (CVPixelBufferGetWidth(&px), CVPixelBufferGetHeight(&px), CVPixelBufferGetBytesPerRow(&px));
-    let base = CVPixelBufferGetBaseAddress(&px) as *const u8;
-    let frame = (!base.is_null() && w > 0 && h > 0).then(|| {
-        let row = w * 4;
-        let mut data = Vec::with_capacity(row * h);
-        for y in 0..h {
-            data.extend_from_slice(unsafe { std::slice::from_raw_parts(base.add(y * stride), row) });
-        }
-        VideoFrame { width: w as u32, height: h as u32, order: PixelOrder::Bgrx, data }
-    });
+    let (w, h) = (CVPixelBufferGetWidth(&px), CVPixelBufferGetHeight(&px));
+    let mut data = Vec::with_capacity(w * h * 3 / 2);
+    // Luma, w x h; then chroma, U and V interleaved, w bytes x h / 2.
+    let ok = w > 0
+        && h > 0
+        && (0..2).all(|plane| {
+            let base = CVPixelBufferGetBaseAddressOfPlane(&px, plane) as *const u8;
+            let stride = CVPixelBufferGetBytesPerRowOfPlane(&px, plane);
+            let rows = CVPixelBufferGetHeightOfPlane(&px, plane);
+            if base.is_null() || stride < w || rows < h.div_ceil(1 + plane) {
+                return false;
+            }
+            for y in 0..h.div_ceil(1 + plane) {
+                data.extend_from_slice(unsafe { std::slice::from_raw_parts(base.add(y * stride), w) });
+            }
+            true
+        });
     unsafe { CVPixelBufferUnlockBaseAddress(&px, CVPixelBufferLockFlags::ReadOnly) };
-    frame
+    ok.then_some(VideoFrame { width: w as u32, height: h as u32, order: PixelOrder::Nv12, data })
 }
 
 /// An NSError from a completion handler, as text; `None` for no error.
@@ -176,6 +188,7 @@ pub fn feed(opts: &Options, interval: Duration) -> Result<Feed> {
     super::capture::ensure_permission()?;
     let outputs = super::capture::outputs(mtm)?;
     anyhow::ensure!(!outputs.is_empty(), "no displays found");
+    let system_sound = opts.audio.iter().any(|a| a.device == crate::record::audio::Device::System);
     let content = shareable_content(REPLY_LIMIT)?;
 
     let config = unsafe { SCStreamConfiguration::new() };
@@ -210,15 +223,22 @@ pub fn feed(opts: &Options, interval: Duration) -> Result<Feed> {
             (filter, (w * scale, h * scale))
         }
     };
-    let (w, h) = (size.0.round().max(2.0) as usize, size.1.round().max(2.0) as usize);
+    // Even: NV12's chroma is a pixel per two.
+    let even = |v: f64| (v.round() as usize).max(2) & !1;
+    let (w, h) = (even(size.0), even(size.1));
     unsafe {
         config.setWidth(w);
         config.setHeight(h);
-        config.setPixelFormat(kCVPixelFormatType_32BGRA);
+        // What the encoder takes, so ffmpeg converts nothing, at 1.5 bytes a
+        // pixel rather than BGRA's 4.
+        config.setPixelFormat(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
         config.setShowsCursor(opts.cursor);
         config.setMinimumFrameInterval(CMTime::new(interval.as_micros() as i64, 1_000_000));
         // A few frames in hand, so a slow copy doesn't stall the stream.
         config.setQueueDepth(5);
+    }
+    if system_sound {
+        super::sound::configure(&config);
     }
     crate::record::debug(&format!("ScreenCaptureKit stream: {w}x{h} pixels"));
 
