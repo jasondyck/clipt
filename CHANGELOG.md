@@ -6,6 +6,8 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-05
+
 ### Added
 - A Scoop bucket for Windows: `scoop bucket add clipt
   https://github.com/jasondyck/clipt`, then `scoop install clipt/clipt`.
