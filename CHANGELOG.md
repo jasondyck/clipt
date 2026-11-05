@@ -6,6 +6,10 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Windows: the red frame around a region being recorded, as on Linux,
+  just outside it so it isn't in the video, and amber while paused.
+
 ### Fixed
 - On GNOME, `clipt full -c` failed ("no data-control protocol"): GNOME
   doesn't let a program without a window set the Wayland clipboard. clipt
@@ -20,7 +24,7 @@ All notable changes are listed here. The format follows
 ### Added
 - Recording on Windows: `clipt record` (a region, a monitor or a window,
   which it follows), `--stop`, `--pause` and `--resume`, Ctrl+R in the
-  screenshot overlay, and GIFs, without sound yet. It needs ffmpeg, and
+  screenshot overlay, and GIFs. It needs ffmpeg, and
   uses NVIDIA's, Intel's or AMD's encoder where there is one. Recordings go
   to `Videos\Captures`.
 - The Windows tray records too: *Record region…*, *Record screen*, *Record

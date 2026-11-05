@@ -4,6 +4,7 @@
 
 mod capture;
 mod clipboard;
+mod frame;
 mod overlay;
 pub mod record;
 mod tray;
