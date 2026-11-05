@@ -320,6 +320,22 @@ impl Session {
         }
         NSCursor::arrowCursor().set();
     }
+
+    /// Take the overlay down, hand focus back to the app before it, and let
+    /// AppKit act on both before returning. For when this thread goes on to
+    /// something long (a recording) that never runs the event loop: until
+    /// AppKit gets to it, a hidden window stays on screen, frozen, and the
+    /// active app shows the spinning wait cursor everywhere.
+    pub fn dismiss(mut self) {
+        self.hide();
+        self.app.hide(None);
+        let until = NSDate::dateWithTimeIntervalSinceNow(0.2);
+        while let Some(ev) =
+            self.app.nextEventMatchingMask_untilDate_inMode_dequeue(NSEventMask::Any, Some(&until), unsafe { NSDefaultRunLoopMode }, true)
+        {
+            self.app.sendEvent(&ev);
+        }
+    }
 }
 
 impl Drop for Session {

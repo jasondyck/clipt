@@ -113,6 +113,14 @@ jobs:
           cargo build --release --locked --target x86_64-apple-darwin
           mkdir -p dist
           lipo -create -output dist/clipt target/aarch64-apple-darwin/release/clipt target/x86_64-apple-darwin/release/clipt
+          # ScreenCaptureKit must be weakly linked (build.rs), or clipt won't
+          # start on macOS 12.0-12.2: in both architectures, nothing strong.
+          for arch in arm64 x86_64; do
+            otool -arch $arch -l dist/clipt | grep -A2 LC_LOAD_WEAK_DYLIB | grep -q ScreenCaptureKit.framework
+            if otool -arch $arch -l dist/clipt | grep -A2 'cmd LC_LOAD_DYLIB$' | grep -q ScreenCaptureKit.framework; then
+              echo "ScreenCaptureKit is strongly linked ($arch)"; exit 1
+            fi
+          done
           # An ad-hoc signature: Apple silicon runs nothing unsigned.
           codesign --force --sign - dist/clipt
           packaging/macos/build-app.sh dist/clipt dist

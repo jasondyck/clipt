@@ -69,9 +69,19 @@ objc2-core-graphics = { version = "0.3", default-features = false, features = [
 objc2-io-surface = { version = "0.3", default-features = false, features = ["std", "IOSurfaceRef", "IOSurfaceTypes", "libc", "objc2", "objc2-core-foundation"] }
 objc2-service-management = { version = "0.3", default-features = false, features = ["std", "SMAppService", "objc2", "objc2-foundation"] }
 objc2-foundation = { version = "0.3", default-features = false, features = [
-    "std", "NSArray", "NSBundle", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSObjCRuntime", "NSRunLoop", "NSString", "NSValue",
+    "std", "NSArray", "NSBundle", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSObjCRuntime", "NSRunLoop", "NSString", "NSTimer", "NSValue",
 ] }
 objc2-quartz-core = { version = "0.3", default-features = false, features = ["std", "CALayer", "CATransaction", "objc2-core-foundation"] }
+# Recording: ScreenCaptureKit hands frames over as Core Media sample buffers.
+# Weakly linked (build.rs); rustix is the pidfile lock, as on Linux.
+block2 = "0.6"
+dispatch2 = { version = "0.3", default-features = false, features = ["std", "objc2"] }
+objc2-core-media = { version = "0.3", default-features = false, features = ["std", "CMSampleBuffer", "CMTime", "CMBase", "CMFormatDescription", "CMSync", "CMAttachment", "objc2-core-video"] }
+objc2-core-video = { version = "0.3", default-features = false, features = ["std", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn", "CVBase"] }
+objc2-screen-capture-kit = { version = "0.3", default-features = false, features = [
+    "std", "block2", "dispatch2", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media", "SCError", "SCShareableContent", "SCStream",
+] }
+rustix = { version = "1", features = ["fs", "time"] }
 
 # Windows: Microsoft's raw Win32 bindings, calling DLLs every Windows has.
 [target.'cfg(windows)'.dependencies]

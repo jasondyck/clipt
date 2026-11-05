@@ -52,9 +52,20 @@ which needs no Accessibility permission: `hotkey` (a region, default
 Opening the app again while it runs captures a region. Each action starts a
 fresh `clipt`, as on Linux. The recording items come with phase 3.
 
-**3. Recording.** ScreenCaptureKit (`SCStream`, macOS 12.3+) for frames,
-ffmpeg's `h264_videotoolbox` encoder, the writer and camera as they are;
-`--stop` and `--pause` over the same pid file and FIFO as Linux.
+**3. Recording.** Done, without sound. `src/macos/record.rs`:
+ScreenCaptureKit (`SCStream`, macOS 12.3+, weakly linked so clipt still
+starts on 12.0) for frames, handed to the same writer as Linux through
+`record::Feed`. A display is cropped by `sourceRect`, at the display's
+pixel scale; a window is captured on its own (`desktopIndependentWindow`),
+so it records while covered, at the size it had when recording started.
+ffmpeg's `h264_videotoolbox` (constant-quality mode needs Apple silicon;
+Intel Macs fall back to libx264), found on PATH or where Homebrew and
+MacPorts put it. `--stop` and `--pause` use the same pid file and FIFO as
+Linux, in the user's own temporary directory (`_CS_DARWIN_USER_TEMP_DIR`).
+The menu bar icon has Record Region, Record Screen, and while recording,
+Pause and Stop, and turns into a red record symbol. Not yet: a frame
+around the area being recorded (the main thread is busy writing, and
+AppKit draws only there), and sound.
 
 **4. Sound.** ScreenCaptureKit's system audio (macOS 13+) and the
 microphone, fed to the writer as PulseAudio is now.

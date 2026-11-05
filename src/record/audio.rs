@@ -19,6 +19,26 @@ pub use pulse::{check, devices, open};
 mod wasapi;
 #[cfg(windows)]
 pub use wasapi::{check, devices, open};
+// Sound lands with ScreenCaptureKit's audio. Until then the recorder still
+// names these, and a recording here has no sources.
+#[cfg(target_os = "macos")]
+mod none {
+    use super::*;
+
+    pub struct Capture;
+
+    pub fn open(_src: &Source) -> Result<Capture> {
+        bail!("recording sound isn't available on macOS yet")
+    }
+
+    impl Capture {
+        pub fn run(self, _sink: impl FnMut(Chunk) -> bool) -> Result<()> {
+            Ok(())
+        }
+    }
+}
+#[cfg(target_os = "macos")]
+pub use none::open;
 
 pub const RATE: u32 = 48_000;
 pub const CHANNELS: u32 = 2;

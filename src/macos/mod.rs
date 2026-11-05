@@ -1,10 +1,11 @@
-//! clipt on macOS: screenshots, with the same editor as on Linux, the menu
-//! bar icon, and `clipt update` outside clipt.app. Recording isn't there
-//! yet; see docs/macos-plan.md.
+//! clipt on macOS: screenshots, with the same editor as on Linux,
+//! recording (without sound so far), the menu bar icon, and `clipt update`
+//! outside clipt.app. See docs/macos-plan.md.
 
 mod capture;
 mod clipboard;
 mod overlay;
+pub(crate) mod record;
 mod tray;
 mod windows;
 
@@ -22,16 +23,25 @@ USAGE:
     clipt full            Capture the whole desktop
     clipt screen [NAME]   Capture one display (default: the main one)
     clipt list            Show the displays
+    clipt record          Pick an area or window to record (Enter starts), saved as MP4
+    clipt record screen [NAME]  Record one display (default: the main one)
+    clipt record window APP     Record an app's frontmost window
+    clipt record -g GEOM  Record a region (within one display)
+    clipt record --stop   Stop the running recording
+    clipt record --pause / --resume / --toggle-pause
     clipt tray            Menu bar icon, with the shortcuts (what opening clipt.app does)
     clipt config [KEY [VALUE]]  Show the settings, one setting, or set it
     clipt update          Update to the latest release (--check: only check)
 
 OPTIONS:
     -o, --output PATH     Write the PNG to PATH ('-' for stdout) instead of the save dir
+                          (record: the .mp4/.mkv/.mov/.gif file)
     -c, --clipboard       Copy to the clipboard (full/screen)
     -g, --geometry GEOM   Crop to \"X,Y WxH\" in points (full)
     -d, --delay SECS      Wait before capturing
         --cursor          Include the pointer
+        --fps N           Recording frame rate (default: record_fps, 30)
+        --gif             Save the recording as a GIF (at most 15 fps)
     -h, --help            Show this help
     -V, --version         Show the version
 
@@ -45,10 +55,12 @@ EDITOR KEYS:
     ⌘Z / ⌘⇧Z              undo / redo     Esc / right-click  cancel / back
 
 Config: ~/.config/clipt/config.toml (save_dir, filename, color, palette, width,
-copy_on_save, notify, cursor, font, hotkey, hotkey_full). hotkey is the
+copy_on_save, notify, cursor, font, hotkey, hotkey_full, video_dir,
+record_fps, record_codec, record_format, max_duration). hotkey is the
 tray's shortcut for a region, default \"cmd+shift+2\"; \"\" turns it off.
 clipt needs the Screen Recording permission (System Settings > Privacy &
-Security) for the app it runs from.
+Security) for the app it runs from. Recording needs ffmpeg (brew install ffmpeg)
+and macOS 12.3.
 ";
 
 pub fn run(args: Args, cfg: Config) -> Result<()> {
@@ -58,10 +70,13 @@ pub fn run(args: Args, cfg: Config) -> Result<()> {
     if args.cmd == "tray" || opened_as_app {
         return tray::run(&cfg);
     }
+    if args.cmd == "record" {
+        return record_cmd(args, &cfg);
+    }
     match args.cmd.as_str() {
         "gui" | "full" | "screen" | "list" => {}
         "update" => return crate::update::cli(args.check),
-        "record" | "gnome-extension" => bail!("`clipt {}` isn't available on macOS yet", args.cmd),
+        "gnome-extension" => bail!("`clipt {}` isn't available on macOS yet", args.cmd),
         other => bail!("unknown command '{other}' (try --help)"),
     }
     if args.backend.is_some() {
@@ -168,9 +183,95 @@ pub fn run(args: Args, cfg: Config) -> Result<()> {
     Ok(())
 }
 
+/// `clipt record`: stop or pause the running recording, or start one.
+fn record_cmd(mut args: Args, cfg: &Config) -> Result<()> {
+    use crate::record::{self, Target};
+    if args.stop {
+        return record::stop();
+    }
+    if let Some(cmd) = args.pause.take() {
+        return record::pause(cmd);
+    }
+    if args.audio.as_deref().is_some_and(|a| a != "none") || args.separate_audio || args.audio_balance.is_some() {
+        bail!("recording sound isn't available on macOS yet");
+    }
+    if args.backend.is_some() {
+        bail!("--backend: macOS has only the one");
+    }
+    record::ensure_idle()?;
+    let mtm = MainThreadMarker::new().context("not on the main thread")?;
+    let cursor = args.cursor || cfg.cursor;
+    if args.delay > 0.0 {
+        std::thread::sleep(std::time::Duration::from_secs_f64(args.delay));
+    }
+    let mut gif = args.gif.then_some(true);
+    let target = match (args.record_mode.as_deref(), &args.geometry) {
+        (_, Some(g)) => Target::Geometry(g.clone()),
+        (Some("screen"), None) => Target::Screen(args.screen.clone()),
+        (Some("window"), None) if args.screen.is_some() => {
+            let app = args.screen.as_deref().unwrap_or_default();
+            // The list is front to back, so this is the app's frontmost window.
+            let w = windows::list()
+                .into_iter()
+                .find(|w| w.app.eq_ignore_ascii_case(app))
+                .with_context(|| format!("no window of an app named '{app}'"))?;
+            Target::Window(w)
+        }
+        (None | Some("region" | "window"), None) => match pick_recording_area(cfg, &args, cursor, mtm)? {
+            Some((t, g)) => {
+                gif = Some(g);
+                t
+            }
+            None => return Ok(()), // cancelled
+        },
+        (Some(m), None) => bail!("unknown recording mode '{m}' (screen, region, window, or -g GEOM)"),
+    };
+    let opts = record::Options {
+        target,
+        output: args.output.clone(),
+        fps: args.fps,
+        cursor,
+        gif,
+        audio: Vec::new(),
+        separate_audio: false,
+        balance: record::Balance::default(),
+    };
+    record::run(cfg, opts)
+}
+
+/// The overlay in record mode: the area dragged or the window clicked, and
+/// whether to save a GIF; `None` if cancelled.
+fn pick_recording_area(cfg: &Config, args: &Args, cursor: bool, mtm: MainThreadMarker) -> Result<Option<(crate::record::Target, bool)>> {
+    capture::ensure_permission()?;
+    let font_path = cfg.font.clone();
+    let fonts = std::thread::spawn(move || crate::text::Fonts::load(font_path.as_deref()));
+    let wins = std::thread::spawn(windows::list);
+    let outputs = capture::outputs(mtm)?;
+    anyhow::ensure!(!outputs.is_empty(), "no displays found");
+    let shots = capture::capture(&outputs, cursor)?;
+    let fonts = fonts.join().map_err(|_| anyhow::anyhow!("font loader panicked"))??;
+    let mut ed = Editor::new(shots, fonts, true, cfg.color.saturating_sub(1), cfg.width);
+    ed.record = true;
+    ed.can_sound = false;
+    ed.gif = crate::wants_gif(cfg, args);
+    ed.windows = wins.join().unwrap_or_default();
+    let mut session = overlay::Session::new(ed, mtm)?;
+    let outcome = session.run()?;
+    crate::remember_gif(cfg, args, session.editor());
+    if outcome != Outcome::Record {
+        return Ok(None);
+    }
+    let ed = session.editor();
+    let gif = ed.gif;
+    let target = crate::recording_target(ed)?;
+    // Before the first frame, and before the recording keeps this thread.
+    session.dismiss();
+    Ok(Some((target, gif)))
+}
+
 /// A notification through AppleScript, which needs no app bundle (it shows
 /// as Script Editor's). The text goes in as arguments, not as script.
-fn notify(summary: &str, body: &str) {
+pub(crate) fn notify(summary: &str, body: &str) {
     let r = std::process::Command::new("/usr/bin/osascript")
         .args([
             "-e",
@@ -184,7 +285,10 @@ fn notify(summary: &str, body: &str) {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
-    if let Err(e) = r {
-        eprintln!("clipt: notification failed: {e}");
+    match r {
+        // Reaped in the background: in the long-running tray it would
+        // otherwise linger as a zombie.
+        Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
+        Err(e) => eprintln!("clipt: notification failed: {e}"),
     }
 }

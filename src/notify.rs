@@ -1,9 +1,25 @@
-//! org.freedesktop.Notifications, fire-and-forget.
+//! Desktop notifications, fire-and-forget: org.freedesktop.Notifications
+//! on Wayland and X11, AppleScript on macOS (`macos::notify`), the tray
+//! icon's balloon on Windows (`win32::notify`).
 
-use std::collections::HashMap;
-use zbus::Variant as Value;
-
+/// Show a notification; `image`, a saved file, is its icon where the
+/// desktop shows one.
 pub fn send(summary: &str, body: &str, image: Option<&std::path::Path>) {
+    #[cfg(wayland_x11)]
+    freedesktop(summary, body, image);
+    #[cfg(target_os = "macos")]
+    {
+        let _ = image;
+        crate::macos::notify(summary, body);
+    }
+    #[cfg(windows)]
+    crate::win32::notify(summary, body, image);
+}
+
+#[cfg(wayland_x11)]
+fn freedesktop(summary: &str, body: &str, image: Option<&std::path::Path>) {
+    use std::collections::HashMap;
+    use zbus::Variant as Value;
     let r = (|| -> zbus::Result<()> {
         let conn = crate::dbus::session()?;
         let mut hints: HashMap<&str, Value> = HashMap::new();

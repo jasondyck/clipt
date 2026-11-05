@@ -83,14 +83,11 @@ enum Item {
 
 fn items(ed: &Editor) -> Vec<Item> {
     if ed.record {
-        let mut v = vec![
-            Item::Btn(Button::Record),
-            Item::Sep,
-            Item::Btn(Button::SystemSound),
-            Item::Btn(Button::Mic),
-            Item::Btn(Button::Gif),
-            Item::Sep,
-        ];
+        let mut v = vec![Item::Btn(Button::Record), Item::Sep];
+        if ed.can_sound {
+            v.extend([Item::Btn(Button::SystemSound), Item::Btn(Button::Mic)]);
+        }
+        v.extend([Item::Btn(Button::Gif), Item::Sep]);
         if ed.can_switch {
             v.push(Item::Btn(Button::ShotMode));
         }
