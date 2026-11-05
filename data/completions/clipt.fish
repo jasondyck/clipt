@@ -96,6 +96,7 @@ complete -c clipt -l gif -n '__fish_seen_subcommand_from record' -d 'Save the re
 complete -c clipt -l audio -f -a 'system mic both none' -n '__fish_seen_subcommand_from record' -d 'Record sound too'
 complete -c clipt -l audio-balance -x -a 'off duck smart' -n '__fish_seen_subcommand_from record' -d 'Duck the other sound under the microphone'
 complete -c clipt -l separate-audio -n '__fish_seen_subcommand_from record' -d 'Keep each sound source as its own track'
+complete -c clipt -l audio-loudness -n '__fish_seen_subcommand_from record' -d 'Normalize the finished mix to -14 LUFS'
 complete -c clipt -l no-audio -n '__fish_seen_subcommand_from record' -d 'Record without sound'
 complete -c clipt -s h -l help -d 'Show help'
 complete -c clipt -s V -l version -d 'Show the version'

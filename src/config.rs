@@ -46,6 +46,8 @@ pub struct Config {
     pub record_audio_balance: String,
     /// Also keep each sound source as its own track.
     pub record_separate_audio: bool,
+    /// Normalize the finished recording's mix to -14 LUFS.
+    pub record_audio_loudness: bool,
     /// A recording stops by itself after this many seconds (0 = no limit).
     pub max_duration: u64,
     /// macOS and Windows: the tray's shortcut to capture a region, such as
@@ -78,6 +80,7 @@ impl Default for Config {
             record_audio: "none".into(),
             record_audio_balance: "off".into(),
             record_separate_audio: false,
+            record_audio_loudness: false,
             max_duration: 3600,
             hotkey: if cfg!(windows) { "print" } else { "cmd+shift+2" }.into(),
             hotkey_full: String::new(),

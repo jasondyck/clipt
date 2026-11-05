@@ -75,6 +75,8 @@ pub struct Options {
     pub separate_audio: bool,
     /// Duck the other sources under the microphone, cleaning it up first.
     pub balance: Balance,
+    /// Normalize the finished mix's loudness to -14 LUFS at the stop.
+    pub loudness: bool,
 }
 
 /// Sound queued for the writer beyond this means ffmpeg has stalled.
@@ -229,7 +231,7 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         });
     }
 
-    let written = write_loop(cfg, &lock, &slot, &codec, fps, zoom, sound.as_ref(), &path, &captured);
+    let written = write_loop(cfg, &lock, &slot, &codec, fps, zoom, sound.as_ref(), opts.loudness, &path, &captured);
     // `smart` kept the sound as recorded beside the video for the re-mix,
     // which is over now, however the recording ended.
     if sound.as_ref().is_some_and(encode::Sound::analyses) {
@@ -326,6 +328,7 @@ fn write_loop(
     fps: u32,
     zoom: bool,
     sound: Option<&encode::Sound>,
+    loudness: bool,
     path: &Path,
     captured: &std::sync::atomic::AtomicU64,
 ) -> Result<(String, Duration)> {
@@ -559,6 +562,18 @@ fn write_loop(
                     summary = format!(", speech clarity {before:.2}, {after:.2} re-mixed with the other sound {d:.1} dB quieter");
                 }
             }
+            Err(e) => eprintln!("clipt: {e:#}; the recording is as it was"),
+        }
+    }
+    // Loudness, after any re-mix: what's normalized is the final mix, and
+    // the re-mix's gain can change it.
+    if loudness && sources > 0 {
+        match encode::loudness(path, Duration::from_millis(end)) {
+            Ok(Some(was)) => {
+                eprintln!("clipt: the mix normalized to -14 LUFS (was {was:.1} LUFS)");
+                summary.push_str(", -14 LUFS");
+            }
+            Ok(None) => {}
             Err(e) => eprintln!("clipt: {e:#}; the recording is as it was"),
         }
     }

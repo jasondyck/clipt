@@ -208,6 +208,14 @@ mix, at the volume it was recorded, so the balance can be changed later in an
 editor.
 Players play the mix.
 .TP
+\fB\-\-audio\-loudness\fR
+Normalize the finished recording's mix to \-14 LUFS (\-1 dBTP true peak),
+the loudness streaming services normalize to: the mix is measured at the
+stop and then raised or lowered by one fixed gain to reach it, the video
+and any separate tracks copied.
+A mix already within half a LU of it is left alone.
+Overrides \fBrecord_audio_loudness\fR.
+.TP
 \fB\-\-no\-audio\fR
 Record without sound, whatever \fBrecord_audio\fR says.
 .TP
@@ -355,6 +363,10 @@ the other sound under the microphone.
 .TP
 \fBrecord_separate_audio\fR = \fIfalse\fR
 Also keep each sound source as its own track, like \fB\-\-separate\-audio\fR.
+.TP
+\fBrecord_audio_loudness\fR = \fIfalse\fR
+Normalize the finished recording's mix to \-14 LUFS, like
+\fB\-\-audio\-loudness\fR.
 .TP
 \fBmax_duration\fR = \fI3600\fR
 A recording stops by itself after this many seconds; 0 means no limit.

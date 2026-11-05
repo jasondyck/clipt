@@ -6,6 +6,14 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `clipt record --audio-loudness` (or `record_audio_loudness`) normalizes
+  the finished recording's mix to -14 LUFS, -1 dBTP true peak, the
+  loudness streaming services normalize to: the mix is measured at the
+  stop and then raised or lowered by one fixed gain to reach it, the video
+  and any separate tracks copied. A mix already within half a LU of the
+  target is left alone.
+
 ### Fixed
 - Windows: `clipt update` recognises a Scoop install under any app name
   (from another bucket, say), not only `clipt`, and leaves it to Scoop.

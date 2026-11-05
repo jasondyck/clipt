@@ -669,6 +669,109 @@ pub fn remix(sound: &Sound, video: &Path, down: f32, duration: Duration) -> Resu
     Ok(report)
 }
 
+/// What the first `loudnorm` pass measured: the fields its second pass
+/// asks for, parsed from the JSON it prints.
+#[derive(Debug)]
+struct Measured {
+    i: f64,
+    tp: f64,
+    lra: f64,
+    thresh: f64,
+    offset: f64,
+}
+
+/// The JSON `loudnorm=print_format=json` leaves on stderr. It is the last
+/// thing ffmpeg prints, so its last `{…}` block is it; every value is a
+/// string, even the numbers.
+fn parse_loudnorm(s: &str) -> Option<Measured> {
+    let json = &s[s.rfind('{')?..=s.rfind('}')?];
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let f = |k: &str| v.get(k).and_then(|x| x.as_str()).and_then(|x| x.parse().ok());
+    Some(Measured { i: f("input_i")?, tp: f("input_tp")?, lra: f("input_lra")?, thresh: f("input_thresh")?, offset: f("target_offset")? })
+}
+
+/// The first loudness pass: `loudnorm` reads the mix and reports its
+/// loudness as JSON on stderr, meant for exactly this two-pass use.
+fn measure_loudness(video: &Path) -> Result<Measured> {
+    let out = ffmpeg()
+        .args(["-hide_banner", "-nostats", "-i"])
+        .arg(video)
+        .args(["-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1:print_format=json", "-f", "null", "-"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .context("running ffmpeg")?;
+    let err = String::from_utf8_lossy(&out.stderr);
+    if !out.status.success() {
+        bail!("measuring the mix's loudness failed: {}", err.trim().lines().last().unwrap_or("no error output"));
+    }
+    parse_loudnorm(&err).with_context(|| {
+        format!("measuring the mix's loudness failed: {}", err.trim().lines().last().unwrap_or("loudnorm reported nothing"))
+    })
+}
+
+/// Normalize the finished mix to -14 LUFS, its true peak at most -1 dBTP
+/// (EBU R128, what streaming services normalize to). `loudnorm` measures
+/// it and then, given the measurement, applies one fixed gain, which unlike
+/// its dynamic mode doesn't pull quiet and loud moments together. The video
+/// and any separate tracks are copied; the mix alone is encoded again.
+/// Returns the loudness the mix had, or `None` when there was nothing to do:
+/// silence has no loudness, and a mix already within half a LU of the
+/// target, with no peak over the limit, is left as it is rather than
+/// re-encoded.
+pub fn loudness(video: &Path, duration: Duration) -> Result<Option<f64>> {
+    let m = measure_loudness(video)?;
+    if !m.i.is_finite() || ((m.i + 14.0).abs() <= 0.5 && m.tp <= -1.0) {
+        return Ok(None);
+    }
+    let name = video.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let out = video.with_file_name(format!(".{name}.clipt-loud.{}", video.extension().and_then(|e| e.to_str()).unwrap_or("mp4")));
+    let mov = matches!(video.extension().and_then(|e| e.to_str()), Some("mp4" | "mov"));
+    let apply = format!(
+        "loudnorm=I=-14:TP=-1:measured_I={:.3}:measured_TP={:.3}:measured_LRA={:.3}:measured_thresh={:.3}:offset={:.3}:linear=true",
+        m.i, m.tp, m.lra, m.thresh, m.offset
+    );
+    let mut cmd = ffmpeg();
+    cmd.args(["-hide_banner", "-loglevel", "error", "-y", "-i"]).arg(video);
+    // The mix is the first sound stream: it alone is filtered and encoded
+    // again, so separate tracks stay as recorded. The generic `-c:a copy`
+    // comes first: an option that matches a stream overrides an earlier
+    // one, specific or not.
+    cmd.args(["-map", "0", "-c:v", "copy", "-c:a", "copy"]);
+    cmd.args(["-filter:a:0", &apply, "-c:a:0", "aac", "-b:a:0", "160k"]);
+    if mov {
+        cmd.args(["-movflags", "+faststart"]);
+    }
+    let mut child = cmd.arg(&out).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().context("running ffmpeg")?;
+    let mut err = child.stderr.take().unwrap();
+    let stderr = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = err.read_to_string(&mut s);
+        s
+    });
+    // Sound only, so much faster than real time; this is generous.
+    let limit = Duration::from_secs(60) + duration / 2;
+    let status = wait_up_to(&mut child, limit)?;
+    if status.is_none() {
+        kill(&mut child);
+    }
+    let stderr = stderr.join().unwrap_or_default();
+    match status {
+        Some(s) if s.success() => {}
+        Some(s) => {
+            let _ = std::fs::remove_file(&out);
+            bail!("normalizing the mix's loudness failed ({s}): {}", stderr.trim().lines().last().unwrap_or("no error output"));
+        }
+        None => {
+            let _ = std::fs::remove_file(&out);
+            bail!("normalizing the mix's loudness didn't finish within {limit:?}, so it was stopped");
+        }
+    }
+    std::fs::rename(&out, video).context("replacing the recording with the normalized one")?;
+    Ok(Some(m.i))
+}
+
 /// Read what ffmpeg sends back for `smart` and measure it. The reading
 /// thread only reads, handing blocks to the measuring one, so ffmpeg (which
 /// stalls when its output pipe is full, holding up the recording) is never
@@ -1143,6 +1246,87 @@ mod tests {
             ["video", "audio", "audio", "audio"],
             "video, mix, two tracks"
         );
+    }
+
+    /// The mix normalized to -14 LUFS, any separate tracks copied as they
+    /// were, and a second call finding nothing to do.
+    #[test]
+    fn loudness_normalizes_the_mix() {
+        let _ffmpeg = FFMPEG.lock().unwrap_or_else(|e| e.into_inner());
+        if Command::new("ffmpeg").arg("-version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_err() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("clipt-loud-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A quiet mix and a separate track at its recorded level.
+        let video = dir.join("out.mkv");
+        let made = Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=64x64:d=6"])
+            .args(["-f", "lavfi", "-i", "sine=frequency=1000:r=48000:d=6"])
+            .args(["-f", "lavfi", "-i", "sine=frequency=440:r=48000:d=6"])
+            .args(["-filter_complex", "[1:a]volume=0.05[mix];[2:a]volume=0.3[sep]"])
+            .args(["-map", "0:v", "-map", "[mix]", "-map", "[sep]", "-ac", "2", "-c:v", "rawvideo", "-c:a", "pcm_s16le"])
+            .arg(&video)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        // The mean level of one sound stream, as volumedetect reports it.
+        let level = |select: &str| -> f64 {
+            let out = Command::new("ffmpeg")
+                .args(["-hide_banner", "-nostats", "-i"])
+                .arg(&video)
+                .args(["-map", select, "-af", "volumedetect", "-f", "null", "-"])
+                .stdin(Stdio::null())
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .find_map(|l| l.split_once("mean_volume:").map(|(_, v)| v.split_whitespace().next().unwrap_or("").to_string()))
+                .and_then(|v| v.parse().ok())
+                .unwrap()
+        };
+        // The mix's loudness, as the first pass measures it.
+        let lufs = || measure_loudness(&video).unwrap().i;
+        let sep_was = level("0:a:1");
+        let was = loudness(&video, Duration::from_secs(6)).unwrap().unwrap();
+        assert!(was < -20.0, "the mix started quiet ({was} LUFS)");
+        assert!((lufs() + 14.0).abs() < 0.5, "the mix is now at -14 LUFS ({:.2})", lufs());
+        // The separate track was copied, not re-encoded, at its level.
+        assert!((level("0:a:1") - sep_was).abs() < 0.1, "the separate track changed ({sep_was} -> {})", level("0:a:1"));
+        let codecs = Command::new("ffprobe")
+            .args(["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_name", "-of", "csv=p=0"])
+            .arg(&video)
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&codecs.stdout).lines().collect::<Vec<_>>(),
+            ["aac", "pcm_s16le"],
+            "the mix encoded, the track copied"
+        );
+        // Already at the target: a second call has nothing to do.
+        assert!(loudness(&video, Duration::from_secs(6)).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The measurement is in the last JSON block on stderr, where the rest of
+    /// ffmpeg's chatter can't reach it, its numbers strings.
+    #[test]
+    fn loudnorm_report_is_parsed() {
+        let s = concat!(
+            "[Parsed_loudnorm_0 @ 0x55] \n{\n",
+            "\t\"input_i\" : \"-23.45\",\n",
+            "\t\"input_tp\" : \"-10.02\",\n",
+            "\t\"input_lra\" : \"3.10\",\n",
+            "\t\"input_thresh\" : \"-33.71\",\n",
+            "\t\"output_i\" : \"-14.00\",\n",
+            "\t\"target_offset\" : \"0.05\"\n}\n",
+            "size=N/A time=00:00:06.00 bitrate=N/A\n",
+        );
+        let m = parse_loudnorm(s).unwrap();
+        assert_eq!((m.i, m.tp, m.lra, m.thresh, m.offset), (-23.45, -10.02, 3.10, -33.71, 0.05));
+        // Silence: nothing to parse.
+        assert!(parse_loudnorm("Error opening output files: Invalid argument").is_none());
     }
 
     #[test]

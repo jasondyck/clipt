@@ -50,7 +50,8 @@ modules:
   # out, the resampler, mixer and the voice clean-up, level-matching and
   # ducking filters; for `smart`, the mix's inputs back to clipt as raw
   # floats (pan, pcm_f32le, f32le), and the sound kept as FLAC for the
-  # re-mix, which reads it back with the recording (mov, matroska).
+  # re-mix, which reads it back with the recording (mov, matroska); for
+  # `--audio-loudness`, the mix read back (AAC) and normalized (loudnorm).
   - name: x264
     buildsystem: autotools
     config-opts:
@@ -99,11 +100,11 @@ modules:
       - --enable-indev=lavfi
       # Frames arrive as Matroska; a GIF is made from the finished MP4.
       - --enable-demuxer=matroska,mov
-      - --enable-decoder=rawvideo,h264,wrapped_avframe,pcm_s16le,flac
+      - --enable-decoder=rawvideo,h264,wrapped_avframe,pcm_s16le,flac,aac
       - --enable-parser=h264
       - --enable-encoder=libx264,h264_vaapi,h264_nvenc,gif,aac,pcm_f32le,flac
       - --enable-muxer=mp4,mov,matroska,gif,null,f32le
-      - --enable-filter=color,format,pad,scale,hwupload,scale_vaapi,fps,split,palettegen,paletteuse,null,aresample,amix,asplit,volume,anullsrc,highpass,acompressor,deesser,equalizer,sidechaincompress,amerge,aeval,aformat,lowpass,anull,pan
+      - --enable-filter=color,format,pad,scale,hwupload,scale_vaapi,fps,split,palettegen,paletteuse,null,aresample,amix,asplit,volume,anullsrc,highpass,acompressor,deesser,equalizer,sidechaincompress,amerge,aeval,aformat,lowpass,anull,pan,loudnorm
     cleanup:
       - /include
       - /lib

@@ -47,6 +47,8 @@ titles()   { ffprobe -v error -select_streams a -show_entries stream_tags=title,
 # Mean and peak level of a file's sound, in dB.
 mean_db()  { ffmpeg -nostats -i "$1" -map 0:a -af volumedetect -f null - 2>&1 | sed -n 's/.*mean_volume: \(-*[0-9.]*\) dB/\1/p'; }
 max_db()   { ffmpeg -nostats -i "$1" -map 0:a -af volumedetect -f null - 2>&1 | sed -n 's/.*max_volume: \(-*[0-9.]*\) dB/\1/p'; }
+# Integrated loudness of the first sound track, in LUFS, as loudnorm reads it.
+lufs()     { ffmpeg -nostats -i "$1" -map 0:a:0 -af loudnorm=I=-14:TP=-1:print_format=json -f null - 2>&1 | sed -n 's/.*"input_i".*: *"\(-*[0-9.]*\)".*/\1/p'; }
 a_codec()  { ffprobe -v error -select_streams a -show_entries stream=codec_name -of csv=p=0 "$1" 2>/dev/null; }
 s_dur()    { ffprobe -v error -select_streams "$2" -show_entries stream=duration -of csv=p=0 "$1" 2>/dev/null; }
 
@@ -175,6 +177,16 @@ audio_tests() {
   check "smart: re-mixes an unclear recording (${before:-?} -> ${after:-?}; rc=$rc; $(grep -E 're-mix' /tmp/snd.err | head -1 | sed 's/^clipt: //'))" \
     '[ $rc = 0 ] && [ -n "$before" ] && [ -n "$after" ] && awk "BEGIN{exit !($after > $before)}" && [ "$(a_codec /tmp/snd-remix.mp4)" = aac ] && ! ls -a /tmp | grep -q clipt-sound && ! ls -a /tmp | grep -q clipt-remix'
   grep -E "clarity:" /tmp/snd.err | sed 's/^clipt: /  /'
+
+  # The finished mix normalized to -14 LUFS at the stop; loudnorm needs at
+  # least 3 s of sound, and PulseAudio's first second can be silent.
+  tone_on 1000 clipt; sleep 0.5
+  CLIPT_DEBUG=1 /clipt record -g "$g" --audio=system:50 --audio-loudness -o /tmp/snd-loud.mp4 2>/tmp/snd.err & rp=$!
+  sleep 5; /clipt record --stop; wait $rp; rc=$?
+  tone_off
+  local l=$(lufs /tmp/snd-loud.mp4)
+  check "loudness: the mix normalized to -14 LUFS (${l} LUFS; rc=$rc; $(grep -E 'LUFS' /tmp/snd.err | head -1 | sed 's/^clipt: //'))" \
+    '[ $rc = 0 ] && awk "BEGIN{exit !($l > -14.7 && $l < -13.3)}"'
 
   /clipt record -g "$g" --audio=system --audio-balance=duck -o /tmp/snd-nomic.mp4 2>/tmp/snd.err & rp=$!
   sleep 1.5; /clipt record --stop; wait $rp
