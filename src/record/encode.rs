@@ -7,6 +7,9 @@
 //!   2. h264_nvenc (NVIDIA's driver has no VA-API encoding)
 //!   3. libx264 on the CPU
 //!
+//! On Windows the GPU encoders are NVIDIA's, Intel's (Quick Sync) and AMD's
+//! (AMF), then whatever Media Foundation offers, then libx264.
+//!
 //! Frames reach ffmpeg in a minimal Matroska stream (see `mkv.rs`) that
 //! carries each frame's capture time, and the output keeps those times
 //! (variable frame rate): frames only need sending when the screen changed,
@@ -64,7 +67,31 @@ pub enum Codec {
     /// VA-API through this render node.
     Vaapi(String),
     Nvenc,
+    /// Intel Quick Sync (Windows).
+    Qsv,
+    /// AMD (Windows).
+    Amf,
+    /// A Media Foundation hardware encoder (Windows).
+    Mf,
     X264,
+}
+
+/// ffmpeg: on Windows, preferably the one beside clipt.exe (where the
+/// README suggests putting it), and without a console window of its own,
+/// which would flash up for every recording started from the tray. A
+/// console-less ffmpeg also doesn't see Ctrl-C, which clipt handles.
+pub fn ffmpeg() -> Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let beside = std::env::current_exe().unwrap_or_default().with_file_name("ffmpeg.exe");
+        let mut cmd = Command::new(if beside.is_file() { beside } else { "ffmpeg".into() });
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd
+    }
+    #[cfg(not(windows))]
+    Command::new("ffmpeg")
 }
 
 impl Codec {
@@ -72,6 +99,9 @@ impl Codec {
         match self {
             Self::Vaapi(_) => "h264_vaapi",
             Self::Nvenc => "h264_nvenc",
+            Self::Qsv => "h264_qsv",
+            Self::Amf => "h264_amf",
+            Self::Mf => "h264_mf",
             Self::X264 => "libx264",
         }
     }
@@ -97,6 +127,24 @@ impl Codec {
                 v(&["-vf", &format!("{pad},hwupload,scale_vaapi=format=nv12"), "-c:v", "h264_vaapi", "-qp", "24", "-bf", "0"])
             }
             Self::Nvenc => v(&["-vf", pad, "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "24", "-b:v", "0", "-bf", "0"]),
+            Self::Qsv => v(&["-vf", &format!("{pad},format=nv12"), "-c:v", "h264_qsv", "-global_quality", "24", "-bf", "0"]),
+            Self::Amf => {
+                v(&["-vf", &format!("{pad},format=nv12"), "-c:v", "h264_amf", "-rc", "cqp", "-qp_i", "24", "-qp_p", "24", "-bf", "0"])
+            }
+            // hw_encoding: Media Foundation's own software encoder is no
+            // better than libx264, which comes next.
+            Self::Mf => v(&[
+                "-vf",
+                &format!("{pad},format=nv12"),
+                "-c:v",
+                "h264_mf",
+                "-hw_encoding",
+                "1",
+                "-rate_control",
+                "quality",
+                "-quality",
+                "70",
+            ]),
             Self::X264 => {
                 // Above 1440p, veryfast needs several cores to keep up.
                 let preset = if w as u64 * h as u64 > 2560 * 1440 { "ultrafast" } else { "veryfast" };
@@ -108,6 +156,17 @@ impl Codec {
 
 /// Candidates for a `record_codec` setting, in the order they're tried.
 fn candidates(pref: &str) -> Result<Vec<Codec>> {
+    if cfg!(windows) {
+        return Ok(match pref {
+            "auto" => vec![Codec::Nvenc, Codec::Qsv, Codec::Amf, Codec::Mf, Codec::X264],
+            "nvenc" => vec![Codec::Nvenc],
+            "qsv" => vec![Codec::Qsv],
+            "amf" => vec![Codec::Amf],
+            "mf" => vec![Codec::Mf],
+            "x264" => vec![Codec::X264],
+            other => bail!("unknown record_codec '{other}' (auto, nvenc, qsv, amf, mf, x264)"),
+        });
+    }
     let vaapi = || render_nodes().into_iter().map(Codec::Vaapi).collect::<Vec<_>>();
     Ok(match pref {
         "auto" => {
@@ -137,8 +196,11 @@ fn render_nodes() -> Vec<String> {
 
 /// The first codec that encodes a test frame, or an error naming what's missing.
 pub fn choose(pref: &str) -> Result<Codec> {
-    match Command::new("ffmpeg").arg("-version").stdout(Stdio::null()).stderr(Stdio::null()).status() {
+    match ffmpeg().arg("-version").stdout(Stdio::null()).stderr(Stdio::null()).status() {
         Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && cfg!(windows) => {
+            bail!("recording needs ffmpeg, which isn't installed (winget install Gyan.FFmpeg, or put ffmpeg.exe beside clipt.exe)")
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             bail!("recording needs ffmpeg, which isn't installed (install the 'ffmpeg' package)")
         }
@@ -163,7 +225,7 @@ pub fn choose(pref: &str) -> Result<Codec> {
 /// Encode one small frame the way a recording would, to see if this codec works here.
 fn probe(c: &Codec) -> Result<()> {
     let (w, h) = (320, 240);
-    let mut cmd = Command::new("ffmpeg");
+    let mut cmd = ffmpeg();
     cmd.args(["-hide_banner", "-loglevel", "error"]).args(c.global_args());
     cmd.args(["-f", "lavfi", "-i", &format!("color=c=gray:s={w}x{h}:d=0.1,format=bgr0"), "-frames:v", "1"]);
     cmd.args(c.output_args(w, h)).args(["-f", "null", "-"]);
@@ -181,7 +243,7 @@ pub fn check_aac() -> Result<()> {
     // Silence as 16-bit samples, as recordings send them: a minimal ffmpeg
     // (the Flatpak's) has that decoder, not the 8-bit one anullsrc gives.
     let silence = "anullsrc=r=48000:cl=stereo,aformat=sample_fmts=s16";
-    let out = Command::new("ffmpeg")
+    let out = ffmpeg()
         .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", silence, "-f", "lavfi", "-i", silence])
         .args([
             "-t",
@@ -456,7 +518,7 @@ impl Encoder {
     /// Start ffmpeg on a `w` x `h` video, with `sound` fed through
     /// `write_audio`.
     pub fn spawn(codec: &Codec, w: u32, h: u32, order: PixelOrder, fps: u32, sound: Option<&Sound>, path: &Path) -> Result<Self> {
-        let mut cmd = Command::new("ffmpeg");
+        let mut cmd = ffmpeg();
         cmd.args(["-hide_banner", "-loglevel", "error", "-y"]).args(codec.global_args());
         cmd.args(["-f", "matroska", "-i", "pipe:0"]);
         cmd.args(codec.output_args(w, h));
@@ -480,8 +542,8 @@ impl Encoder {
         }
         // Its own process group: Ctrl-C in the terminal reaches only clipt,
         // which then closes ffmpeg's input so it can finish the file.
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
         let stdout = if analyses { Stdio::piped() } else { Stdio::null() };
         let mut child = cmd.stdin(Stdio::piped()).stdout(stdout).stderr(Stdio::piped()).spawn().context("starting ffmpeg")?;
         let stdin = child.stdin.take();
@@ -566,7 +628,7 @@ pub fn remix(sound: &Sound, video: &Path, down: f32, duration: Duration) -> Resu
     let out = video.with_file_name(format!(".{name}.clipt-remix.{}", video.extension().and_then(|e| e.to_str()).unwrap_or("mp4")));
     let mov = matches!(video.extension().and_then(|e| e.to_str()), Some("mp4" | "mov"));
     let quieter = sound.quieter(down);
-    let mut cmd = Command::new("ffmpeg");
+    let mut cmd = ffmpeg();
     cmd.args(["-hide_banner", "-loglevel", "error", "-y", "-i"]).arg(video).arg("-i").arg(&kept);
     cmd.args(quieter.graph_args(1, mov, false)).args(["-c:v", "copy"]);
     if mov {
@@ -643,7 +705,7 @@ fn measure(mut out: std::process::ChildStdout, channels: usize) -> std::thread::
 pub fn to_gif(mp4: &Path, gif: &Path, fps: u32, duration: Duration) -> Result<()> {
     let filter =
         format!("fps={fps},split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle");
-    let mut child = Command::new("ffmpeg")
+    let mut child = ffmpeg()
         .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
         .arg(mp4)
         .args(["-vf", &filter, "-loop", "0"])
@@ -685,12 +747,14 @@ fn debug(msg: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     /// The ffmpeg tests must not overlap: the stand-in ffmpeg goes first on
     /// the process-wide PATH.
     static FFMPEG: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    #[cfg(unix)]
     /// A stand-in `ffmpeg` first on PATH that ignores its input and hangs,
     /// like the ffmpeg that stopped at the end of its input in the audio
     /// spike. It writes its pid to a file in its temp dir, which is removed
@@ -701,6 +765,7 @@ mod tests {
         path: Option<std::ffi::OsString>,
     }
 
+    #[cfg(unix)]
     impl HungFfmpeg {
         /// The caller must hold `FFMPEG`.
         fn install() -> Self {
@@ -730,6 +795,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     impl Drop for HungFfmpeg {
         fn drop(&mut self) {
             unsafe {
@@ -742,6 +808,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     /// The stand-in was killed, not left running.
     fn assert_gone(pid: u32) {
         // Signal 0 checks for the process without sending it anything.
@@ -750,6 +817,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn finish_kills_a_hung_ffmpeg() {
         let _ffmpeg = FFMPEG.lock().unwrap_or_else(|e| e.into_inner());
         let fake = HungFfmpeg::install();
@@ -763,6 +831,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn to_gif_kills_a_hung_ffmpeg_and_keeps_the_mp4() {
         let _ffmpeg = FFMPEG.lock().unwrap_or_else(|e| e.into_inner());
         let fake = HungFfmpeg::install();
@@ -1077,7 +1146,13 @@ mod tests {
     fn codec_preferences() {
         assert_eq!(candidates("x264").unwrap(), vec![Codec::X264]);
         assert_eq!(candidates("nvenc").unwrap(), vec![Codec::Nvenc]);
-        assert!(candidates("auto").unwrap().ends_with(&[Codec::Nvenc, Codec::X264]));
+        if cfg!(windows) {
+            assert!(candidates("auto").unwrap().ends_with(&[Codec::Mf, Codec::X264]));
+            assert!(candidates("vaapi").is_err());
+        } else {
+            assert!(candidates("auto").unwrap().ends_with(&[Codec::Nvenc, Codec::X264]));
+            assert!(candidates("qsv").is_err());
+        }
         assert!(candidates("av1").is_err());
     }
 }

@@ -15,6 +15,34 @@ All notable changes are listed here. The format follows
   clipt read its config from (and wrote it to) a path relative to wherever
   it was started. It now falls back to `~/.config`, as the XDG spec says.
 
+## [0.8.0] - 2026-11-04
+
+### Added
+- Recording on Windows: `clipt record` (a region, a monitor or a window,
+  which it follows), `--stop`, `--pause` and `--resume`, Ctrl+R in the
+  screenshot overlay, and GIFs, without sound yet. It needs ffmpeg, and
+  uses NVIDIA's, Intel's or AMD's encoder where there is one. Recordings go
+  to `Videos\Captures`.
+- The Windows tray records too: *Record region…*, *Record screen*, *Record
+  as GIF*, then *Pause*, *Resume* and *Stop*, with a red dot on the icon
+  while recording (amber while paused); clicking the icon stops it. It also
+  has *Open recordings folder* and *Check for updates…*, and checks daily
+  with `check_updates = true`; clicking the notification updates.
+- Sound in Windows recordings, through WASAPI: `--audio` records the
+  computer's sound (a loopback of the default output), `mic` the default
+  microphone, or any device from `clipt list sound`, with volumes, ducking
+  and separate tracks as on Linux. The tray has *Record sound*.
+- `clipt update` on Windows and macOS. On Windows it updates an unpacked
+  release zip, moving the running `clipt.exe` aside (the next start deletes
+  it); on macOS, a copy of the command-line binary outside `clipt.app`.
+
+## [0.7.1] - 2026-11-04
+
+### Fixed
+- X11: the editor still gave up with "couldn't grab the pointer" when the
+  program in the way held only the pointer, as some menus do: clipt's
+  Escape went to itself rather than to the menu.
+
 ## [0.7.0] - 2026-11-04
 
 ### Added

@@ -15,19 +15,33 @@
 pub mod audio;
 mod camera;
 mod clarity;
+mod control;
 mod encode;
+#[cfg(wayland_x11)]
 mod follow;
+#[cfg(wayland_x11)]
 mod indicator;
+#[cfg(wayland_x11)]
+mod linux;
 mod mkv;
 
+#[cfg(windows)]
+use crate::win32::record as host;
+#[cfg(wayland_x11)]
+use linux as host;
+
+pub use control::{PauseCmd, ensure_idle, pause, status, stop};
 pub use encode::Balance;
 
-use crate::capture::wayland::{Protocol, Wayland};
-use crate::capture::{Backend, LogicalRect, Output, VideoFrame};
+use control::{CMD_STOP, Lock, PAUSED, PAUSED_AT, RESUMED_AT, STOP, STOPPED_AT, apply, free_bytes, instant_at};
+
+#[cfg(wayland_x11)]
+use crate::capture::Backend;
+use crate::capture::{LogicalRect, Output, VideoFrame};
 use crate::config::Config;
 use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -45,42 +59,12 @@ pub enum Target {
     Window(crate::windows::Window),
 }
 
-/// Where frames come from.
-enum Source {
-    /// An output, cropped to `crop` (output-logical; updated while following
-    /// a window).
-    Output { out: Output, crop: Arc<Mutex<Option<LogicalRect>>> },
-    /// One window, captured by the compositor itself.
-    Window { app: String, title: String },
-    /// KDE: a screencast from KWin over PipeWire.
-    #[cfg(feature = "pipewire")]
-    Kde(crate::capture::kwin_cast::Target),
-    /// GNOME: a screencast from Mutter over PipeWire.
-    #[cfg(feature = "pipewire")]
-    Gnome(crate::capture::mutter_cast::Target),
-    /// The ScreenCast portal: what the user picks, cropped to a desktop region.
-    #[cfg(feature = "pipewire")]
-    Portal(crate::capture::portal_cast::Kind, Option<LogicalRect>),
-    /// X11: an output, cropped to `crop` (updated while following a window).
-    X11 { out: Output, crop: Arc<Mutex<Option<LogicalRect>>> },
-}
-
-/// How this desktop lets us record.
-enum Method {
-    Wlroots(Protocol),
-    #[cfg(feature = "pipewire")]
-    Kde,
-    #[cfg(feature = "pipewire")]
-    Gnome,
-    #[cfg(feature = "pipewire")]
-    Portal,
-}
-
 pub struct Options {
     pub target: Target,
     pub output: Option<String>,
     pub fps: Option<u32>,
     pub cursor: bool,
+    #[cfg(wayland_x11)]
     pub backend: Option<Backend>,
     /// GIF or not, over `record_format`: from `--gif` or the overlay's
     /// toggle. A `.gif` output name also makes a GIF.
@@ -100,199 +84,6 @@ const MAX_QUEUED_AUDIO: usize = 250; // 5 s of 20 ms chunks
 /// and leaves an unplayable file.
 const MIN_FREE_BYTES: u64 = 500 << 20;
 
-static STOP: AtomicBool = AtomicBool::new(false);
-static PAUSED: AtomicBool = AtomicBool::new(false);
-/// When the last pause, resume and stop signals arrived (monotonic clock,
-/// ns). The writer may be busy handing ffmpeg a frame when one arrives, so
-/// it uses these rather than the moment it notices.
-static PAUSED_AT: AtomicU64 = AtomicU64::new(0);
-static RESUMED_AT: AtomicU64 = AtomicU64::new(0);
-static STOPPED_AT: AtomicU64 = AtomicU64::new(0);
-
-fn monotonic_ns() -> u64 {
-    // clock_gettime is async-signal-safe, so the handler may call this.
-    let t = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
-    t.tv_sec as u64 * 1_000_000_000 + t.tv_nsec as u64
-}
-
-/// The Instant matching a monotonic_ns() reading (0 = now).
-fn instant_at(ns: u64) -> Instant {
-    let ago = monotonic_ns().saturating_sub(ns);
-    if ns == 0 { Instant::now() } else { Instant::now().checked_sub(Duration::from_nanos(ago)).unwrap_or_else(Instant::now) }
-}
-
-extern "C" fn on_signal(sig: libc::c_int) {
-    apply(match sig {
-        libc::SIGUSR1 => CMD_PAUSE,
-        libc::SIGUSR2 => CMD_RESUME,
-        _ => CMD_STOP,
-    });
-}
-
-/// Act on a command from the control FIFO or a signal. Async-signal-safe.
-fn apply(cmd: u8) {
-    // The flag to set, its new value, and where to note when it changed.
-    let (flag, value, at) = match cmd {
-        CMD_PAUSE => (&PAUSED, true, &PAUSED_AT),
-        CMD_RESUME => (&PAUSED, false, &RESUMED_AT),
-        CMD_STOP => (&STOP, true, &STOPPED_AT),
-        _ => return,
-    };
-    if flag.swap(value, Ordering::SeqCst) != value {
-        at.store(monotonic_ns(), Ordering::SeqCst);
-    }
-}
-
-// Recording control works through files in the runtime dir rather than
-// pids: each Flatpak instance has its own PID namespace (where the first
-// process is always pid 2), so a pid in the pidfile means nothing to another
-// `flatpak run`, and signalling it would hit the wrong process.
-//   clipt-record.pid  held under an exclusive flock while recording (locks
-//                     cross PID namespaces); says "recording" or "paused"
-//   clipt-record.ctl  a FIFO the recorder reads one-byte commands from
-
-fn runtime_file(name: &str) -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    dir.join(name)
-}
-
-fn pidfile() -> PathBuf {
-    runtime_file("clipt-record.pid")
-}
-
-fn ctlfile() -> PathBuf {
-    runtime_file("clipt-record.ctl")
-}
-
-const CMD_STOP: u8 = b's';
-const CMD_PAUSE: u8 = b'p';
-const CMD_RESUME: u8 = b'r';
-
-/// The running recording, if any: whether it's paused. The pidfile holds the
-/// recorder's pid (for people reading it) on the first line and "paused" or
-/// "recording" on the second.
-pub fn status() -> Option<bool> {
-    use rustix::fs::{FlockOperation, flock};
-    let f = std::fs::File::open(pidfile()).ok()?;
-    match flock(&f, FlockOperation::NonBlockingLockShared) {
-        Ok(()) => None, // nobody holds it: stale
-        Err(_) => {
-            let s = std::io::read_to_string(&f).unwrap_or_default();
-            Some(s.lines().nth(1) == Some("paused"))
-        }
-    }
-}
-
-/// Holds the pidfile (locked) and the control FIFO for as long as the
-/// recording runs.
-struct Lock {
-    file: std::fs::File,
-}
-
-impl Lock {
-    fn take() -> Result<Self> {
-        use rustix::fs::{FlockOperation, flock};
-        let p = pidfile();
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&p)
-            .with_context(|| format!("opening {}", p.display()))?;
-        if flock(&file, FlockOperation::NonBlockingLockExclusive).is_err() {
-            bail!("already recording; stop it with 'clipt record --stop'");
-        }
-        let lock = Self { file };
-        lock.set(false)?;
-        let ctl = ctlfile();
-        let _ = std::fs::remove_file(&ctl); // stale
-        rustix::fs::mkfifoat(rustix::fs::CWD, &ctl, rustix::fs::Mode::from_raw_mode(0o600))
-            .with_context(|| format!("creating {}", ctl.display()))?;
-        // Read and write: with a writer of its own, reads wait for the next
-        // command instead of seeing end-of-file whenever a sender closes.
-        let mut fifo =
-            std::fs::OpenOptions::new().read(true).write(true).open(&ctl).with_context(|| format!("opening {}", ctl.display()))?;
-        std::thread::spawn(move || {
-            let mut b = [0u8; 16];
-            while let Ok(n) = std::io::Read::read(&mut fifo, &mut b) {
-                b[..n].iter().for_each(|&c| apply(c));
-            }
-        });
-        Ok(lock)
-    }
-
-    fn set(&self, paused: bool) -> Result<()> {
-        use std::os::unix::fs::FileExt;
-        // Rewritten in place: replacing the file would drop the lock.
-        let s = format!("{}\n{}\n", std::process::id(), if paused { "paused" } else { "recording" });
-        self.file.set_len(0)?;
-        self.file.write_all_at(s.as_bytes(), 0)?;
-        Ok(())
-    }
-}
-
-impl Drop for Lock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(ctlfile());
-        let _ = std::fs::remove_file(pidfile());
-    }
-}
-
-/// Fail early, before the overlay opens, if a recording is already running.
-pub fn ensure_idle() -> Result<()> {
-    match status() {
-        Some(_) => bail!("already recording; stop it with 'clipt record --stop'"),
-        None => Ok(()),
-    }
-}
-
-/// Hand the running recording a command.
-fn send(cmd: u8) -> Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    if status().is_none() {
-        bail!("no recording is running");
-    }
-    // Non-blocking, so a FIFO nobody reads fails at once instead of hanging.
-    let mut fifo = std::fs::OpenOptions::new()
-        .write(true)
-        .custom_flags(libc::O_NONBLOCK)
-        .open(ctlfile())
-        .context("no recording is running (its control FIFO isn't open)")?;
-    fifo.write_all(&[cmd]).context("sending the command to the recording")?;
-    Ok(())
-}
-
-/// `clipt record --stop`: tell the running recording to stop and wait for it
-/// to finish writing.
-pub fn stop() -> Result<()> {
-    send(CMD_STOP)?;
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while status().is_some() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    anyhow::ensure!(status().is_none(), "the recording didn't stop within 30 s");
-    Ok(())
-}
-
-pub enum PauseCmd {
-    Pause,
-    Resume,
-    Toggle,
-}
-
-/// `clipt record --pause / --resume / --toggle-pause`.
-pub fn pause(cmd: PauseCmd) -> Result<()> {
-    let Some(paused) = status() else { bail!("no recording is running") };
-    let pause = match cmd {
-        PauseCmd::Pause => true,
-        PauseCmd::Resume => false,
-        PauseCmd::Toggle => !paused,
-    };
-    send(if pause { CMD_PAUSE } else { CMD_RESUME })
-}
-
 /// The newest captured frame, shared between the capture thread and the writer.
 #[derive(Default)]
 struct Slot {
@@ -303,63 +94,37 @@ struct Slot {
     audio: std::collections::VecDeque<(usize, audio::Chunk)>,
     /// How many sound threads have read everything up to the stop.
     audio_done: usize,
+    /// Whether ffmpeg has taken the first frame. Until then the writer can be
+    /// held up for seconds while it starts (under Wine, say), so sound piling
+    /// up then isn't a stall.
+    encoding: bool,
     error: Option<String>,
     done: bool,
+}
+
+/// Where frames go: false back from it stops the capture.
+pub type Sink = Box<dyn FnMut(VideoFrame) -> bool + Send>;
+
+/// A recording's frames, as the host (Wayland and X11, or Windows) sets
+/// them up.
+pub struct Feed {
+    /// Captures frames into the sink until it says stop or capture fails.
+    /// Runs on its own thread.
+    pub stream: Box<dyn FnOnce(Sink) -> Result<()> + Send>,
+    /// The frames change size (a window): they go through the camera.
+    pub zoom: bool,
+    /// What else runs once recording starts: the red frame around it,
+    /// following a window.
+    pub start: Box<dyn FnOnce()>,
 }
 
 pub fn run(cfg: &Config, opts: Options) -> Result<()> {
     let fps = opts.fps.unwrap_or(cfg.record_fps).clamp(1, 240);
     let codec = encode::choose(&cfg.record_codec)?;
 
-    // A Wayland compositor if there is one, else an X display.
-    let (mut wl, x11) = match Wayland::connect() {
-        Ok(wl) => (Some(wl), None),
-        Err(e) if crate::x11::available() => {
-            let x = crate::x11::X11::connect().map_err(|x| x.context(format!("and Wayland: {e:#}")))?;
-            (None, Some(x))
-        }
-        Err(e) => return Err(e.context("no Wayland compositor and no X11 display")),
-    };
-    let outputs = match (&wl, &x11) {
-        (Some(wl), _) => wl.outputs(),
-        (_, Some(x)) => x.outputs(),
-        _ => unreachable!(),
-    };
-    anyhow::ensure!(!outputs.is_empty(), "no outputs found");
-    // `zoom`: frames change size, so they go through the camera.
-    let (source, zoom, follow, frame, proto) = match &wl {
-        Some(w) => {
-            let wlroots = w.protocols();
-            let method = pick_method(w, &wlroots, opts.backend)?;
-            #[cfg(feature = "pipewire")]
-            if matches!(method, Method::Kde | Method::Gnome | Method::Portal) {
-                crate::capture::pipewire::check()?;
-            }
-            let proto = match method {
-                Method::Wlroots(p) => p,
-                #[allow(unreachable_patterns)]
-                _ => Protocol::ExtImageCopy,
-            };
-            let (s, z, f, fr) = match method {
-                Method::Wlroots(p) => wlroots_source(w, p, &outputs, &opts.target)?,
-                #[cfg(feature = "pipewire")]
-                Method::Kde => kde_source(&outputs, &opts.target)?,
-                #[cfg(feature = "pipewire")]
-                Method::Gnome => gnome_source(&outputs, &opts.target)?,
-                #[cfg(feature = "pipewire")]
-                Method::Portal => portal_source(&outputs, &opts.target)?,
-            };
-            (s, z, f, fr, proto)
-        }
-        None => {
-            if let Some(b) = opts.backend.filter(|b| *b != Backend::X11) {
-                bail!("this is an X11 session; recording uses X11 here, not {b:?}");
-            }
-            let (s, z, f, fr) = x11_source(&outputs, &opts.target)?;
-            (s, z, f, fr, Protocol::ExtImageCopy)
-        }
-    };
     let interval = Duration::from_secs_f64(1.0 / fps as f64);
+    let feed = host::feed(&opts, interval)?;
+    let zoom = feed.zoom;
 
     let gif_format = match (opts.gif, cfg.record_format.as_str()) {
         (_, other) if !matches!(other, "mp4" | "gif") => bail!("unknown record_format '{other}' (mp4, gif)"),
@@ -400,50 +165,25 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
     });
 
     let lock = Lock::take()?;
-    unsafe {
-        for sig in [libc::SIGINT, libc::SIGTERM, libc::SIGUSR1, libc::SIGUSR2] {
-            libc::signal(sig, on_signal as *const () as libc::sighandler_t);
-        }
-    }
-
-    if let Some((out, c)) = frame {
-        std::thread::spawn(move || {
-            if let Err(e) = indicator::run(&out, c) {
-                eprintln!("clipt: no recording frame: {e:#}");
-            }
-        });
-    }
-    if let (Source::Output { crop, .. } | Source::X11 { crop, .. }, Some((id, out))) = (&source, &follow) {
-        let (crop, id, out, on_x11) = (crop.clone(), id.clone(), out.clone(), x11.is_some());
-        std::thread::spawn(move || follow::run(&id, &out, &crop, on_x11));
-    }
+    control::handle_signals();
+    (feed.start)();
 
     let slot = Arc::new((Mutex::new(Slot::default()), Condvar::new()));
     let captured = Arc::new(std::sync::atomic::AtomicU64::new(0));
     {
-        let (slot, captured, cursor) = (slot.clone(), captured.clone(), opts.cursor);
+        let (slot, captured, stream) = (slot.clone(), captured.clone(), feed.stream);
         // The thread may still be blocked waiting for the screen to change
         // when we finish; process exit ends it.
         std::thread::spawn(move || {
             let frames = slot.clone();
-            let mut sink = move |f: VideoFrame| {
+            let sink = Box::new(move |f: VideoFrame| {
                 captured.fetch_add(1, Ordering::Relaxed);
                 let (m, cv) = &*frames;
                 m.lock().unwrap().frame = Some((f, Instant::now()));
                 cv.notify_one();
                 !STOP.load(Ordering::SeqCst)
-            };
-            let r = match &source {
-                Source::Output { out, crop } => wl.as_mut().unwrap().stream(out, cursor, proto, &|| *crop.lock().unwrap(), &mut sink),
-                Source::Window { app, title } => wl.as_mut().unwrap().stream_window(app, title, cursor, &mut sink),
-                Source::X11 { out, crop } => x11.as_ref().unwrap().stream(out, cursor, interval, &|| *crop.lock().unwrap(), &mut sink),
-                #[cfg(feature = "pipewire")]
-                Source::Kde(t) => crate::capture::kwin_cast::stream(t.clone(), cursor, Box::new(|_, _| None), Box::new(sink)),
-                #[cfg(feature = "pipewire")]
-                Source::Gnome(t) => crate::capture::mutter_cast::stream(t.clone(), cursor, Box::new(|_, _| None), Box::new(sink)),
-                #[cfg(feature = "pipewire")]
-                Source::Portal(kind, region) => crate::capture::portal_cast::stream(*kind, *region, cursor, Box::new(sink)),
-            };
+            });
+            let r = stream(sink);
             let (m, cv) = &*slot;
             let mut s = m.lock().unwrap();
             s.done = true;
@@ -461,7 +201,7 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
             let r = cap.run(|c| {
                 let (m, cv) = &*slot;
                 let mut s = m.lock().unwrap();
-                if s.audio.len() >= MAX_QUEUED_AUDIO * sources {
+                if s.encoding && s.audio.len() >= MAX_QUEUED_AUDIO * sources {
                     s.error = Some("ffmpeg isn't keeping up with the sound".into());
                     cv.notify_one();
                     return false;
@@ -504,7 +244,10 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         Ok(stats) => {
             println!("{}", target.display());
             if cfg.notify {
+                #[cfg(wayland_x11)]
                 crate::notify::send("Recording saved", &format!("{}  ·  {}", target.display(), stats), None);
+                #[cfg(windows)]
+                crate::win32::notify("Recording saved", &format!("{}  ·  {}", target.display(), stats), Some(&target));
             }
         }
         Err(_) if path.exists() => eprintln!("clipt: the partial recording is in {}", path.display()),
@@ -513,167 +256,8 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
     result.map(|_| ())
 }
 
-/// How to record here: a wlroots capture protocol where the compositor has
-/// one, else KWin's screencast (KDE), else Mutter's (GNOME).
-fn pick_method(wl: &Wayland, wlroots: &[Protocol], forced: Option<Backend>) -> Result<Method> {
-    #[cfg(feature = "pipewire")]
-    let (kde, gnome, portal) = (
-        || crate::capture::kwin_cast::available(wl.connection()),
-        || crate::dbus::session().is_ok_and(|c| crate::capture::mutter_cast::available(&c)),
-        || crate::dbus::session().is_ok_and(|c| crate::capture::portal_cast::available(&c)),
-    );
-    let _ = wl;
-    let ext = wlroots.contains(&Protocol::ExtImageCopy);
-    Ok(match forced {
-        Some(Backend::Ext) => {
-            anyhow::ensure!(ext, "compositor doesn't offer ext-image-copy-capture");
-            Method::Wlroots(Protocol::ExtImageCopy)
-        }
-        Some(Backend::Wlr) => {
-            anyhow::ensure!(wlroots.contains(&Protocol::WlrScreencopy), "compositor doesn't offer wlr-screencopy");
-            Method::Wlroots(Protocol::WlrScreencopy)
-        }
-        #[cfg(feature = "pipewire")]
-        Some(Backend::Kwin) => {
-            anyhow::ensure!(kde(), "KWin's screencast isn't available here");
-            Method::Kde
-        }
-        #[cfg(feature = "pipewire")]
-        Some(Backend::Mutter) => {
-            anyhow::ensure!(gnome(), "Mutter's screencast isn't available here");
-            Method::Gnome
-        }
-        #[cfg(feature = "pipewire")]
-        Some(Backend::Portal) => {
-            anyhow::ensure!(portal(), "the ScreenCast portal isn't available here");
-            Method::Portal
-        }
-        Some(b) => bail!("recording doesn't support the {b:?} backend (ext, wlr, kwin, mutter or portal)"),
-        None if ext => Method::Wlroots(Protocol::ExtImageCopy),
-        None if !wlroots.is_empty() => Method::Wlroots(Protocol::WlrScreencopy),
-        #[cfg(feature = "pipewire")]
-        None if kde() => Method::Kde,
-        #[cfg(feature = "pipewire")]
-        None if gnome() => Method::Gnome,
-        #[cfg(feature = "pipewire")]
-        None if portal() => Method::Portal,
-        None if cfg!(feature = "pipewire") => {
-            bail!("this desktop offers no way to record: no wlroots capture protocol, no KWin or Mutter screencast")
-        }
-        None => bail!("this desktop needs PipeWire to record, and this clipt was built without it"),
-    })
-}
-
-/// (source, zoom, window to follow, red frame to draw: output + crop)
-type Picked = (Source, bool, Option<(String, Output)>, Option<(Output, LogicalRect)>);
-
-/// wlroots compositors: capture the output (cropped) or the window directly.
-fn wlroots_source(wl: &Wayland, proto: Protocol, outputs: &[Output], target: &Target) -> Result<Picked> {
-    let rect = |w: &crate::windows::Window| Target::Rect((w.x as f64, w.y as f64, w.width as f64, w.height as f64));
-    Ok(match target {
-        Target::Window(w) if wl.can_capture_windows() && proto == Protocol::ExtImageCopy && !w.app.is_empty() => {
-            debug(&format!("recording window '{}' by window capture", w.app));
-            (Source::Window { app: w.app.clone(), title: w.title.clone() }, true, None, None)
-        }
-        Target::Window(w) if follow::supported() && !w.id.is_empty() => {
-            let (out, crop) = resolve_target(outputs, &rect(w))?;
-            debug("following the window by cropping its output");
-            (Source::Output { out: out.clone(), crop: Arc::new(Mutex::new(crop)) }, true, Some((w.id.clone(), out)), None)
-        }
-        Target::Window(w) => {
-            eprintln!("clipt: this compositor can't follow a window; recording the area it covers now");
-            let (out, crop) = resolve_target(outputs, &rect(w))?;
-            let frame = crop.map(|c| (out.clone(), c));
-            (Source::Output { out, crop: Arc::new(Mutex::new(crop)) }, false, None, frame)
-        }
-        t => {
-            let (out, crop) = resolve_target(outputs, t)?;
-            let frame = crop.map(|c| (out.clone(), c));
-            (Source::Output { out, crop: Arc::new(Mutex::new(crop)) }, false, None, frame)
-        }
-    })
-}
-
-/// X11: the output (cropped), or a window followed by its position. No red
-/// frame: drawing one needs override-redirect windows, which would show in
-/// the recording whenever the region touches them.
-fn x11_source(outputs: &[Output], target: &Target) -> Result<Picked> {
-    let rect = |w: &crate::windows::Window| Target::Rect((w.x as f64, w.y as f64, w.width as f64, w.height as f64));
-    Ok(match target {
-        Target::Window(w) if !w.id.is_empty() => {
-            let (out, crop) = resolve_target(outputs, &rect(w))?;
-            debug("following the X11 window by its position");
-            (Source::X11 { out: out.clone(), crop: Arc::new(Mutex::new(crop)) }, true, Some((w.id.clone(), out)), None)
-        }
-        t => {
-            let (out, crop) = resolve_target(outputs, t)?;
-            (Source::X11 { out, crop: Arc::new(Mutex::new(crop)) }, false, None, None)
-        }
-    })
-}
-
-/// The ScreenCast portal: the user picks a monitor (or window) in its dialog,
-/// once; a region is cropped out of the monitor they pick.
-#[cfg(feature = "pipewire")]
-fn portal_source(outputs: &[Output], target: &Target) -> Result<Picked> {
-    use crate::capture::portal_cast::Kind;
-    Ok(match target {
-        Target::Screen(_) => (Source::Portal(Kind::Monitor, None), false, None, None),
-        Target::Window(_) => (Source::Portal(Kind::Window, None), true, None, None),
-        t => {
-            let (o, crop) = resolve_target(outputs, t)?;
-            let region = crop.map(|(x, y, w, h)| (x + o.x as f64, y + o.y as f64, w, h));
-            (Source::Portal(Kind::Monitor, region), false, None, None)
-        }
-    })
-}
-
-/// GNOME: Mutter records the monitor or area and hands it over by PipeWire.
-/// GNOME doesn't say where windows are, so there are no window targets.
-#[cfg(feature = "pipewire")]
-fn gnome_source(outputs: &[Output], target: &Target) -> Result<Picked> {
-    use crate::capture::mutter_cast::Target as G;
-    Ok(match target {
-        Target::Screen(None) => (Source::Gnome(G::Monitor(outputs[0].name.clone())), false, None, None),
-        Target::Screen(Some(n)) => {
-            anyhow::ensure!(outputs.iter().any(|o| &o.name == n), "no output named '{n}'");
-            (Source::Gnome(G::Monitor(n.clone())), false, None, None)
-        }
-        t => {
-            let (o, crop) = resolve_target(outputs, t)?;
-            let c = crop.unwrap_or((0.0, 0.0, o.width as f64, o.height as f64));
-            // The frame comes from clipt's GNOME Shell extension, if it's there.
-            (Source::Gnome(G::Area((c.0 + o.x as f64, c.1 + o.y as f64, c.2, c.3))), false, None, crop.map(|c| (o, c)))
-        }
-    })
-}
-
-/// KDE: KWin records the output, region or window and hands it over by PipeWire.
-#[cfg(feature = "pipewire")]
-fn kde_source(outputs: &[Output], target: &Target) -> Result<Picked> {
-    use crate::capture::kwin_cast::Target as K;
-    let scale = |o: &Output| if o.native.0 > 0 { o.native.0 as f64 / o.width as f64 } else { 1.0 };
-    Ok(match target {
-        Target::Screen(None) => (Source::Kde(K::Output(outputs[0].name.clone())), false, None, None),
-        Target::Screen(Some(n)) => {
-            anyhow::ensure!(outputs.iter().any(|o| &o.name == n), "no output named '{n}'");
-            (Source::Kde(K::Output(n.clone())), false, None, None)
-        }
-        Target::Window(w) if !w.id.is_empty() => {
-            debug(&format!("recording window '{}' by KWin screencast", w.app));
-            (Source::Kde(K::Window(w.id.clone())), true, None, None)
-        }
-        t => {
-            let (o, crop) = resolve_target(outputs, t)?;
-            let c = crop.unwrap_or((0.0, 0.0, o.width as f64, o.height as f64));
-            let source = Source::Kde(K::Region((c.0 + o.x as f64, c.1 + o.y as f64, c.2, c.3), scale(&o)));
-            (source, false, None, Some((o, c)))
-        }
-    })
-}
-
 /// The output to capture and the crop within it (output-logical coordinates).
-fn resolve_target(outputs: &[Output], target: &Target) -> Result<(Output, Option<LogicalRect>)> {
+pub fn resolve_target(outputs: &[Output], target: &Target) -> Result<(Output, Option<LogicalRect>)> {
     match target {
         Target::Screen(None) => Ok((outputs[0].clone(), None)),
         Target::Screen(Some(n)) => {
@@ -906,6 +490,16 @@ fn write_loop(
         };
         let ts = stamp(at, t0.unwrap(), paused_total, &mut last_ts);
         e.write(&out.data, ts)?;
+        if written == 0 {
+            // ffmpeg is running and reading: take the sound that piled up
+            // while it started, and from now on too much means a stall.
+            let mut s = m.lock().unwrap();
+            for (i, _) in &s.audio {
+                heard[*i] = true;
+            }
+            pending.extend(s.audio.drain(..));
+            s.encoding = true;
+        }
         written += 1;
         last_write = due;
         fresh = false;
@@ -1036,12 +630,6 @@ fn debug(msg: &str) {
     if std::env::var_os("CLIPT_DEBUG").is_some() {
         eprintln!("clipt: {msg}");
     }
-}
-
-fn free_bytes(path: &Path) -> Option<u64> {
-    let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let s = rustix::fs::statvfs(dir).ok()?;
-    Some(s.f_bavail * s.f_frsize)
 }
 
 #[cfg(test)]

@@ -2,8 +2,11 @@
 
 Status, 2026-11-04: phases 0, 1 and 2 are built (screenshots, the tray and
 its hotkey), checked under Wine and in CI, and not yet tried on a real PC.
-Of phase 5, releases carry `clipt-vX-x86_64-windows.zip`; the updater and
-package manifests are still to do.
+Phase 3 (recording) works from the command line, the overlay and the tray,
+checked under Wine; the red frame around a recording is still to do.
+Phase 4 (sound) is built, checked under Wine against PulseAudio.
+Of phase 5, releases carry `clipt-vX-x86_64-windows.zip` and
+`clipt update` installs it; package manifests are still to do.
 A tester at work can try each phase's build; see *Testing* below.
 
 ## Done
@@ -30,9 +33,33 @@ A tester at work can try each phase's build; see *Testing* below.
   clicking one opens the file. Actions start `clipt` with no console, and a
   `clipt` double-clicked or started from a shortcut starts again without
   its console window. One tray per session (a named mutex).
+- **Phase 3, so far.** `src/win32/record.rs` grabs frames with GDI at the
+  recording's frame rate and follows a window by its DWM frame bounds;
+  everything after the frame (pausing, the camera, the Matroska stream to
+  ffmpeg, GIFs) is the Linux code, now shared. Recording control
+  (`src/record/control.rs`) is a named mutex `Local\clipt-record`, a state
+  file in %TEMP% saying whether it's paused, and a named pipe per session
+  for stop, pause and resume; Ctrl+C reaches it through
+  `SetConsoleCtrlHandler`. Encoders tried: NVENC, Quick Sync, AMF, Media
+  Foundation (hardware only), libx264. The
+  tray polls the recording's state each second for its menu and icon (red
+  dot, amber when paused), as recordings run in their own processes.
+- **Phase 4, sound** (`src/record/audio/wasapi.rs`). WASAPI in shared
+  mode: `system` is a loopback of the default output, `mic` the default
+  input, and a name from `clipt list sound` picks any device (an output by
+  loopback). AUTOCONVERTPCM has Windows convert to 48 kHz 16-bit stereo,
+  so the chunks are the PulseAudio ones and everything after is shared.
+  A loopback delivers nothing while nothing plays, so clipt fills those
+  gaps with silence against the clock.
 
 Choices made on the way, where they differ from the plan below:
 
+- **GDI for recording too, for now.** At 1080p a `BitBlt` takes a few
+  milliseconds, enough for 30 fps; Desktop Duplication would cost less at
+  4K but needs COM interfaces by hand. Worth measuring on the tester's PC.
+- **Vendor encoders before Media Foundation.** ffmpeg's `h264_mf` picks
+  whatever encoder MFT the system offers and has coarser rate control, so
+  it comes after NVENC, Quick Sync and AMF rather than first.
 - **GDI, not Desktop Duplication, for screenshots.** `BitBlt` is a few calls,
   works in remote desktop sessions, and needs no COM (`windows-sys` has no
   COM interfaces). Desktop Duplication comes with recording (phase 3), and
@@ -132,7 +159,8 @@ count). `--audio`, volumes, separate tracks and `duck` then work unchanged.
 
 **5. Release.** A zip on GitHub releases (`clipt-vX-x86_64-windows.zip`,
 done: `.github/scripts/pack-windows.sh`), the updater replacing a running
-exe (rename, then copy), and winget or Scoop manifests if people want them.
+exe (rename, then copy; done, and CI's `windows` job updates a copy from
+the latest release), and winget or Scoop manifests if people want them.
 
 ## Testing
 
