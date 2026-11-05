@@ -107,6 +107,19 @@ if [ -f /ffmpeg.exe ]; then
   $R record -g "0,0 200x100" --gif -o 'Z:\tmp\out\r.gif' & p=$!
   started '/tmp/out/.r.recording.mp4'; sleep 1; $R record --stop; wait $p
   check "--gif makes a GIF ($(size "/tmp/out/r.gif[0]"))" '[ "$(size "/tmp/out/r.gif[0]")" = 200x100 ]'
+  # The red frame: just outside the region, amber while paused, and never
+  # in the video. Recorded at 200,200 400x300; the frame is 3 px wide.
+  pixel() { magick import -window root -crop 1x1+$1+$2 -format '%[fx:round(255*r)],%[fx:round(255*g)],%[fx:round(255*b)]' info: 2>/dev/null; }
+  $R record -g "200,200 400x300" -o 'Z:\tmp\out\f.mp4' & p=$!
+  started /tmp/out/f.mp4; sleep 1
+  red=$(pixel 198 350)
+  $R record --pause; sleep 0.5; amber=$(pixel 198 350)
+  $R record --resume; sleep 1; $R record --stop; wait $p
+  check "the frame is red just left of the region ($red)" '[ "$red" = 239,68,68 ]'
+  check "and amber while paused ($amber)" '[ "$amber" = 245,158,11 ]'
+  ffmpeg -nostdin -loglevel error -sseof -0.5 -i /tmp/out/f.mp4 -frames:v 1 -y /tmp/out/f.png
+  edge=$(magick /tmp/out/f.png -crop 3x300+0+0 +repage -format '%[fx:mean.r-mean.g]' info: 2>/dev/null)
+  check "and not in the video (left edge red-green ${edge:-?})" 'awk "BEGIN{exit !(${edge:-1} < 0.3)}"'
   # The tray follows a recording it didn't start, and hears when it's saved.
   CLIPT_DEBUG=1 $R tray 2>/tmp/tray2.err & tp=$!; sleep 3
   $R record -g "0,0 200x100" -o 'Z:\tmp\out\t.mp4' & p=$!

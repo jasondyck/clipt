@@ -15,7 +15,7 @@
 pub mod audio;
 mod camera;
 mod clarity;
-mod control;
+pub mod control;
 mod encode;
 #[cfg(wayland_x11)]
 mod follow;

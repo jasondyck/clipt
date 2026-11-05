@@ -6,6 +6,10 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Windows: the red frame around a region being recorded, as on Linux,
+  just outside it so it isn't in the video, and amber while paused.
+
 ## [0.8.0] - 2026-11-04
 
 ### Added
