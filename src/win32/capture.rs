@@ -86,6 +86,7 @@ impl Desktop {
 
     /// One shot per output, at its physical resolution.
     pub fn capture(&self, which: &[usize], cursor: bool) -> Result<Vec<Shot>> {
+        zone!("screenshot");
         which.iter().map(|&i| Ok(Shot { output: self.outputs[i].clone(), image: grab(self.phys[i], cursor)? })).collect()
     }
 }

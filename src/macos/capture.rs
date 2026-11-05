@@ -82,6 +82,7 @@ fn screen_names(mtm: MainThreadMarker) -> Vec<(CGDirectDisplayID, String)> {
 
 /// One shot per output, at the display's native resolution.
 pub fn capture(outputs: &[Output], cursor: bool) -> Result<Vec<Shot>> {
+    zone!("screenshot");
     let ids = display_ids()?;
     outputs
         .iter()

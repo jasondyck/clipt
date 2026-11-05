@@ -4,6 +4,10 @@
 // and Windows can't do yet, recording among it.
 #![cfg_attr(not(wayland_x11), allow(dead_code))]
 
+// First, so its macros are in scope in every module after it.
+#[macro_use]
+mod profile;
+
 mod capture;
 #[cfg(wayland_x11)]
 mod clipboard;
@@ -238,6 +242,7 @@ fn config_cmd(args: &Args) -> Result<()> {
 }
 
 fn main() {
+    profile::start();
     if let Err(e) = run() {
         eprintln!("clipt: {e:#}");
         std::process::exit(1);
