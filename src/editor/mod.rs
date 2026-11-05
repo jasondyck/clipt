@@ -938,6 +938,13 @@ impl Editor {
             return self.record_key(key, mods);
         }
         if mods.ctrl {
+            // Undo or redo mid-drag takes back the drag: undoing under it
+            // would restore the shape being edited while the drag still
+            // holds a copy to put back on release, leaving two.
+            if self.in_progress().is_some() && matches!(key, Key::Char('z' | 'Z' | 'y' | 'Y')) {
+                self.cancel_drag();
+                return true;
+            }
             match key {
                 Key::Char('c') | Key::Char('C') => self.outcome = Some(Outcome::Copy),
                 Key::Char('s') | Key::Char('S') => self.outcome = Some(Outcome::Save),
@@ -1784,6 +1791,42 @@ mod tests {
         ed.scroll(-1.0);
         ed.button_press((200.0, 130.0), false, m);
         assert_eq!((arrow(&ed).2, ed.undo.len()), (w + 1.0, undo));
+    }
+
+    /// Ctrl+Z mid-drag takes back the drag, rather than undoing under it
+    /// and leaving a second copy of the shape when the drag lets go.
+    #[test]
+    fn undo_mid_drag_takes_back_the_drag() {
+        let mut ed = editor(vec![shot("A", 0, 800, 600, 1, [0, 0, 0])], false);
+        let m = Mods::default();
+        let ctrl = Mods { ctrl: true, ..m };
+        drag(&mut ed, (0.0, 0.0), (700.0, 500.0));
+        ed.tool = Tool::Arrow;
+        drag(&mut ed, (100.0, 100.0), (300.0, 100.0));
+        let undo = ed.undo.len();
+
+        // Moving it: the arrow goes back where it was, once.
+        ed.key(Key::Char('v'), m);
+        ed.button_press((200.0, 100.0), true, m);
+        ed.pointer_motion((220.0, 130.0), m);
+        ed.key(Key::Char('z'), ctrl);
+        assert!(ed.drag_is_none());
+        ed.button_release((220.0, 130.0), true);
+        assert_eq!(ed.shapes.len(), 1);
+        assert!(matches!(ed.shapes[0], Shape::Arrow { a: (100.0, 100.0), b: (300.0, 100.0), .. }), "{:?}", ed.shapes[0]);
+        assert_eq!(ed.undo.len(), undo, "the drag's undo step went with it");
+
+        // Drawing one: the new arrow is dropped, and the first one stays.
+        ed.tool = Tool::Arrow;
+        ed.button_press((100.0, 300.0), true, m);
+        ed.pointer_motion((300.0, 300.0), m);
+        ed.key(Key::Char('y'), ctrl);
+        ed.button_release((300.0, 300.0), true);
+        assert_eq!((ed.shapes.len(), ed.undo.len()), (1, undo));
+
+        // Outside a drag, undo still undoes.
+        ed.key(Key::Char('z'), ctrl);
+        assert!(ed.shapes.is_empty());
     }
 
     /// Text reopens for typing: double-click it with the select tool, or
