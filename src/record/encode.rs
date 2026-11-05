@@ -563,6 +563,7 @@ impl Encoder {
     /// Send a frame to be shown `ts_ms` milliseconds into the video.
     /// Timestamps must increase.
     pub fn write(&mut self, frame: &[u8], ts_ms: u64) -> Result<()> {
+        zone!("frame to ffmpeg");
         self.send(&super::mkv::block_prefix(super::mkv::VIDEO, ts_ms, frame.len()))?;
         self.send(frame)
     }
@@ -570,6 +571,7 @@ impl Encoder {
     /// Send a chunk of source `i`'s sound, heard `ts_ms` milliseconds into
     /// the video.
     pub fn write_audio(&mut self, i: usize, pcm: &[u8], ts_ms: u64) -> Result<()> {
+        zone!("sound to ffmpeg");
         self.send(&super::mkv::block_prefix(super::mkv::audio_track(i), ts_ms, pcm.len()))?;
         self.send(pcm)
     }
@@ -590,6 +592,7 @@ impl Encoder {
     /// where the partial file is. For `smart`, returns how clearly the voice
     /// came through.
     pub fn finish(mut self) -> Result<Option<super::clarity::Report>> {
+        zone!("ffmpeg finish");
         drop(self.stdin.take());
         let Some(status) = wait_up_to(&mut self.child, FINISH_LIMIT)? else {
             kill(&mut self.child);

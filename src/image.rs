@@ -100,6 +100,7 @@ impl Image {
     }
 
     fn encode(&self, small: bool) -> anyhow::Result<Vec<u8>> {
+        zone!("png encode");
         let rgb = self.to_rgb_if_opaque();
         let (data, color) = match &rgb {
             Some(rgb) => (&rgb[..], png::ColorType::Rgb),

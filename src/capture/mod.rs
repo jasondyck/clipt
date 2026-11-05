@@ -196,6 +196,7 @@ impl Capturer {
 
     /// Capture `outputs` with the forced backend, or the first one that works.
     pub fn capture(&mut self, outputs: &[Output], cursor: bool, force: Option<Backend>) -> Result<(Backend, Vec<Shot>)> {
+        zone!("screenshot");
         let order = match force {
             Some(b) => vec![b],
             None => self.available(),

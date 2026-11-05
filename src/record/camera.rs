@@ -70,6 +70,7 @@ impl Camera {
 
     /// Draw `f` into a canvas frame at the current zoom.
     pub fn render(&self, f: &VideoFrame) -> VideoFrame {
+        zone!("camera");
         let (cw, ch) = (self.width as usize, self.height as usize);
         let mut data = Vec::with_capacity(cw * ch * 4);
         for _ in 0..cw * ch {

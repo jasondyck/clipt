@@ -20,6 +20,8 @@ file says which checks matter for which change, and the house style.
   `build.rs` for every Unix but macOS; `Cargo.toml` spells it
   `cfg(all(unix, not(target_os = "macos")))`).
 - `src/tray.rs`, `src/update.rs`, `src/config.rs`, `src/main.rs` (CLI).
+- `src/profile.rs`: Tracy zones (`zone!`), empty unless built with
+  `--features tracy`; see CONTRIBUTING's Profiling section.
 - `tests/`: end-to-end suites per desktop, run in Docker by `tests/e2e.sh`.
   `examples/vinput.rs` and `examples/testwin.rs` are their input driver and
   test window; `examples/x11grab.rs` is a popup that holds the X11 grabs.

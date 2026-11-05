@@ -46,6 +46,35 @@ CLIPT_BENCH_PNGS=a.png,b.png cargo test --release bench_png -- --ignored --nocap
 cargo build --profile profiling   # release speed with symbols, for perf
 ```
 
+## Profiling
+
+For where the time goes, sample the `profiling` build with
+[samply](https://github.com/mstange/samply), which works on Linux, macOS and
+Windows and opens the result in the Firefox Profiler:
+
+```
+cargo build --profile profiling
+samply record target/profiling/clipt record screen   # stop it with clipt record --stop
+```
+
+For when it goes, frame by frame (a dropped frame, a slow repaint), build
+with the `tracy` feature and watch in [Tracy](https://github.com/wolfpld/tracy):
+
+```
+cargo build --profile profiling --features tracy
+target/profiling/clipt record screen   # with Tracy's viewer open and connected
+```
+
+The timeline shows clipt's threads (`main`, `capture`, `sound`), zones for
+the screenshot, editor repaints, PNG encoding, the camera and each write to
+ffmpeg, and two frame streams, `captured` and `written`, whose rates are the
+compositor's and the recording's. Add a zone with `zone!("name");`, which
+lasts to the end of its block; the macros are in `src/profile.rs` and are
+empty without the feature. The viewer must be the Tracy release that
+`tracy-client-sys` bundles (0.14.1 for tracy-client 0.19; the crate's README
+has the table). The feature compiles Tracy's C++ client, so build it on the
+system you're profiling rather than cross-compiling, and never ship it.
+
 ## Licence
 
 By contributing you agree that your work is dual-licensed under MIT or

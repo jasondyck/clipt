@@ -342,6 +342,7 @@ pub fn dynamic_layers(ed: &Editor, frame: u64) -> Vec<Layer> {
 /// frame passes the whole buffer and (0, 0); partial repaints pass a small
 /// pixmap covering one damaged rectangle.
 pub fn render(ed: &Editor, idx: usize, pm: &mut PixmapMut, origin: (i32, i32)) {
+    zone!("editor render");
     let scr = &ed.screens[idx];
     let sv = scr.view(ed.swap_rb);
     let s = sv.scale;

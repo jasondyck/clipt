@@ -16,6 +16,9 @@ default = ["pipewire"]
 # Recording on KDE and GNOME: frames come over PipeWire (libpipewire is
 # loaded at runtime, not linked) and KDE's screencast protocol.
 pipewire = ["dep:wayland-protocols-plasma"]
+# Zones for the Tracy profiler, for development only: it compiles Tracy's
+# C++ client into the binary. See CONTRIBUTING.md.
+tracy = ["dep:tracy-client"]
 
 [dependencies]
 anyhow = "1"
@@ -27,6 +30,7 @@ serde_json = "1"
 skrifa = "0.49"
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
+tracy-client = { version = "0.19", optional = true }
 
 # The Wayland and X11 desktops: every Unix but macOS (Linux, the BSDs).
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]

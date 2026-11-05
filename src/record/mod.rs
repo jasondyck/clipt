@@ -175,8 +175,10 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         // The thread may still be blocked waiting for the screen to change
         // when we finish; process exit ends it.
         std::thread::spawn(move || {
+            thread_name!("capture");
             let frames = slot.clone();
             let sink = Box::new(move |f: VideoFrame| {
+                frame_mark!("captured");
                 captured.fetch_add(1, Ordering::Relaxed);
                 let (m, cv) = &*frames;
                 m.lock().unwrap().frame = Some((f, Instant::now()));
@@ -198,6 +200,7 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
     for (i, cap) in captures.into_iter().enumerate() {
         let slot = slot.clone();
         std::thread::spawn(move || {
+            thread_name!("sound");
             let r = cap.run(|c| {
                 let (m, cv) = &*slot;
                 let mut s = m.lock().unwrap();
@@ -412,6 +415,7 @@ fn write_loop(
         {
             let mut s = m.lock().unwrap();
             if s.frame.is_none() && s.audio.is_empty() && !s.done && !wait.is_zero() {
+                zone!("wait");
                 s = cv.wait_timeout(s, wait).unwrap().0;
             }
             for (i, _) in &s.audio {
@@ -490,6 +494,7 @@ fn write_loop(
         };
         let ts = stamp(at, t0.unwrap(), paused_total, &mut last_ts);
         e.write(&out.data, ts)?;
+        frame_mark!("written");
         if written == 0 {
             // ffmpeg is running and reading: take the sound that piled up
             // while it started, and from now on too much means a stall.
