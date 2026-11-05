@@ -42,6 +42,9 @@ pub enum Install {
     Nix,
     /// Flatpak: Flathub or the user's software centre updates it.
     Flatpak,
+    /// Scoop on Windows: its folder is ours to write, but replacing the exe
+    /// there would leave Scoop believing the old version is installed.
+    Scoop,
     /// The binary inside clipt.app: replacing it alone would break the
     /// bundle's signature, so a new app comes from the release page.
     AppBundle,
@@ -62,6 +65,8 @@ impl Install {
             Install::Nix
         } else if s.contains("/.cargo/bin/") {
             Install::Cargo
+        } else if cfg!(windows) && scoop(&exe) {
+            Install::Scoop
         } else if s.starts_with("/usr/") || s.starts_with("/bin/") || s.starts_with("/opt/") {
             Install::Package
         } else if exe.parent().is_some_and(writable) {
@@ -78,10 +83,22 @@ impl Install {
             Install::Cargo => "run `cargo install clipt`",
             Install::Nix => "update your flake input",
             Install::Flatpak => "run `flatpak update` or use your software centre",
+            Install::Scoop => "run `scoop update clipt`",
             Install::AppBundle => "download the new clipt.app from the release page",
             Install::Package if cfg!(windows) => "download the new zip from the release page",
             Install::Package => "update it with your package manager",
         }
+    }
+}
+
+/// Installed by Scoop: `ROOT\apps\clipt\VERSION\clipt.exe` (or `current`
+/// for VERSION, as its shim starts it), with Scoop's `ROOT\shims` beside.
+fn scoop(exe: &Path) -> bool {
+    let named = |p: &Path, name: &str| p.file_name().is_some_and(|n| n.eq_ignore_ascii_case(name));
+    let mut up = exe.ancestors().skip(2);
+    match (up.next(), up.next(), up.next()) {
+        (Some(app), Some(apps), Some(root)) => named(app, "clipt") && named(apps, "apps") && root.join("shims").is_dir(),
+        _ => false,
     }
 }
 
@@ -346,7 +363,8 @@ pub fn cli(check_only: bool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::newer;
+    use super::{newer, scoop};
+    use std::path::Path;
 
     #[test]
     fn version_order() {
@@ -359,5 +377,19 @@ mod tests {
         assert!(!newer("0.2.0-rc1", "0.2.0"));
         assert!(newer("0.2.0-rc2", "0.2.0-rc1"));
         assert!(!newer("garbage", "0.1.0"));
+    }
+
+    #[test]
+    fn scoop_install() {
+        let root = std::env::temp_dir().join(format!("clipt-scoop-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("apps/clipt/current")).unwrap();
+        let exe = root.join("apps/clipt/current/clipt.exe");
+        assert!(!scoop(&exe), "no shims folder: not Scoop");
+        std::fs::create_dir(root.join("shims")).unwrap();
+        assert!(scoop(&exe));
+        assert!(scoop(&root.join("Apps/Clipt/0.9.0/clipt.exe")));
+        assert!(!scoop(&root.join("apps/other/current/clipt.exe")));
+        assert!(!scoop(Path::new("clipt.exe")));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

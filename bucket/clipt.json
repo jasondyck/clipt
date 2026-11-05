@@ -1,0 +1,32 @@
+{
+    "version": "0.8.0",
+    "description": "Screenshots and screen recordings: select, annotate, copy or save",
+    "homepage": "https://github.com/jasondyck/clipt",
+    "license": "MIT|Apache-2.0",
+    "notes": "Recording needs ffmpeg: scoop install ffmpeg. Update clipt with scoop update clipt.",
+    "suggest": {
+        "ffmpeg": "main/ffmpeg"
+    },
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/jasondyck/clipt/releases/download/v0.8.0/clipt-v0.8.0-x86_64-windows.zip",
+            "hash": "7de7a45beaf69a01bc907491109c3dfe4e6717ac269bad588a4c034b6d89b568",
+            "extract_dir": "clipt-v0.8.0-x86_64-windows"
+        }
+    },
+    "bin": "clipt.exe",
+    "shortcuts": [
+        [
+            "clipt.exe",
+            "clipt"
+        ],
+        [
+            "clipt.exe",
+            "clipt tray",
+            "tray"
+        ]
+    ],
+    "checkver": {
+        "github": "https://github.com/jasondyck/clipt"
+    }
+}
