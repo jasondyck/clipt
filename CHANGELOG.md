@@ -7,6 +7,10 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- A Scoop bucket for Windows: `scoop bucket add clipt
+  https://github.com/jasondyck/clipt`, then `scoop install clipt/clipt`.
+  Releases update it, and `clipt update` in a Scoop install says to run
+  `scoop update clipt` instead.
 - Windows: the red frame around a region being recorded, as on Linux,
   just outside it so it isn't in the video, and amber while paused.
 

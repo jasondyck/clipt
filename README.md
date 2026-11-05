@@ -298,7 +298,13 @@ controls as on Linux (its icon gets a red dot while recording); it needs ffmpeg 
 Gyan.FFmpeg`, or `ffmpeg.exe` beside `clipt.exe`). It hasn't been tried on
 a real PC. Releases have `clipt-vX-x86_64-windows.zip` (unsigned, so
 Windows asks before the first run); builds of `main` come from the `windows` CI job (the
-`clipt-windows` artifact):
+`clipt-windows` artifact). This repository is also a [Scoop](https://scoop.sh)
+bucket:
+
+```
+scoop bucket add clipt https://github.com/jasondyck/clipt   # once
+scoop install clipt/clipt                                   # later: scoop update clipt
+```
 
 ```
 clipt.exe                    # select, annotate, copy (Enter) or save (Ctrl+S)

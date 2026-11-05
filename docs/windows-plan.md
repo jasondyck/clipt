@@ -5,8 +5,9 @@ its hotkey), checked under Wine and in CI, and not yet tried on a real PC.
 Phase 3 (recording) is built: the command line, the overlay, the tray and
 the red frame around a region, checked under Wine.
 Phase 4 (sound) is built, checked under Wine against PulseAudio.
-Of phase 5, releases carry `clipt-vX-x86_64-windows.zip` and
-`clipt update` installs it; package manifests are still to do.
+Of phase 5, releases carry `clipt-vX-x86_64-windows.zip`, `clipt update`
+installs it, and the repository is a Scoop bucket (`bucket/clipt.json`,
+which the release workflow updates); a winget manifest is still to do.
 A tester at work can try each phase's build; see *Testing* below.
 
 ## Done
@@ -162,7 +163,10 @@ count). `--audio`, volumes, separate tracks and `duck` then work unchanged.
 **5. Release.** A zip on GitHub releases (`clipt-vX-x86_64-windows.zip`,
 done: `.github/scripts/pack-windows.sh`), the updater replacing a running
 exe (rename, then copy; done, and CI's `windows` job updates a copy from
-the latest release), and winget or Scoop manifests if people want them.
+the latest release), a Scoop bucket (done: `bucket/clipt.json`, written by
+`.github/scripts/scoop-manifest.py` and updated by the release workflow;
+`clipt update` defers to `scoop update`), and a winget manifest if people
+want it.
 
 ## Testing
 
