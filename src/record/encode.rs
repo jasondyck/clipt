@@ -1177,14 +1177,17 @@ mod tests {
     #[test]
     fn codec_preferences() {
         assert_eq!(candidates("x264").unwrap(), vec![Codec::X264]);
-        assert_eq!(candidates("nvenc").unwrap(), vec![Codec::Nvenc]);
         if cfg!(windows) {
+            assert_eq!(candidates("nvenc").unwrap(), vec![Codec::Nvenc]);
             assert!(candidates("auto").unwrap().ends_with(&[Codec::Mf, Codec::X264]));
             assert!(candidates("vaapi").is_err());
         } else if cfg!(target_os = "macos") {
             assert_eq!(candidates("auto").unwrap(), vec![Codec::VideoToolbox, Codec::X264]);
             assert!(candidates("vaapi").is_err());
+            // No NVIDIA driver to hand frames to on macOS.
+            assert!(candidates("nvenc").is_err());
         } else {
+            assert_eq!(candidates("nvenc").unwrap(), vec![Codec::Nvenc]);
             assert!(candidates("auto").unwrap().ends_with(&[Codec::Nvenc, Codec::X264]));
             assert!(candidates("qsv").is_err());
         }
