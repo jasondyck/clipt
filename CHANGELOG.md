@@ -6,16 +6,17 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
-### Added
-- macOS: recording, without sound so far (macOS 12.3+, and ffmpeg from
-  Homebrew). `clipt record` picks an area or window as on Linux; `record
-  screen`, `record window APP`, `-g`, `--stop` and `--pause` work too, and
-  the menu bar icon gains Record Region, Record Screen, Pause and Stop,
-  turning red while a recording runs. Frames come from ScreenCaptureKit; a
-  window is recorded on its own, even while covered. Apple's hardware
   encoder (`h264_videotoolbox`) is used on Apple silicon, libx264 otherwise.
 
+### Changed
+- Scrolling (or `[` and `]`) while drawing, moving or reshaping a shape
+  changes that shape's width too, not just the next one's. Undo and a
+  right-click cancel treat it as part of the drag.
+
 ### Fixed
+- Ctrl+Z while moving or reshaping a shape left two copies of it once the
+  mouse button was released. Undo or redo mid-drag now takes back the drag
+  instead.
 - Windows: `clipt update` recognises a Scoop install under any app name
   (from another bucket, say), not only `clipt`, and leaves it to Scoop.
 
