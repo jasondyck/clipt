@@ -175,8 +175,26 @@ enum Drag {
         orig: Shape,
         grab: Pt,
         grip: Option<Grip>,
+        /// Past the click threshold: from here every motion moves it.
         moved: bool,
+        /// Moved or scrolled, so undo has a step to go back to.
+        changed: bool,
+        /// A width scrolled to during the drag. `shape` is rebuilt from
+        /// `orig` on every motion, and `orig` must stay as it was for Esc.
+        width: Option<f32>,
     },
+}
+
+/// The first change to shape `idx` while it's out of `shapes` being edited:
+/// save the shapes as they were, with it back in place, for undo.
+fn edit_checkpoint(changed: &mut bool, shapes: &[Shape], idx: usize, orig: &Shape, undo: &mut Vec<Vec<Shape>>, redo: &mut Vec<Vec<Shape>>) {
+    if !*changed {
+        *changed = true;
+        let mut before = shapes.to_vec();
+        before.insert(idx, orig.clone());
+        undo.push(before);
+        redo.clear();
+    }
 }
 
 /// What a click would select right now, shown before anything is selected.
@@ -648,19 +666,16 @@ impl Editor {
                     Shape::Text { .. } => {}
                 }
             }
-            Drag::Editing { idx, shape, orig, grab, grip, moved } => {
+            Drag::Editing { idx, shape, orig, grab, grip, moved, changed, width } => {
                 if !*moved && (p.0 - grab.0).abs() <= CLICK_SLOP && (p.1 - grab.1).abs() <= CLICK_SLOP {
                     return false;
                 }
-                if !*moved {
-                    // The first real move is the change undo goes back from.
-                    *moved = true;
-                    let mut before = self.shapes.clone();
-                    before.insert(*idx, orig.clone());
-                    self.undo.push(before);
-                    self.redo.clear();
-                }
+                *moved = true;
+                edit_checkpoint(changed, &self.shapes, *idx, orig, &mut self.undo, &mut self.redo);
                 *shape = orig.clone();
+                if let Some(w) = width {
+                    shape.set_width(*w);
+                }
                 match grip {
                     Some(g) => shape.drag_grip(*g, p),
                     None => shape.translate(p.0 - grab.0, p.1 - grab.1),
@@ -869,7 +884,16 @@ impl Editor {
         self.width = (self.width + step).clamp(1.0, 40.0);
         self.width_hint = true;
         let w = self.width;
-        self.restyle(|s| s.set_width(w));
+        // Mid-drag, the shape under the pointer takes it too.
+        match &mut self.drag {
+            Drag::Drawing(shape) => shape.set_width(w),
+            Drag::Editing { idx, shape, orig, changed, width, .. } => {
+                edit_checkpoint(changed, &self.shapes, *idx, orig, &mut self.undo, &mut self.redo);
+                shape.set_width(w);
+                *width = Some(w);
+            }
+            _ => self.restyle(|s| s.set_width(w)),
+        }
         true
     }
 
@@ -914,6 +938,13 @@ impl Editor {
             return self.record_key(key, mods);
         }
         if mods.ctrl {
+            // Undo or redo mid-drag takes back the drag: undoing under it
+            // would restore the shape being edited while the drag still
+            // holds a copy to put back on release, leaving two.
+            if self.in_progress().is_some() && matches!(key, Key::Char('z' | 'Z' | 'y' | 'Y')) {
+                self.cancel_drag();
+                return true;
+            }
             match key {
                 Key::Char('c') | Key::Char('C') => self.outcome = Some(Outcome::Copy),
                 Key::Char('s') | Key::Char('S') => self.outcome = Some(Outcome::Save),
@@ -1143,15 +1174,15 @@ impl Editor {
     fn start_edit(&mut self, idx: usize, p: Pt, grip: Option<Grip>) {
         let shape = self.shapes.remove(idx);
         self.selected = Some(idx);
-        self.drag = Drag::Editing { idx, orig: shape.clone(), shape, grab: p, grip, moved: false };
+        self.drag = Drag::Editing { idx, orig: shape.clone(), shape, grab: p, grip, moved: false, changed: false, width: None };
         self.revision += 1;
     }
 
     /// Drop whatever drag is going on; a shape being edited goes back as it was.
     fn cancel_drag(&mut self) {
-        if let Drag::Editing { idx, orig, moved, .. } = std::mem::replace(&mut self.drag, Drag::None) {
+        if let Drag::Editing { idx, orig, changed, .. } = std::mem::replace(&mut self.drag, Drag::None) {
             self.shapes.insert(idx, orig);
-            if moved {
+            if changed {
                 self.undo.pop();
             }
             self.revision += 1;
@@ -1696,6 +1727,106 @@ mod tests {
         drag(&mut ed, (500.0, 450.0), (510.0, 450.0));
         assert_eq!(ed.selected, None);
         assert_eq!(ed.sel.unwrap().left(), sel.unwrap().left() + 10.0);
+    }
+
+    /// Scrolling mid-drag sets the width of the shape being drawn, moved or
+    /// reshaped, not only the next one's; undo and Esc treat it as part of
+    /// the drag.
+    #[test]
+    fn scrolling_mid_drag_sets_the_shapes_width() {
+        let mut ed = editor(vec![shot("A", 0, 800, 600, 1, [0, 0, 0])], false);
+        let m = Mods::default();
+        let ctrl = Mods { ctrl: true, ..m };
+        let arrow = |ed: &Editor| match ed.shapes[0] {
+            Shape::Arrow { a, b, width, .. } => (a, b, width),
+            ref s => panic!("{s:?}"),
+        };
+        drag(&mut ed, (0.0, 0.0), (700.0, 500.0));
+        let w = ed.width;
+
+        // Drawing: the arrow takes the width as it's drawn.
+        ed.tool = Tool::Arrow;
+        ed.button_press((100.0, 100.0), true, m);
+        ed.pointer_motion((200.0, 100.0), m);
+        ed.scroll(-1.0);
+        ed.scroll(-1.0);
+        assert!(matches!(ed.in_progress(), Some(Shape::Arrow { width, .. }) if *width == w + 2.0));
+        ed.pointer_motion((300.0, 100.0), m);
+        ed.button_release((300.0, 100.0), true);
+        assert_eq!(arrow(&ed), ((100.0, 100.0), (300.0, 100.0), w + 2.0));
+
+        // Moving: a scroll before the pointer has moved changes the width
+        // only; a wobble within the click threshold still doesn't move it.
+        ed.key(Key::Char('v'), m);
+        ed.button_press((200.0, 100.0), true, m);
+        ed.scroll(1.0);
+        assert!(matches!(ed.selected_shape(), Some(Shape::Arrow { width, .. }) if *width == w + 1.0));
+        ed.pointer_motion((201.0, 100.0), m);
+        assert!(matches!(ed.selected_shape(), Some(Shape::Arrow { a: (100.0, 100.0), .. })));
+        // Each motion rebuilds the shape from where the drag began; the
+        // scrolled width survives that.
+        ed.pointer_motion((220.0, 130.0), m);
+        ed.button_release((220.0, 130.0), true);
+        assert_eq!(arrow(&ed), ((120.0, 130.0), (320.0, 130.0), w + 1.0));
+        // One undo step takes back both the move and the width.
+        ed.key(Key::Char('z'), ctrl);
+        assert_eq!(arrow(&ed), ((100.0, 100.0), (300.0, 100.0), w + 2.0));
+        ed.key(Key::Char('Z'), Mods { shift: true, ..ctrl });
+        assert_eq!(arrow(&ed), ((120.0, 130.0), (320.0, 130.0), w + 1.0));
+
+        // Reshaping by a handle, then cancelling with a right-click: the
+        // arrow goes back as it was, width included, and leaves no undo step.
+        let undo = ed.undo.len();
+        ed.button_press((320.0, 130.0), true, m);
+        ed.pointer_motion((350.0, 160.0), m);
+        ed.scroll(-1.0);
+        assert!(matches!(ed.selected_shape(), Some(Shape::Arrow { b: (350.0, 160.0), width, .. }) if *width == w + 2.0));
+        ed.button_press((350.0, 160.0), false, m);
+        assert!(ed.drag_is_none());
+        assert_eq!(arrow(&ed), ((120.0, 130.0), (320.0, 130.0), w + 1.0));
+        assert_eq!(ed.undo.len(), undo);
+
+        // A scroll alone, then a cancel, leaves no undo step either.
+        ed.button_press((200.0, 130.0), true, m);
+        ed.scroll(-1.0);
+        ed.button_press((200.0, 130.0), false, m);
+        assert_eq!((arrow(&ed).2, ed.undo.len()), (w + 1.0, undo));
+    }
+
+    /// Ctrl+Z mid-drag takes back the drag, rather than undoing under it
+    /// and leaving a second copy of the shape when the drag lets go.
+    #[test]
+    fn undo_mid_drag_takes_back_the_drag() {
+        let mut ed = editor(vec![shot("A", 0, 800, 600, 1, [0, 0, 0])], false);
+        let m = Mods::default();
+        let ctrl = Mods { ctrl: true, ..m };
+        drag(&mut ed, (0.0, 0.0), (700.0, 500.0));
+        ed.tool = Tool::Arrow;
+        drag(&mut ed, (100.0, 100.0), (300.0, 100.0));
+        let undo = ed.undo.len();
+
+        // Moving it: the arrow goes back where it was, once.
+        ed.key(Key::Char('v'), m);
+        ed.button_press((200.0, 100.0), true, m);
+        ed.pointer_motion((220.0, 130.0), m);
+        ed.key(Key::Char('z'), ctrl);
+        assert!(ed.drag_is_none());
+        ed.button_release((220.0, 130.0), true);
+        assert_eq!(ed.shapes.len(), 1);
+        assert!(matches!(ed.shapes[0], Shape::Arrow { a: (100.0, 100.0), b: (300.0, 100.0), .. }), "{:?}", ed.shapes[0]);
+        assert_eq!(ed.undo.len(), undo, "the drag's undo step went with it");
+
+        // Drawing one: the new arrow is dropped, and the first one stays.
+        ed.tool = Tool::Arrow;
+        ed.button_press((100.0, 300.0), true, m);
+        ed.pointer_motion((300.0, 300.0), m);
+        ed.key(Key::Char('y'), ctrl);
+        ed.button_release((300.0, 300.0), true);
+        assert_eq!((ed.shapes.len(), ed.undo.len()), (1, undo));
+
+        // Outside a drag, undo still undoes.
+        ed.key(Key::Char('z'), ctrl);
+        assert!(ed.shapes.is_empty());
     }
 
     /// Text reopens for typing: double-click it with the select tool, or

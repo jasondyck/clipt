@@ -14,7 +14,15 @@ All notable changes are listed here. The format follows
   and any separate tracks copied. A mix already within half a LU of the
   target is left alone.
 
+### Changed
+- Scrolling (or `[` and `]`) while drawing, moving or reshaping a shape
+  changes that shape's width too, not just the next one's. Undo and a
+  right-click cancel treat it as part of the drag.
+
 ### Fixed
+- Ctrl+Z while moving or reshaping a shape left two copies of it once the
+  mouse button was released. Undo or redo mid-drag now takes back the drag
+  instead.
 - Windows: `clipt update` recognises a Scoop install under any app name
   (from another bucket, say), not only `clipt`, and leaves it to Scoop.
 
