@@ -58,21 +58,25 @@ impl Shot {
 }
 
 /// A rectangle in logical coordinates: x, y, width, height.
-#[cfg(any(wayland_x11, windows))]
 pub type LogicalRect = (f64, f64, f64, f64);
 
 /// Byte order of a video frame's pixels.
 /// The fourth byte is padding (alpha, when present, is ignored).
-#[cfg(any(wayland_x11, windows))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PixelOrder {
     Bgrx,
     Rgbx,
+    /// Not four bytes a pixel: the luma plane (width x height), then the
+    /// chroma plane (width x height / 2, U and V interleaved), as macOS
+    /// hands frames to the encoder in. Even sizes only; frames in it can't
+    /// go through the camera.
+    #[cfg(target_os = "macos")]
+    Nv12,
 }
 
-/// One frame of a recording: packed rows (stride = width * 4), in whatever
-/// byte order the compositor handed over, so the common case is a row copy.
-#[cfg(any(wayland_x11, windows))]
+/// One frame of a recording: packed rows (stride = width * 4, or NV12's
+/// planes), in whatever order the compositor handed over, so the common
+/// case is a row copy.
 pub struct VideoFrame {
     pub width: u32,
     pub height: u32,

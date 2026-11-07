@@ -46,6 +46,8 @@ fn fourcc(order: PixelOrder) -> &'static [u8; 4] {
     match order {
         PixelOrder::Bgrx => b"BGR\0",
         PixelOrder::Rgbx => b"RGB\0",
+        #[cfg(target_os = "macos")]
+        PixelOrder::Nv12 => b"NV12",
     }
 }
 

@@ -6,9 +6,10 @@
 //! Sound, when recorded, comes from its own thread in 20 ms chunks, which
 //! are queued rather than dropped (a gap would be heard).
 //!
-//! One recording runs at a time, holding a lock on
-//! `$XDG_RUNTIME_DIR/clipt-record.pid`; `clipt record --stop` (and Ctrl-C,
-//! SIGTERM) end it cleanly, letting ffmpeg finish the file.
+//! One recording runs at a time, holding a lock on `clipt-record.pid` in
+//! `$XDG_RUNTIME_DIR` (on macOS the user's temporary directory); `clipt
+//! record --stop` (and Ctrl-C, SIGTERM) end it cleanly, letting ffmpeg
+//! finish the file.
 //!
 //! See docs/recording-plan.md and docs/audio-plan.md.
 
@@ -25,6 +26,8 @@ mod indicator;
 mod linux;
 mod mkv;
 
+#[cfg(target_os = "macos")]
+use crate::macos::record as host;
 #[cfg(windows)]
 use crate::win32::record as host;
 #[cfg(wayland_x11)]
@@ -249,10 +252,9 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         Ok(stats) => {
             println!("{}", target.display());
             if cfg.notify {
-                #[cfg(wayland_x11)]
-                crate::notify::send("Recording saved", &format!("{}  ·  {}", target.display(), stats), None);
-                #[cfg(windows)]
-                crate::win32::notify("Recording saved", &format!("{}  ·  {}", target.display(), stats), Some(&target));
+                // Windows' balloon names the file; the others have no icon for it.
+                let image = if cfg!(windows) { Some(target.as_path()) } else { None };
+                crate::notify::send("Recording saved", &format!("{}  ·  {}", target.display(), stats), image);
             }
         }
         Err(_) if path.exists() => eprintln!("clipt: the partial recording is in {}", path.display()),
@@ -650,7 +652,7 @@ fn audio_ms(at: Instant, t0: Instant, pauses: &Pauses) -> u64 {
     at.saturating_duration_since(t0).saturating_sub(pauses.before(at)).as_millis() as u64
 }
 
-fn debug(msg: &str) {
+pub(crate) fn debug(msg: &str) {
     if std::env::var_os("CLIPT_DEBUG").is_some() {
         eprintln!("clipt: {msg}");
     }

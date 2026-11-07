@@ -1,5 +1,7 @@
 //! `clipt tray` on macOS: an icon in the menu bar with the Linux tray's
-//! screenshot actions, and global shortcuts. Opening clipt.app starts it.
+//! screenshot and recording actions, and global shortcuts. Opening
+//! clipt.app starts it. While a recording runs the icon turns into a red
+//! record symbol and the menu offers Pause and Stop.
 //!
 //! As on Linux, the tray never captures anything itself: each action starts
 //! a fresh `clipt`, which, being the same executable, macOS counts as the
@@ -14,12 +16,13 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, ProtocolObject};
 use objc2::{AnyThread, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSControlStateValueOff, NSControlStateValueOn,
-    NSEventModifierFlags, NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSVariableStatusItemLength,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSColor, NSControlStateValueOff, NSControlStateValueOn,
+    NSEventModifierFlags, NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
 };
-use objc2_foundation::{NSBundle, NSData, NSObject, NSObjectProtocol, NSSize, NSString};
+use objc2_foundation::{NSBundle, NSData, NSObject, NSObjectProtocol, NSSize, NSString, NSTimer};
+use std::cell::{Cell, OnceCell};
 use std::ffi::c_void;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 /// Long enough for the menu to fade out of the shot.
@@ -30,6 +33,10 @@ enum Action {
     Region,
     RegionDelayed,
     Full,
+    Record,
+    RecordScreen,
+    Pause,
+    Stop,
     OpenFolder,
     /// Settings the menu ticks, kept in the config.
     ToggleCopy,
@@ -44,6 +51,11 @@ const MENU: &[Option<(&str, Action)>] = &[
     Some(("Capture Region", Action::Region)),
     Some(("Capture Region in 3 Seconds", Action::RegionDelayed)),
     Some(("Copy Full Desktop", Action::Full)),
+    None,
+    Some(("Record Region…", Action::Record)),
+    Some(("Record Screen", Action::RecordScreen)),
+    Some(("Pause Recording", Action::Pause)),
+    Some(("Stop Recording", Action::Stop)),
     None,
     Some(("Open Screenshots Folder", Action::OpenFolder)),
     None,
@@ -64,9 +76,13 @@ fn run_action(a: Action) {
         Err(e) => return eprintln!("clipt: {e}"),
     };
     let r = match a {
-        Action::Region => Command::new(&exe).args(["gui", "-d", CLICK_DELAY]).spawn(),
-        Action::RegionDelayed => Command::new(&exe).args(["gui", "-d", "3"]).spawn(),
-        Action::Full => Command::new(&exe).args(["full", "-c", "-d", CLICK_DELAY]).spawn(),
+        Action::Region => Command::new(&exe).args(["gui", "-d", CLICK_DELAY]).stderr(Stdio::piped()).spawn(),
+        Action::RegionDelayed => Command::new(&exe).args(["gui", "-d", "3"]).stderr(Stdio::piped()).spawn(),
+        Action::Full => Command::new(&exe).args(["full", "-c", "-d", CLICK_DELAY]).stderr(Stdio::piped()).spawn(),
+        Action::Record => Command::new(&exe).args(["record", "-d", CLICK_DELAY]).stderr(Stdio::piped()).spawn(),
+        Action::RecordScreen => Command::new(&exe).args(["record", "screen", "-d", CLICK_DELAY]).stderr(Stdio::piped()).spawn(),
+        Action::Pause => Command::new(&exe).args(["record", "--toggle-pause"]).stderr(Stdio::piped()).spawn(),
+        Action::Stop => Command::new(&exe).args(["record", "--stop"]).stderr(Stdio::piped()).spawn(),
         Action::OpenFolder => {
             let dir = SAVE_DIR.get().map(String::as_str).unwrap_or("~");
             let _ = std::fs::create_dir_all(dir);
@@ -84,11 +100,63 @@ fn run_action(a: Action) {
         // Handled by the menu, which has the item to tick.
         Action::Login | Action::Quit | Action::ToggleCopy | Action::ToggleNotify => return,
     };
-    // Reap it in the background, so it doesn't linger as a zombie.
+    // Reap it in the background, so it doesn't linger as a zombie. Nobody
+    // sees its stderr, so a failure (no ffmpeg, no permission) becomes a
+    // notification.
     match r {
-        Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
+        Ok(child) => drop(std::thread::spawn(move || {
+            let Ok(out) = child.wait_with_output() else { return };
+            if !out.status.success() {
+                let err = String::from_utf8_lossy(&out.stderr);
+                let last = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("it failed");
+                crate::notify::send(&format!("{} failed", label(a)), last.trim_start_matches("clipt: "), None);
+            }
+        })),
         Err(e) => eprintln!("clipt: starting {a:?}: {e}"),
     }
+}
+
+/// An action's menu label, for messages.
+fn label(a: Action) -> &'static str {
+    MENU.iter().flatten().find(|(_, b)| *b == a).map_or("clipt", |(l, _)| l.trim_end_matches('\u{2026}'))
+}
+
+thread_local! {
+    /// The status item, for the timer that shows whether a recording runs.
+    static ITEM: OnceCell<Retained<NSStatusItem>> = const { OnceCell::new() };
+    /// Whether the icon shows a recording now.
+    static SHOWING_RECORDING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Show the app icon, or while a recording runs, a red record symbol.
+fn update_icon(mtm: MainThreadMarker) {
+    let recording = crate::record::status().is_some();
+    if SHOWING_RECORDING.replace(recording) == recording {
+        return;
+    }
+    ITEM.with(|i| {
+        let Some(button) = i.get().and_then(|i| i.button(mtm)) else { return };
+        let symbol = || {
+            NSImage::imageWithSystemSymbolName_accessibilityDescription(
+                &NSString::from_str("record.circle.fill"),
+                Some(&NSString::from_str("Recording")),
+            )
+        };
+        match (recording, recording.then(symbol).flatten()) {
+            (true, Some(img)) => {
+                button.setImage(Some(&img));
+                button.setContentTintColor(Some(&NSColor::systemRedColor()));
+                button.setToolTip(Some(&NSString::from_str("clipt: recording")));
+            }
+            _ => {
+                if let Ok(img) = menu_bar_icon() {
+                    button.setImage(Some(&img));
+                }
+                button.setContentTintColor(None);
+                button.setToolTip(Some(&NSString::from_str("clipt")));
+            }
+        }
+    });
 }
 
 define_class!(
@@ -113,6 +181,26 @@ define_class!(
                 }
             }
         }
+
+        /// Record while idle; Pause (or Resume) and Stop while recording.
+        #[unsafe(method(menuNeedsUpdate:))]
+        fn menu_needs_update(&self, menu: &NSMenu) {
+            let status = crate::record::status();
+            for item in menu.itemArray().iter() {
+                let Some(Some((_, a))) = MENU.get(item.tag() as usize) else { continue };
+                match a {
+                    Action::Record | Action::RecordScreen => item.setHidden(status.is_some()),
+                    Action::Stop => item.setHidden(status.is_none()),
+                    Action::Pause => {
+                        item.setHidden(status.is_none());
+                        let title = if status == Some(true) { "Resume Recording" } else { "Pause Recording" };
+                        item.setTitle(&NSString::from_str(title));
+                    }
+                    _ => {}
+                }
+            }
+            update_icon(self.mtm());
+        }
     }
 
     unsafe impl NSApplicationDelegate for Tray {
@@ -125,6 +213,11 @@ define_class!(
     }
 
     impl Tray {
+        #[unsafe(method(tick:))]
+        fn tick(&self, _timer: &NSTimer) {
+            update_icon(self.mtm());
+        }
+
         #[unsafe(method(act:))]
         fn act(&self, item: &NSMenuItem) {
             let Some(Some((_, a))) = MENU.get(item.tag() as usize) else { return };
@@ -213,6 +306,9 @@ pub fn run(cfg: &Config) -> Result<()> {
     }
     menu.setDelegate(Some(ProtocolObject::from_ref(&*tray)));
     item.setMenu(Some(&menu));
+    ITEM.with(|i| i.set(item).ok());
+    // A recording started from a terminal or a shortcut shows too.
+    let _timer = unsafe { NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(1.0, &tray, sel!(tick:), None, true) };
 
     app.run();
     Ok(())

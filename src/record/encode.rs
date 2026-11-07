@@ -8,7 +8,8 @@
 //!   3. libx264 on the CPU
 //!
 //! On Windows the GPU encoders are NVIDIA's, Intel's (Quick Sync) and AMD's
-//! (AMF), then whatever Media Foundation offers, then libx264.
+//! (AMF), then whatever Media Foundation offers, then libx264. On macOS,
+//! h264_videotoolbox before libx264.
 //!
 //! Frames reach ffmpeg in a minimal Matroska stream (see `mkv.rs`) that
 //! carries each frame's capture time, and the output keeps those times
@@ -73,6 +74,8 @@ pub enum Codec {
     Amf,
     /// A Media Foundation hardware encoder (Windows).
     Mf,
+    /// Apple's encoder (macOS). Its constant-quality mode needs Apple silicon.
+    VideoToolbox,
     X264,
 }
 
@@ -90,7 +93,20 @@ pub fn ffmpeg() -> Command {
         cmd.creation_flags(CREATE_NO_WINDOW);
         cmd
     }
-    #[cfg(not(windows))]
+    // An app opened from Finder gets only the system's PATH; Homebrew and
+    // MacPorts install ffmpeg elsewhere.
+    #[cfg(target_os = "macos")]
+    {
+        let on_path = std::env::var_os("PATH").iter().flat_map(std::env::split_paths).any(|d| d.join("ffmpeg").is_file());
+        if !on_path
+            && let Some(p) =
+                ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/opt/local/bin/ffmpeg"].iter().find(|p| Path::new(p).is_file())
+        {
+            return Command::new(p);
+        }
+        Command::new("ffmpeg")
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     Command::new("ffmpeg")
 }
 
@@ -102,6 +118,7 @@ impl Codec {
             Self::Qsv => "h264_qsv",
             Self::Amf => "h264_amf",
             Self::Mf => "h264_mf",
+            Self::VideoToolbox => "h264_videotoolbox",
             Self::X264 => "libx264",
         }
     }
@@ -145,6 +162,7 @@ impl Codec {
                 "-quality",
                 "70",
             ]),
+            Self::VideoToolbox => v(&["-vf", &format!("{pad},format=nv12"), "-c:v", "h264_videotoolbox", "-q:v", "65", "-bf", "0"]),
             Self::X264 => {
                 // Above 1440p, veryfast needs several cores to keep up.
                 let preset = if w as u64 * h as u64 > 2560 * 1440 { "ultrafast" } else { "veryfast" };
@@ -165,6 +183,14 @@ fn candidates(pref: &str) -> Result<Vec<Codec>> {
             "mf" => vec![Codec::Mf],
             "x264" => vec![Codec::X264],
             other => bail!("unknown record_codec '{other}' (auto, nvenc, qsv, amf, mf, x264)"),
+        });
+    }
+    if cfg!(target_os = "macos") {
+        return Ok(match pref {
+            "auto" => vec![Codec::VideoToolbox, Codec::X264],
+            "videotoolbox" => vec![Codec::VideoToolbox],
+            "x264" => vec![Codec::X264],
+            other => bail!("unknown record_codec '{other}' (auto, videotoolbox, x264)"),
         });
     }
     let vaapi = || render_nodes().into_iter().map(Codec::Vaapi).collect::<Vec<_>>();
@@ -200,6 +226,9 @@ pub fn choose(pref: &str) -> Result<Codec> {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && cfg!(windows) => {
             bail!("recording needs ffmpeg, which isn't installed (winget install Gyan.FFmpeg, or put ffmpeg.exe beside clipt.exe)")
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && cfg!(target_os = "macos") => {
+            bail!("recording needs ffmpeg, which isn't installed (brew install ffmpeg)")
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             bail!("recording needs ffmpeg, which isn't installed (install the 'ffmpeg' package)")
@@ -995,7 +1024,7 @@ mod tests {
 
     #[test]
     fn every_codec_pads_to_even_size() {
-        for c in [Codec::Vaapi("/dev/dri/renderD128".into()), Codec::Nvenc, Codec::X264] {
+        for c in [Codec::Vaapi("/dev/dri/renderD128".into()), Codec::Nvenc, Codec::VideoToolbox, Codec::X264] {
             let vf = c.output_args(101, 99);
             let i = vf.iter().position(|a| a == "-vf").unwrap();
             assert!(vf[i + 1].starts_with("pad=ceil(iw/2)*2:ceil(ih/2)*2"), "{c:?}: {}", vf[i + 1]);
@@ -1436,11 +1465,17 @@ mod tests {
     #[test]
     fn codec_preferences() {
         assert_eq!(candidates("x264").unwrap(), vec![Codec::X264]);
-        assert_eq!(candidates("nvenc").unwrap(), vec![Codec::Nvenc]);
         if cfg!(windows) {
+            assert_eq!(candidates("nvenc").unwrap(), vec![Codec::Nvenc]);
             assert!(candidates("auto").unwrap().ends_with(&[Codec::Mf, Codec::X264]));
             assert!(candidates("vaapi").is_err());
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(candidates("auto").unwrap(), vec![Codec::VideoToolbox, Codec::X264]);
+            assert!(candidates("vaapi").is_err());
+            // No NVIDIA driver to hand frames to on macOS.
+            assert!(candidates("nvenc").is_err());
         } else {
+            assert_eq!(candidates("nvenc").unwrap(), vec![Codec::Nvenc]);
             assert!(candidates("auto").unwrap().ends_with(&[Codec::Nvenc, Codec::X264]));
             assert!(candidates("qsv").is_err());
         }
