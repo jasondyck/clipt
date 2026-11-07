@@ -51,7 +51,8 @@ modules:
   # ducking filters; for `smart`, the mix's inputs back to clipt as raw
   # floats (pan, pcm_f32le, f32le), and the sound kept as FLAC for the
   # re-mix, which reads it back with the recording (mov, matroska); for
-  # `--audio-loudness`, the mix read back (AAC) and normalized (loudnorm).
+  # `--audio-loudness`, the mix read back (AAC), measured (loudnorm, into
+  # pcm_f32le and null) and its gain applied (volume).
   - name: x264
     buildsystem: autotools
     config-opts:

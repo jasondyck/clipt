@@ -569,8 +569,12 @@ fn write_loop(
     // the re-mix's gain can change it.
     if loudness && sources > 0 {
         match encode::loudness(path, Duration::from_millis(end)) {
-            Ok(Some(was)) => {
-                eprintln!("clipt: the mix normalized to -14 LUFS (was {was:.1} LUFS)");
+            Ok(Some(l)) if l.peak_limited => {
+                eprintln!("clipt: the mix {:+.1} dB to {:.1} LUFS (was {:.1}); its peaks keep it short of -14", l.gain, l.now(), l.was);
+                summary.push_str(&format!(", {:.0} LUFS", l.now()));
+            }
+            Ok(Some(l)) => {
+                eprintln!("clipt: the mix normalized to -14 LUFS ({:+.1} dB, was {:.1} LUFS)", l.gain, l.was);
                 summary.push_str(", -14 LUFS");
             }
             Ok(None) => {}

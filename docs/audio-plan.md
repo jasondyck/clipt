@@ -273,14 +273,22 @@ Done:
   covers). So `smart` is clean-up, ducking and the re-mix; the dynamic EQ
   stays out unless real recordings show beds it would have saved.
 - **The loudness** (`--audio-loudness`, `record_audio_loudness`): the
-  table's last row. At the stop, after any re-mix, a first `loudnorm` pass
-  measures the mix (`print_format=json`) and a second, given that
-  measurement, applies one fixed gain to −14 LUFS with the true peak at
-  −1 dBTP. The video and any separate tracks are copied, the mix alone
-  encoded again. A mix already within half a LU with no peak over the
-  limit is left alone rather than re-encoded, and so is one with no
-  loudness at all (silence). The two passes, not `loudnorm`'s dynamic mode,
-  are what keep a quiet voice from being pumped up between sentences. e2e:
+  table's last row. At the stop, after any re-mix, a `loudnorm` pass
+  measures the mix (`print_format=json`) and `volume` applies one fixed
+  gain to −14 LUFS, capped so the true peak stays at or under −1 dBTP: a
+  peaky mix ends up quieter than −14 rather than compressed, and the stop
+  message says so. Not `loudnorm`'s own second pass: even with
+  `linear=true` it falls back to its dynamic mode, silently, when the
+  measured LRA is over its target (7 LU by default) or the gain would put
+  a peak over the limit; a unit test steps a tone through 0, −8 and
+  −16 dB (LRA about 10) and checks the 16 dB between them survives, where
+  the old pass made it 11. The video and any separate tracks are copied,
+  the mix alone encoded again. A mix already within half a LU with no
+  peak over the limit is left alone rather than re-encoded, and so is one
+  with no loudness at all (silence). The fixed gain, not a dynamic one, is
+  what keeps a quiet voice from being pumped up between sentences. The
+  measurement's null output is encoded as `pcm_f32le`, which the Flatpak's
+  ffmpeg has (its default, `pcm_s16le`, it doesn't). e2e:
   a −27 LUFS tone mix comes out at −13.9 on Sway, GNOME and X11, with any
   separate track copied at its level and codec. The Flatpak's filtered
   ffmpeg needed the AAC decoder (the mix is read back) and `loudnorm`; its
@@ -300,7 +308,7 @@ are mixed, which is what this needs. A setting such as
 | Dynamic EQ: 3–6 dB cut at 1–4 kHz in the other sources only while the voice is present | `acrossover` splits them at 1 and 4 kHz; only the middle band goes through `sidechaincompress`; the bands are summed again | While recording | Not built: decided against (see the phase 4 list) |
 | Measuring intelligibility: Speech Intelligibility Index (ANSI S3.5, octave bands) | In clipt, on the PCM chunks it already handles: octave-band filters at 250 Hz–8 kHz, levels per ~400 ms frame for the voice and for the rest, SII = Σ Iᵢ·clamp((SNRᵢ + 15)/30, 0, 1) with weights 0.062, 0.167, 0.237, 0.265, 0.214, 0.055. Judged on the 10th-percentile frame | Reported at stop ("speech clarity 0.84, good") | `smart` |
 | Fixing it | If the 10th-percentile SII is under 0.75 (or 0.90 for a safe margin), mix again from the separate tracks with the other sources lower until it isn't; sound is re-encoded, video copied | At stop | `smart` |
-| Loudness: −14 LUFS integrated, −1 dBTP | `loudnorm`, two passes, on the final mix, video copied | At stop | `record_audio_loudness` |
+| Loudness: −14 LUFS integrated, −1 dBTP | `loudnorm` measures the final mix, `volume` applies one peak-limited gain, video copied | At stop | `record_audio_loudness` |
 
 To settle first:
 - **Which source is the voice.** `mic` by default; a named device would
