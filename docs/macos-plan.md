@@ -87,7 +87,12 @@ and `Capture::run` as PulseAudio's. `system` is ScreenCaptureKit's audio
 (macOS 13+) from the picture's own stream (`capturesAudio`), leaving
 clipt's own sound out; `mic` is the default input through an Audio Queue,
 which converts to 48 kHz 16-bit stereo itself (`NSMicrophoneUsageDescription`
-in Info.plist; macOS asks once). Not yet: devices by name, and `clipt list sound`.
+in Info.plist; macOS asks once). The Developer ID builds' hardened runtime
+also needs the `com.apple.security.device.audio-input` entitlement
+(`packaging/macos/clipt.entitlements`, given by `macos-sign.sh`), or the
+microphone is refused without asking. The computer's sound needs an
+`Audio` output added to the stream beside the `Screen` one; `capturesAudio`
+alone delivers nothing. Not yet: devices by name, and `clipt list sound`.
 
 **App bundle.** `packaging/macos/build-app.sh` wraps the binary in
 `clipt.app` (bundle ID `io.github.jasondyck.clipt`, no Dock icon, the icon

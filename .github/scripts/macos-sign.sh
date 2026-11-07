@@ -25,9 +25,12 @@ security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$MACOS_CERT_PASSWORD" -T /u
 rm "$RUNNER_TEMP/cert.p12"
 security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpw" "$kc" > /dev/null
 security list-keychains -d user -s "$kc"
-# Notarisation needs the hardened runtime and a secure timestamp.
+# Notarisation needs the hardened runtime and a secure timestamp. The
+# runtime refuses the microphone unless the entitlements allow it; signing
+# the app gives its executable the same ones.
+entitlements="$(dirname "$0")/../../packaging/macos/clipt.entitlements"
 for p in "${paths[@]}"; do
-  codesign --force --options runtime --timestamp --keychain "$kc" --sign "Developer ID Application" "$p"
+  codesign --force --options runtime --timestamp --entitlements "$entitlements" --keychain "$kc" --sign "Developer ID Application" "$p"
   codesign --verify --strict --verbose=2 "$p"
 done
 

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- What the hardened runtime lets clipt do, for the Developer ID builds
+     (.github/scripts/macos-sign.sh). Without audio-input the microphone is
+     refused outright, however the user answers macOS's question. Screen
+     Recording is a permission the user grants, not an entitlement. -->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>
