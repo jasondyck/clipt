@@ -716,24 +716,39 @@ fn parse_loudnorm(s: &str) -> Option<Measured> {
     Some(Measured { i: f("input_i")?, tp: f("input_tp")? })
 }
 
+/// Run one of the loudness steps' ffmpeg for at most `limit`, killed and
+/// reaped past it: its stderr. Unbounded, a hung ffmpeg would keep the
+/// recording's lock, and `--stop` again could do nothing about it.
+fn run_bounded(mut cmd: Command, limit: Duration, what: &str) -> Result<String> {
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().context("running ffmpeg")?;
+    let mut err = child.stderr.take().unwrap();
+    let stderr = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = err.read_to_string(&mut s);
+        s
+    });
+    let status = wait_up_to(&mut child, limit);
+    if !matches!(status, Ok(Some(_))) {
+        kill(&mut child);
+    }
+    let stderr = stderr.join().unwrap_or_default();
+    match status? {
+        Some(s) if s.success() => Ok(stderr),
+        Some(s) => bail!("{what} failed ({s}): {}", stderr.trim().lines().last().unwrap_or("no error output")),
+        None => bail!("{what} didn't finish within {limit:?}, so it was stopped"),
+    }
+}
+
 /// The measurement: `loudnorm` reads the mix and reports its loudness as
 /// JSON on stderr; its own output is thrown away.
-fn measure_loudness(video: &Path) -> Result<Measured> {
-    let out = ffmpeg()
-        .args(["-hide_banner", "-nostats", "-i"])
+fn measure_loudness(video: &Path, limit: Duration) -> Result<Measured> {
+    let mut cmd = ffmpeg();
+    cmd.args(["-hide_banner", "-nostats", "-i"])
         .arg(video)
         // The null muxer still encodes, by default as `pcm_s16le`, which the
         // Flatpak's ffmpeg doesn't have; `pcm_f32le` it has, for `smart`.
-        .args(["-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1:print_format=json", "-c:a", "pcm_f32le", "-f", "null", "-"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .context("running ffmpeg")?;
-    let err = String::from_utf8_lossy(&out.stderr);
-    if !out.status.success() {
-        bail!("measuring the mix's loudness failed: {}", err.trim().lines().last().unwrap_or("no error output"));
-    }
+        .args(["-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1:print_format=json", "-c:a", "pcm_f32le", "-f", "null", "-"]);
+    let err = run_bounded(cmd, limit, "measuring the mix's loudness")?;
     parse_loudnorm(&err).with_context(|| {
         format!("measuring the mix's loudness failed: {}", err.trim().lines().last().unwrap_or("loudnorm reported nothing"))
     })
@@ -787,7 +802,9 @@ fn loudness_gain(m: &Measured) -> Option<Loudness> {
 /// copied; the mix alone is encoded again. `None` when there was nothing
 /// to do (see `loudness_gain`).
 pub fn loudness(video: &Path, duration: Duration) -> Result<Option<Loudness>> {
-    let Some(l) = loudness_gain(&measure_loudness(video)?) else {
+    // Sound only, so much faster than real time; this is generous.
+    let limit = Duration::from_secs(60) + duration / 2;
+    let Some(l) = loudness_gain(&measure_loudness(video, limit)?) else {
         return Ok(None);
     };
     let name = video.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -805,30 +822,10 @@ pub fn loudness(video: &Path, duration: Duration) -> Result<Option<Loudness>> {
     if mov {
         cmd.args(["-movflags", "+faststart"]);
     }
-    let mut child = cmd.arg(&out).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().context("running ffmpeg")?;
-    let mut err = child.stderr.take().unwrap();
-    let stderr = std::thread::spawn(move || {
-        let mut s = String::new();
-        let _ = err.read_to_string(&mut s);
-        s
-    });
-    // Sound only, so much faster than real time; this is generous.
-    let limit = Duration::from_secs(60) + duration / 2;
-    let status = wait_up_to(&mut child, limit)?;
-    if status.is_none() {
-        kill(&mut child);
-    }
-    let stderr = stderr.join().unwrap_or_default();
-    match status {
-        Some(s) if s.success() => {}
-        Some(s) => {
-            let _ = std::fs::remove_file(&out);
-            bail!("normalizing the mix's loudness failed ({s}): {}", stderr.trim().lines().last().unwrap_or("no error output"));
-        }
-        None => {
-            let _ = std::fs::remove_file(&out);
-            bail!("normalizing the mix's loudness didn't finish within {limit:?}, so it was stopped");
-        }
+    cmd.arg(&out);
+    if let Err(e) = run_bounded(cmd, limit, "normalizing the mix's loudness") {
+        let _ = std::fs::remove_file(&out);
+        return Err(e);
     }
     std::fs::rename(&out, video).context("replacing the recording with the normalized one")?;
     Ok(Some(l))
@@ -1349,7 +1346,7 @@ mod tests {
                 .unwrap()
         };
         // The mix's loudness, as the first pass measures it.
-        let lufs = || measure_loudness(&video).unwrap().i;
+        let lufs = || measure_loudness(&video, Duration::from_secs(30)).unwrap().i;
         let sep_was = level("0:a:1");
         let l = loudness(&video, Duration::from_secs(6)).unwrap().unwrap();
         assert!(l.was < -20.0 && !l.peak_limited, "the mix started quiet, with headroom ({l:?})");
@@ -1417,8 +1414,21 @@ mod tests {
         assert!(l.gain > 1.0 && !l.peak_limited, "raised, with headroom ({l:?})");
         let after = swing();
         assert!((after - before).abs() < 0.5, "the swing kept ({before:.1} -> {after:.1} dB)");
-        assert!((measure_loudness(&video).unwrap().i - l.now()).abs() < 0.5, "at the loudness it said ({l:?})");
+        assert!((measure_loudness(&video, Duration::from_secs(30)).unwrap().i - l.now()).abs() < 0.5, "at the loudness it said ({l:?})");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A step that hangs is killed at its limit and reported, not waited
+    /// on: the recording's lock is held until the loudness is done.
+    #[cfg(unix)]
+    #[test]
+    fn loudness_steps_are_bounded() {
+        let mut hang = Command::new("sleep");
+        hang.arg("30");
+        let start = Instant::now();
+        let e = run_bounded(hang, Duration::from_millis(300), "measuring the mix's loudness").unwrap_err();
+        assert!(start.elapsed() < Duration::from_secs(5), "killed at the limit ({:?})", start.elapsed());
+        assert!(e.to_string().contains("didn't finish within"), "{e}");
     }
 
     /// The measurement is in the last JSON block on stderr, where the rest of
