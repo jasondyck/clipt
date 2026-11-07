@@ -16,6 +16,8 @@ All notable changes are listed here. The format follows
   only as far as they allow, and says so. A mix already within half a LU
   of the target is left alone.
 
+## [0.10.0] - 2026-11-07
+
 ### Changed
 - Scrolling (or `[` and `]`) while drawing, moving or reshaping a shape
   changes that shape's width too, not just the next one's. Undo and a
