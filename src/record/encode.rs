@@ -696,7 +696,9 @@ fn measure_loudness(video: &Path) -> Result<Measured> {
     let out = ffmpeg()
         .args(["-hide_banner", "-nostats", "-i"])
         .arg(video)
-        .args(["-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1:print_format=json", "-f", "null", "-"])
+        // The null muxer still encodes, by default as `pcm_s16le`, which the
+        // Flatpak's ffmpeg doesn't have; `pcm_f32le` it has, for `smart`.
+        .args(["-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1:print_format=json", "-c:a", "pcm_f32le", "-f", "null", "-"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
