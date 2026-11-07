@@ -6,6 +6,8 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-07
+
 ### Changed
 - Scrolling (or `[` and `]`) while drawing, moving or reshaping a shape
   changes that shape's width too, not just the next one's. Undo and a
