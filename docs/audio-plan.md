@@ -152,8 +152,8 @@ construction. What can still go wrong, and the answer to each:
   for a re-mix that raises the clarity), and `--audio-loudness` (loudnorm
   before and after: a −27 LUFS mix comes out at −14).
 - Flatpak: the same tone test through `clipt-launch` against headless
-  Sway, as done for video. Still to be run for `--audio-loudness` after
-  its manifest change (the AAC decoder and `loudnorm`).
+  Sway, as done for video. For `--audio-loudness` so far only its ffmpeg
+  commands, inside the Flatpak (see the loudness notes in phase 4).
 - By hand: 30 minutes with a video playing on Plasma, then the sync
   checked at the end; then once on GNOME.
 
@@ -291,9 +291,13 @@ Done:
   ffmpeg has (its default, `pcm_s16le`, it doesn't). e2e:
   a −27 LUFS tone mix comes out at −13.9 on Sway, GNOME and X11, with any
   separate track copied at its level and codec. The Flatpak's filtered
-  ffmpeg needed the AAC decoder (the mix is read back) and `loudnorm`; its
-  tone test through `clipt-launch` is still to be run by hand, since a
-  build rebuilds ffmpeg and the whole Rust tree under the SDK.
+  ffmpeg needed the AAC decoder (the mix is read back) and `loudnorm`.
+  Its ffmpeg was run by hand on a built Flatpak (2026-11-07): the
+  measurement without an encoder named fails there ("Encoder not found",
+  no `pcm_s16le`) and with `pcm_f32le` reads the stepped tone (−34.7
+  LUFS, LRA 10.3); the gain step then brings it to −14.0 with its 15.9 dB
+  swing unchanged. A whole recording in the Flatpak, which on Plasma goes
+  through the ScreenCast portal's dialog, is still to be run.
 
 ## Smart balance (phase 4)
 
