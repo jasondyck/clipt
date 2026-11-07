@@ -49,6 +49,7 @@ OPTIONS:
         --no-audio        Record without sound, whatever record_audio says
         --audio-balance=MODE  off (default), duck or smart: the mic over the rest
         --separate-audio  Also keep each source as its own track
+        --audio-loudness  Normalize the finished mix to -14 LUFS at the stop
     -h, --help            Show this help
     -V, --version         Show the version
 
@@ -65,7 +66,7 @@ EDITOR KEYS:
 Config: ~/.config/clipt/config.toml (save_dir, filename, color, palette, width,
 copy_on_save, notify, cursor, font, hotkey, hotkey_full, video_dir,
 record_fps, record_codec, record_format, record_audio, record_audio_balance,
-record_separate_audio, max_duration). hotkey is the
+record_separate_audio, record_audio_loudness, max_duration). hotkey is the
 tray's shortcut for a region, default \"cmd+shift+2\"; \"\" turns it off.
 clipt needs the Screen Recording permission (System Settings > Privacy &
 Security) for the app it runs from. Recording needs ffmpeg (brew install ffmpeg)
@@ -241,6 +242,10 @@ fn record_cmd(mut args: Args, cfg: &Config) -> Result<()> {
         }
         (Some(m), None) => bail!("unknown recording mode '{m}' (screen, region, window, or -g GEOM)"),
     };
+    let loudness = args.audio_loudness || cfg.record_audio_loudness;
+    if loudness && audio.is_empty() {
+        eprintln!("clipt: audio loudness: no sound recorded, nothing to normalize");
+    }
     let opts = record::Options {
         target,
         output: args.output.clone(),
@@ -250,6 +255,7 @@ fn record_cmd(mut args: Args, cfg: &Config) -> Result<()> {
         audio,
         separate_audio: args.separate_audio || cfg.record_separate_audio,
         balance,
+        loudness,
     };
     record::run(cfg, opts)
 }
