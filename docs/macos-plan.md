@@ -60,7 +60,7 @@ anything else puts the screen back. Rounded corners still let a little of
 the covering window through; capturing the window together with what's
 really behind it is a follow-up.
 
-**3. Recording.** Done, without sound. `src/macos/record.rs`:
+**3. Recording.** Done; sound is step 4. `src/macos/record.rs`:
 ScreenCaptureKit (`SCStream`, macOS 12.3+, weakly linked so clipt still
 starts on 12.0) for frames, handed to the same writer as Linux through
 `record::Feed`. A display is cropped by `sourceRect`, at the display's
