@@ -91,6 +91,9 @@ mix and dips the other sources while you speak; `smart` also says at the
 stop how clearly your voice came through, and if the other sound covered
 it, mixes again with that sound quieter. With speakers rather than
 headphones the microphone hears the system sound too (`smart` notices).
+`--audio-loudness` (or `record_audio_loudness`) normalizes the finished
+recording's mix to -14 LUFS, what streaming services normalize to, without
+re-encoding the video.
 It needs `ffmpeg` and uses the GPU encoder when there is one (VA-API on AMD
 and Intel, NVENC on NVIDIA), libx264 otherwise. It works on wlroots-family
 compositors (Sway, Hyprland, niri, labwc, river, COSMIC) directly, and on KDE

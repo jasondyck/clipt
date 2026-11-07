@@ -56,6 +56,9 @@ OPTIONS:
                           duck, or smart (duck, and say at the stop how
                           clearly the voice came through). Default: off
         --separate-audio  Also keep each sound source as its own track
+        --audio-loudness  Normalize the finished recording's mix to -14 LUFS
+                          (the streaming standard) at the stop; the video
+                          and any separate tracks are copied
         --no-audio        Record without sound, whatever record_audio says
     -h, --help            Show this help
     -V, --version         Show the version
@@ -75,7 +78,8 @@ EDITOR KEYS:
 Config: %APPDATA%\\clipt\\config.toml (save_dir, filename, color, palette,
 width, copy_on_save, notify, cursor, font, hotkey, hotkey_full, video_dir,
 video_filename, record_fps, record_codec, record_format, record_audio,
-record_audio_balance, record_separate_audio, max_duration).
+record_audio_balance, record_separate_audio, record_audio_loudness,
+max_duration).
 hotkey is the tray's shortcut for a region, default \"print\" (Print
 Screen), or e.g. \"ctrl+shift+s\"; \"\" turns it off. Notifications need
 the tray. Screenshots go to Pictures\\Screenshots and recordings to
@@ -306,6 +310,9 @@ fn record(cfg: &Config, args: &Args, (target, sound, gif): Picked, audio: Vec<So
     if !audio.is_empty() {
         crate::record::audio::check(&audio)?;
     }
+    if (args.audio_loudness || cfg.record_audio_loudness) && audio.is_empty() {
+        eprintln!("clipt: audio loudness: no sound recorded, nothing to normalize");
+    }
     let opts = crate::record::Options {
         target,
         output: args.output.clone(),
@@ -315,6 +322,7 @@ fn record(cfg: &Config, args: &Args, (target, sound, gif): Picked, audio: Vec<So
         audio,
         separate_audio: args.separate_audio || cfg.record_separate_audio,
         balance: crate::record::Balance::parse(args.audio_balance.as_deref().unwrap_or(&cfg.record_audio_balance))?,
+        loudness: args.audio_loudness || cfg.record_audio_loudness,
     };
     crate::record::run(cfg, opts)
 }

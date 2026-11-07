@@ -97,6 +97,9 @@ OPTIONS:
                           clearly the voice came through). Default: off;
                           needs the microphone and at least one other source
         --separate-audio  Also keep each sound source as its own track
+        --audio-loudness  Normalize the finished recording's mix to -14 LUFS
+                          (the streaming standard) at the stop; the video
+                          and any separate tracks are copied
         --no-audio        Record without sound, whatever record_audio says
     -h, --help            Show this help
     -V, --version         Show the version
@@ -116,7 +119,8 @@ EDITOR KEYS:
 Config: ~/.config/clipt/config.toml (save_dir, filename, color, palette, width,
 copy_on_save, notify, backend, cursor, font, video_dir, video_filename,
 record_fps, record_codec, record_format, record_audio,
-record_audio_balance, record_separate_audio, max_duration).
+record_audio_balance, record_separate_audio, record_audio_loudness,
+max_duration).
 Recording needs ffmpeg; on KDE and GNOME also PipeWire; with sound, a
 PulseAudio or pipewire-pulse server.
 ";
@@ -145,6 +149,8 @@ struct Args {
     /// --audio-balance=MODE.
     audio_balance: Option<String>,
     separate_audio: bool,
+    /// --audio-loudness.
+    audio_loudness: bool,
     /// `clipt config [KEY [VALUE]]`.
     config: Vec<String>,
 }
@@ -169,6 +175,7 @@ fn parse_args() -> Result<Args> {
             Long("audio-balance") => a.audio_balance = Some(p.value()?.string()?),
             Long("no-audio") => a.audio = Some("none".into()),
             Long("separate-audio") => a.separate_audio = true,
+            Long("audio-loudness") => a.audio_loudness = true,
             Long("stop") => a.stop = true,
             #[cfg(any(wayland_x11, windows, target_os = "macos"))]
             Long("pause") => a.pause = Some(record::PauseCmd::Pause),
@@ -385,8 +392,22 @@ fn run() -> Result<()> {
             (Some(m), None) => bail!("unknown recording mode '{m}' (screen, region, or -g GEOM)"),
         };
         let separate_audio = args.separate_audio || cfg.record_separate_audio;
-        let opts =
-            record::Options { target, output: args.output.clone(), fps: args.fps, cursor, backend, gif, audio, separate_audio, balance };
+        let loudness = args.audio_loudness || cfg.record_audio_loudness;
+        if loudness && audio.is_empty() {
+            eprintln!("clipt: audio loudness: no sound recorded, nothing to normalize");
+        }
+        let opts = record::Options {
+            target,
+            output: args.output.clone(),
+            fps: args.fps,
+            cursor,
+            backend,
+            gif,
+            audio,
+            separate_audio,
+            balance,
+            loudness,
+        };
         return record::run(&cfg, opts);
     }
 
@@ -672,6 +693,7 @@ fn record_picked(
         audio,
         separate_audio: args.separate_audio || cfg.record_separate_audio,
         balance,
+        loudness: args.audio_loudness || cfg.record_audio_loudness,
     };
     record::run(cfg, opts)
 }

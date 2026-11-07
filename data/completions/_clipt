@@ -40,6 +40,7 @@ _clipt() {
     '--audio=-[record sound too]::source:(system mic both none)'
     '--audio-balance=-[duck the other sound under the microphone]::mode:(off duck smart)'
     '--separate-audio[keep each sound source as its own track]'
+    '--audio-loudness[normalize the finished mix to -14 LUFS]'
     '--no-audio[record without sound]'
   )
   update=( '--check[only check for updates]' )
@@ -111,6 +112,7 @@ _clipt_args() {
           '--audio:record sound too'
           '--audio-balance:duck the other sound under the microphone'
           '--separate-audio:keep each sound source as its own track'
+          '--audio-loudness:normalize the finished mix to -14 LUFS'
           '--no-audio:record without sound'
         )
         ;;
