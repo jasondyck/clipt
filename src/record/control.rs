@@ -1,7 +1,7 @@
 //! One recording at a time, and the commands other clipt processes send it:
 //! stop, pause and resume (`clipt record --stop` and friends, the tray, the
-//! overlay). Unix uses a locked pidfile and a FIFO; Windows a named mutex
-//! and a named pipe.
+//! overlay). Unix uses a locked pidfile and a FIFO (on macOS, in the user's
+//! own temporary directory); Windows a named mutex and a named pipe.
 
 use anyhow::{Result, bail};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -124,8 +124,27 @@ mod unix {
     //   clipt-record.ctl  a FIFO the recorder reads one-byte commands from
 
     fn runtime_file(name: &str) -> PathBuf {
-        let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-        dir.join(name)
+        #[cfg(target_os = "macos")]
+        let dir = darwin_user_temp_dir();
+        #[cfg(not(target_os = "macos"))]
+        let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+        dir.unwrap_or_else(std::env::temp_dir).join(name)
+    }
+
+    /// The user's own temporary directory (`/var/folders/…/T/`), from the
+    /// system rather than `$TMPDIR`, which sudo and some launchd contexts don't
+    /// set: they'd fall back to the shared `/tmp`, and the tray and a terminal
+    /// would look for the recording in different places.
+    #[cfg(target_os = "macos")]
+    fn darwin_user_temp_dir() -> Option<PathBuf> {
+        use std::os::unix::ffi::OsStringExt;
+        let mut buf = vec![0u8; libc::PATH_MAX as usize];
+        let n = unsafe { libc::confstr(libc::_CS_DARWIN_USER_TEMP_DIR, buf.as_mut_ptr().cast(), buf.len()) };
+        // n counts the terminating NUL; 0 is failure, more than the buffer too long.
+        (n > 1 && n <= buf.len()).then(|| {
+            buf.truncate(n - 1);
+            PathBuf::from(std::ffi::OsString::from_vec(buf))
+        })
     }
 
     fn pidfile() -> PathBuf {
@@ -168,13 +187,31 @@ mod unix {
                 .truncate(false)
                 .open(&p)
                 .with_context(|| format!("opening {}", p.display()))?;
-            if flock(&file, FlockOperation::NonBlockingLockExclusive).is_err() {
-                bail!("already recording; stop it with 'clipt record --stop'");
+            // `status()`, which a tray polls, holds a shared lock for a moment:
+            // a recording starting just then mustn't be told one is running.
+            let mut tries = 0;
+            while flock(&file, FlockOperation::NonBlockingLockExclusive).is_err() {
+                tries += 1;
+                if tries == 10 {
+                    bail!("already recording; stop it with 'clipt record --stop'");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
             }
             let lock = Self { file };
             lock.set(false)?;
             let ctl = ctlfile();
             let _ = std::fs::remove_file(&ctl); // stale
+            // rustix's mkfifoat is not built for Apple.
+            #[cfg(target_os = "macos")]
+            {
+                use std::os::unix::ffi::OsStrExt;
+                let mut bytes = ctl.as_os_str().as_bytes().to_vec();
+                bytes.push(0);
+                if unsafe { libc::mkfifo(bytes.as_ptr().cast(), 0o600) } != 0 {
+                    return Err(std::io::Error::last_os_error()).with_context(|| format!("creating {}", ctl.display()));
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
             rustix::fs::mkfifoat(rustix::fs::CWD, &ctl, rustix::fs::Mode::from_raw_mode(0o600))
                 .with_context(|| format!("creating {}", ctl.display()))?;
             // Read and write: with a writer of its own, reads wait for the next

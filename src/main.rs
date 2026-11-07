@@ -1,7 +1,6 @@
 //! clipt — a lightweight screenshot tool for Wayland, X11, macOS and Windows.
 
-// Some shared code (image rotation, video paths) only serves what macOS
-// and Windows can't do yet, recording among it.
+// Wayland and X11 capture machinery is unused on macOS and Windows.
 #![cfg_attr(not(wayland_x11), allow(dead_code))]
 
 // First, so its macros are in scope in every module after it.
@@ -19,11 +18,10 @@ mod icon;
 mod image;
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg(wayland_x11)]
 mod notify;
 #[cfg(wayland_x11)]
 mod overlay;
-#[cfg(any(wayland_x11, windows))]
+#[cfg(any(wayland_x11, windows, target_os = "macos"))]
 mod record;
 #[cfg(wayland_x11)]
 mod session;
@@ -44,7 +42,7 @@ use capture::Shot;
 #[cfg(wayland_x11)]
 use capture::{Backend, Capturer, Output};
 use config::Config;
-#[cfg(any(wayland_x11, windows))]
+#[cfg(any(wayland_x11, windows, target_os = "macos"))]
 use editor::Editor;
 #[cfg(wayland_x11)]
 use editor::Outcome;
@@ -124,7 +122,7 @@ PulseAudio or pipewire-pulse server.
 ";
 
 #[derive(Default)]
-// macOS doesn't record yet, so it reads fewer of these.
+// Windows and macOS read fewer of these than Wayland and X11.
 #[cfg_attr(not(wayland_x11), allow(dead_code))]
 struct Args {
     cmd: String,
@@ -139,7 +137,7 @@ struct Args {
     record_mode: Option<String>,
     fps: Option<u32>,
     stop: bool,
-    #[cfg(any(wayland_x11, windows))]
+    #[cfg(any(wayland_x11, windows, target_os = "macos"))]
     pause: Option<record::PauseCmd>,
     gif: bool,
     /// --audio[=SOURCES] or --no-audio ("none").
@@ -172,11 +170,11 @@ fn parse_args() -> Result<Args> {
             Long("no-audio") => a.audio = Some("none".into()),
             Long("separate-audio") => a.separate_audio = true,
             Long("stop") => a.stop = true,
-            #[cfg(any(wayland_x11, windows))]
+            #[cfg(any(wayland_x11, windows, target_os = "macos"))]
             Long("pause") => a.pause = Some(record::PauseCmd::Pause),
-            #[cfg(any(wayland_x11, windows))]
+            #[cfg(any(wayland_x11, windows, target_os = "macos"))]
             Long("resume") => a.pause = Some(record::PauseCmd::Resume),
-            #[cfg(any(wayland_x11, windows))]
+            #[cfg(any(wayland_x11, windows, target_os = "macos"))]
             Long("toggle-pause") => a.pause = Some(record::PauseCmd::Toggle),
             Short('h') | Long("help") => {
                 print!("{HELP}");
@@ -618,7 +616,7 @@ fn pick_recording_area(
 }
 
 /// Whether a recording starts out as a GIF: `--gif`, or `record_format`.
-#[cfg(any(wayland_x11, windows))]
+#[cfg(any(wayland_x11, windows, target_os = "macos"))]
 fn wants_gif(cfg: &Config, args: &Args) -> bool {
     args.gif || cfg.record_format == "gif"
 }
@@ -626,7 +624,7 @@ fn wants_gif(cfg: &Config, args: &Args) -> bool {
 /// The overlay's GIF toggle is remembered: when it was flipped, it becomes
 /// `record_format`, so the tray, `clipt record` and the next Print Screen
 /// follow it.
-#[cfg(any(wayland_x11, windows))]
+#[cfg(any(wayland_x11, windows, target_os = "macos"))]
 fn remember_gif(cfg: &Config, args: &Args, ed: &Editor) {
     if ed.gif != wants_gif(cfg, args)
         && let Err(e) = Config::set("record_format", if ed.gif { "gif" } else { "mp4" })
@@ -636,7 +634,7 @@ fn remember_gif(cfg: &Config, args: &Args, ed: &Editor) {
 }
 
 /// What a record-mode overlay picked: the window clicked, or the area.
-#[cfg(any(wayland_x11, windows))]
+#[cfg(any(wayland_x11, windows, target_os = "macos"))]
 fn recording_target(ed: &Editor) -> Result<record::Target> {
     let r = ed.final_rect().context("nothing selected")?;
     Ok(match ed.selected_window() {

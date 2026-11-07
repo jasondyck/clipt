@@ -29,7 +29,7 @@ rectangle, numbered counters, an arrow, text and the toolbar](docs/screenshot.pn
 | labwc | ext-image-copy-capture / wlr-screencopy | layer-shell | yes |
 | Hyprland, river, Wayfire, COSMIC | ext-image-copy-capture / wlr-screencopy | layer-shell | same protocols as above; no headless CI run |
 | X11: Xfce, Cinnamon, MATE, LXQt, i3, Openbox, … | GetImage (RandR/Xinerama monitors) | override-redirect windows, MIT-SHM | Xvfb + headless Xorg under Openbox, 1 and 3 monitors |
-| macOS 12+ (preview: screenshots only) | Core Graphics | borderless windows | builds and unit tests; see [macOS](#macos-preview) |
+| macOS 12+ (preview; recording 12.3+, its sound 13+) | Core Graphics; ScreenCaptureKit to record | borderless windows | builds and unit tests; see [macOS](#macos-preview) |
 | Windows 10 and 11 (early: screenshots only) | GDI | topmost windows | builds, unit tests and a capture; see [Windows](#windows-early) |
 
 The capture backend is picked automatically (override with `-b ext|wlr|kwin|mutter|portal|x11`
@@ -265,8 +265,9 @@ gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore \
 
 ### macOS (preview)
 
-Screenshots and the menu bar icon work on macOS (recording doesn't yet),
-and have been tried on one Mac so far. Each release has `clipt.app`
+Screenshots, recording (macOS 12.3+; the computer's sound from macOS 13)
+and the menu bar icon work on macOS, and have been tried on one Mac so far.
+Recording needs ffmpeg (`brew install ffmpeg`). Each release has `clipt.app`
 (`clipt-vX.Y.Z-macos-app.zip`; drag it to Applications, and macOS asks once
 to let clipt record the screen). Opening it puts clipt in the menu bar,
 with **⌘⇧2** to capture a region from anywhere (`hotkey` in the config;

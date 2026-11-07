@@ -6,6 +6,26 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+- macOS: recordings with sound, the computer's (macOS 13+, through
+  ScreenCaptureKit) and the microphone's, toggled in the overlay with S
+  and M or set by `--audio` and `record_audio`, with the same mixing,
+  balance and separate tracks as on Linux.
+- macOS: clicking a window in the screenshot overlay brings it to the
+  front. It's captured on its own, so the parts other windows covered show
+  and are saved.
+- macOS: recording (macOS 12.3+, and ffmpeg from
+  Homebrew). `clipt record` picks an area or window as on Linux; `record
+  screen`, `record window APP`, `-g`, `--stop` and `--pause` work too, and
+  the menu bar icon gains Record Region, Record Screen, Pause and Stop,
+  turning red while a recording runs. Frames come from ScreenCaptureKit; a
+  window is recorded on its own, even while covered. Apple's hardware
+  encoder (`h264_videotoolbox`) is used on Apple silicon, libx264 otherwise.
+
+### Fixed
+- With something selected, clicking a window outside it selected that
+  window's whole screen instead of the window.
+
 ## [0.10.0] - 2026-11-07
 
 ### Changed
