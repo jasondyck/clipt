@@ -128,11 +128,16 @@ check "a red frame surrounds the region while recording ($f)" 'echo "$f" | grep 
 i=$(grim -g "201,250 1x1" -t ppm - | magick - -format "%[pixel:p{0,0}]" info:)
 check "the frame stays outside the region ($i)" '! echo "$i" | grep -Eq "srgba?\(2[0-9][0-9],[0-9]{1,2},[0-9]{1,2}"'
 /clipt record --pause; t_pause=$(date +%s.%N); sleep 0.6
+# The recorder rewrites the pidfile when it reads the command from its
+# FIFO, which on a busy runner can come after the sleep; give it 3 s more.
+state() { sed -n 2p $XDG_RUNTIME_DIR/clipt-record.pid; }
+for _ in $(seq 30); do [ "$(state)" = paused ] && break; sleep 0.1; done
 check "the pidfile says paused" '[ "$(sed -n 2p $XDG_RUNTIME_DIR/clipt-record.pid)" = paused ]'
 f=$(grim -g "198,250 1x1" -t ppm - | magick - -format "%[pixel:p{0,0}]" info:)
 check "the frame turns amber while paused ($f)" 'echo "$f" | grep -Eq "srgba?\(2[0-9][0-9],1[2-9][0-9],[0-9]{1,2}"'
 sleep 2
 /clipt record --toggle-pause; t_resume=$(date +%s.%N); sleep 1
+for _ in $(seq 30); do [ "$(state)" = recording ] && break; sleep 0.1; done
 check "the pidfile says recording again" '[ "$(sed -n 2p $XDG_RUNTIME_DIR/clipt-record.pid)" = recording ]'
 t_stop=$(date +%s.%N); /clipt record --stop; wait $rp
 d=$(dur /tmp/rec-p.mp4)
