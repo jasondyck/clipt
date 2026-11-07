@@ -245,7 +245,7 @@ pub fn feed(opts: &Options, interval: Duration) -> Result<Feed> {
     let parts = Sendable((filter, config));
     let stream = Box::new(move |sink: Sink| -> Result<()> {
         let (filter, config) = parts.into_inner();
-        run_stream(&filter, &config, sink)
+        run_stream(&filter, &config, system_sound, sink)
     });
     // The stream's size is fixed at start, so a window doesn't go through
     // the camera. A red frame needs the main thread, which is busy writing.
@@ -272,18 +272,24 @@ fn scale(out: &crate::capture::Output) -> f64 {
     if out.native.0 > 0 && out.width > 0 { out.native.0 as f64 / out.width as f64 } else { 1.0 }
 }
 
-/// Start the stream and keep it running until the writer stops or
-/// ScreenCaptureKit does.
-fn run_stream(filter: &SCContentFilter, config: &SCStreamConfiguration, sink: Sink) -> Result<()> {
+/// Start the stream, with the computer's sound when `system_sound`, and
+/// keep it running until the writer stops or ScreenCaptureKit does.
+fn run_stream(filter: &SCContentFilter, config: &SCStreamConfiguration, system_sound: bool, sink: Sink) -> Result<()> {
     let (tx, rx) = mpsc::channel();
     let output = Output::new(sink, tx);
     let delegate = ProtocolObject::from_ref(&*output);
     let stream = unsafe { SCStream::initWithFilter_configuration_delegate(SCStream::alloc(), filter, config, Some(delegate)) };
     let queue = DispatchQueue::new("io.github.jasondyck.clipt.record", None);
-    unsafe {
-        stream.addStreamOutput_type_sampleHandlerQueue_error(ProtocolObject::from_ref(&*output), SCStreamOutputType::Screen, Some(&queue))
+    let add = |kind| {
+        unsafe { stream.addStreamOutput_type_sampleHandlerQueue_error(ProtocolObject::from_ref(&*output), kind, Some(&queue)) }
+            .map_err(|e| anyhow!("ScreenCaptureKit: {}", e.localizedDescription()))
+    };
+    add(SCStreamOutputType::Screen)?;
+    // capturesAudio alone doesn't deliver the sound: the stream hands each
+    // kind of sample only to outputs added for it, so sound needs one too.
+    if system_sound {
+        add(SCStreamOutputType::Audio)?;
     }
-    .map_err(|e| anyhow!("ScreenCaptureKit: {}", e.localizedDescription()))?;
 
     if let Some(e) = call(|done| unsafe { stream.startCaptureWithCompletionHandler(Some(done)) })? {
         bail!("ScreenCaptureKit didn't start recording: {e}");
