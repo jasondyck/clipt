@@ -2,8 +2,9 @@
 
 Status: phases 0–3 done (system sound; several sources, volumes, separate
 tracks, devices; overlay and tray controls, the Flatpak), 2026-11-01. Phase
-4 (smart balance) under way: the ffmpeg watchdog, `duck` and `smart`'s
-clarity report done (2026-11-02); the at-stop re-mix next.
+4 (smart balance) done 2026-11-05: the ffmpeg watchdog, `duck`, `smart`'s
+clarity report and at-stop re-mix, and `--audio-loudness`. The dynamic EQ
+was decided against (see phase 4's list).
 
 ## Goal
 
@@ -147,8 +148,12 @@ construction. What can still go wrong, and the answer to each:
   dropped: the test's own playback latency, ffmpeg's PulseAudio output and
   PulseAudio's slow start, is unknown, so it would mostly measure itself.
   The spike measured stamping against a known reference instead.)
+  Phase 4 adds ducking and smart (two tones a fixed dip apart, pink noise
+  for a re-mix that raises the clarity), and `--audio-loudness` (loudnorm
+  before and after: a −27 LUFS mix comes out at −14).
 - Flatpak: the same tone test through `clipt-launch` against headless
-  Sway, as done for video.
+  Sway, as done for video. For `--audio-loudness` so far only its ffmpeg
+  commands, inside the Flatpak (see the loudness notes in phase 4).
 - By hand: 30 minutes with a video playing on Plasma, then the sync
   checked at the end; then once on GNOME.
 
@@ -194,17 +199,16 @@ send. Tested: Sway e2e (S in the overlay turns sound on, and off when the
 setting has it on), unit tests for the toggles and the tray checkbox, the
 toolbar rendered and looked at, and a tone recorded through the Flatpak.
 
-**4. Smart balance (under way).** Keeping a voice intelligible over the
+**4. Smart balance (done 2026-11-05).** Keeping a voice intelligible over the
 desktop's sound, from the voice-over-music rules below. Its spike is done.
-Order of work it suggests:
-a watchdog on ffmpeg finishing (protects every recording, not just this
-phase); `duck` (voice clean-up with level matching, sidechain ducking);
-then `smart` (voice gate, leakage check, SII report, at-stop re-mix for
-loud beds); the dynamic EQ last, if at all. The background classifier
-(YAMNet) isn't worth building: the 20 dB default stays (see the spike
-list).
+The order it suggested: a watchdog on ffmpeg finishing (protects every
+recording, not just this phase); `duck` (voice clean-up with level matching,
+sidechain ducking); then `smart` (voice gate, leakage check, SII report,
+at-stop re-mix for loud beds); the dynamic EQ last, if at all (decided
+against, see below). The background classifier (YAMNet) isn't worth
+building: the 20 dB default stays (see the spike list).
 
-Done so far:
+Done:
 - **The watchdog** (#46): after 30 s without ffmpeg finishing, clipt kills
   it and reports the partial file.
 - **`duck`** (#48): `--audio-balance=duck` or `record_audio_balance =
@@ -260,6 +264,40 @@ Done so far:
   heard, and better as the rest is turned down. The spike's numbers are
   unchanged by it. Unit test: a voice under pink noise 10 dB louder
   measures 0.41 and asks for 10.5 dB; the re-mix measures 0.76.
+- **The dynamic EQ** (the table's third row): decided against. The spike
+  found it adds +0.03 to +0.09, only worth it for the loudest beds, and
+  only those within about 5 dB of the voice need the re-mix at all (which
+  reaches the target in one pass without it). It would also be the most
+  fragile graph to build (`acrossover` into `sidechaincompress` and back),
+  and the one that hung ffmpeg at end of stream (which the watchdog now
+  covers). So `smart` is clean-up, ducking and the re-mix; the dynamic EQ
+  stays out unless real recordings show beds it would have saved.
+- **The loudness** (`--audio-loudness`, `record_audio_loudness`): the
+  table's last row. At the stop, after any re-mix, a `loudnorm` pass
+  measures the mix (`print_format=json`) and `volume` applies one fixed
+  gain to −14 LUFS, capped so the true peak stays at or under −1 dBTP: a
+  peaky mix ends up quieter than −14 rather than compressed, and the stop
+  message says so. Not `loudnorm`'s own second pass: even with
+  `linear=true` it falls back to its dynamic mode, silently, when the
+  measured LRA is over its target (7 LU by default) or the gain would put
+  a peak over the limit; a unit test steps a tone through 0, −8 and
+  −16 dB (LRA about 10) and checks the 16 dB between them survives, where
+  the old pass made it 11. The video and any separate tracks are copied,
+  the mix alone encoded again. A mix already within half a LU with no
+  peak over the limit is left alone rather than re-encoded, and so is one
+  with no loudness at all (silence). The fixed gain, not a dynamic one, is
+  what keeps a quiet voice from being pumped up between sentences. The
+  measurement's null output is encoded as `pcm_f32le`, which the Flatpak's
+  ffmpeg has (its default, `pcm_s16le`, it doesn't). e2e:
+  a −27 LUFS tone mix comes out at −13.9 on Sway, GNOME and X11, with any
+  separate track copied at its level and codec. The Flatpak's filtered
+  ffmpeg needed the AAC decoder (the mix is read back) and `loudnorm`.
+  Its ffmpeg was run by hand on a built Flatpak (2026-11-07): the
+  measurement without an encoder named fails there ("Encoder not found",
+  no `pcm_s16le`) and with `pcm_f32le` reads the stepped tone (−34.7
+  LUFS, LRA 10.3); the gain step then brings it to −14.0 with its 15.9 dB
+  swing unchanged. A whole recording in the Flatpak, which on Plasma goes
+  through the ScreenCast portal's dialog, is still to be run.
 
 ## Smart balance (phase 4)
 
@@ -271,10 +309,10 @@ are mixed, which is what this needs. A setting such as
 |---|---|---|---|
 | Voice clean-up: high-pass ~80 Hz, ~3:1 compression for 4–8 dB of gain reduction, de-essing, 2–4 kHz presence boost | ffmpeg `highpass`, `acompressor`, `deesser`, `equalizer` on the voice source | While recording | `duck`, `smart` |
 | Ducking: the other sources dip while the voice is present, attack 10–50 ms, release 200–500 ms | `sidechaincompress` on each other source, keyed by a split of the voice | While recording | `duck`, `smart` |
-| Dynamic EQ: 3–6 dB cut at 1–4 kHz in the other sources only while the voice is present | `acrossover` splits them at 1 and 4 kHz; only the middle band goes through `sidechaincompress`; the bands are summed again | While recording | `smart` |
+| Dynamic EQ: 3–6 dB cut at 1–4 kHz in the other sources only while the voice is present | `acrossover` splits them at 1 and 4 kHz; only the middle band goes through `sidechaincompress`; the bands are summed again | While recording | Not built: decided against (see the phase 4 list) |
 | Measuring intelligibility: Speech Intelligibility Index (ANSI S3.5, octave bands) | In clipt, on the PCM chunks it already handles: octave-band filters at 250 Hz–8 kHz, levels per ~400 ms frame for the voice and for the rest, SII = Σ Iᵢ·clamp((SNRᵢ + 15)/30, 0, 1) with weights 0.062, 0.167, 0.237, 0.265, 0.214, 0.055. Judged on the 10th-percentile frame | Reported at stop ("speech clarity 0.84, good") | `smart` |
 | Fixing it | If the 10th-percentile SII is under 0.75 (or 0.90 for a safe margin), mix again from the separate tracks with the other sources lower until it isn't; sound is re-encoded, video copied | At stop | `smart` |
-| Loudness: −14 LUFS integrated, −1 dBTP | `loudnorm`, two passes, on the final mix, video copied | At stop | opt-in setting |
+| Loudness: −14 LUFS integrated, −1 dBTP | `loudnorm` measures the final mix, `volume` applies one peak-limited gain, video copied | At stop | `record_audio_loudness` |
 
 To settle first:
 - **Which source is the voice.** `mic` by default; a named device would
