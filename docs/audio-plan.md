@@ -277,7 +277,11 @@ Done:
   measures the mix (`print_format=json`) and `volume` applies one fixed
   gain to −14 LUFS, capped so the true peak stays at or under −1 dBTP: a
   peaky mix ends up quieter than −14 rather than compressed, and the stop
-  message says so. Not `loudnorm`'s own second pass: even with
+  message says so. AAC can raise a transient's peak (clicks capped at −1
+  went in and came out at −0.2), so the encoded mix is measured as well,
+  and encoded again with that much less gain, up to three times, until
+  its true peak is under the limit. Every ffmpeg step runs under the same
+  watchdog as the re-mix, so a hung one can't keep the recording's lock. Not `loudnorm`'s own second pass: even with
   `linear=true` it falls back to its dynamic mode, silently, when the
   measured LRA is over its target (7 LU by default) or the gain would put
   a peak over the limit; a unit test steps a tone through 0, −8 and

@@ -767,13 +767,10 @@ pub struct Loudness {
     pub gain: f64,
     /// The peak limit held the gain short of the target.
     pub peak_limited: bool,
-}
-
-impl Loudness {
-    /// The loudness after, in LUFS: a fixed gain moves it by exactly that.
-    pub fn now(&self) -> f64 {
-        self.was + self.gain
-    }
+    /// The loudness after, in LUFS, and the true peak, in dBTP: as
+    /// expected from the gain until the encoded mix is measured.
+    pub now: f64,
+    pub peak: f64,
 }
 
 /// The one gain that brings a mix measured `m` to the target, short of it
@@ -788,8 +785,13 @@ fn loudness_gain(m: &Measured) -> Option<Loudness> {
     let want = TARGET_LUFS - m.i;
     // A true peak of -inf (no samples) leaves no limit.
     let room = if m.tp.is_finite() { PEAK_DBTP - m.tp } else { want };
-    Some(Loudness { was: m.i, gain: want.min(room), peak_limited: room < want })
+    let gain = want.min(room);
+    Some(Loudness { was: m.i, gain, peak_limited: room < want, now: m.i + gain, peak: m.tp + gain })
 }
+
+/// How many times `loudness` encodes the mix, lowering the gain each time
+/// AAC put a peak back over the limit, before giving up.
+const PEAK_TRIES: usize = 3;
 
 /// Normalize the finished mix to -14 LUFS, its true peak at most -1 dBTP
 /// (EBU R128, what streaming services normalize to): `loudnorm` measures
@@ -798,34 +800,60 @@ fn loudness_gain(m: &Measured) -> Option<Loudness> {
 /// `linear=true` it falls back to its dynamic mode when the mix's range is
 /// over its LRA target or the gain would put a peak over the limit, and
 /// says nothing. A mix whose peaks won't allow the full gain is left
-/// quieter than the target instead. The video and any separate tracks are
-/// copied; the mix alone is encoded again. `None` when there was nothing
-/// to do (see `loudness_gain`).
+/// quieter than the target instead. AAC can make a transient's peak higher
+/// than it went in, so the encoded mix is measured too, and encoded again
+/// with less gain while its peak is over the limit. The video and any
+/// separate tracks are copied; the mix alone is encoded again. `None` when
+/// there was nothing to do (see `loudness_gain`).
 pub fn loudness(video: &Path, duration: Duration) -> Result<Option<Loudness>> {
     // Sound only, so much faster than real time; this is generous.
     let limit = Duration::from_secs(60) + duration / 2;
-    let Some(l) = loudness_gain(&measure_loudness(video, limit)?) else {
+    let Some(mut l) = loudness_gain(&measure_loudness(video, limit)?) else {
         return Ok(None);
     };
     let name = video.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let out = video.with_file_name(format!(".{name}.clipt-loud.{}", video.extension().and_then(|e| e.to_str()).unwrap_or("mp4")));
     let mov = matches!(video.extension().and_then(|e| e.to_str()), Some("mp4" | "mov"));
-    let apply = format!("volume={:.3}dB", l.gain);
-    let mut cmd = ffmpeg();
-    cmd.args(["-hide_banner", "-loglevel", "error", "-y", "-i"]).arg(video);
-    // The mix is the first sound stream: it alone is filtered and encoded
-    // again, so separate tracks stay as recorded. The generic `-c:a copy`
-    // comes first: an option that matches a stream overrides an earlier
-    // one, specific or not.
-    cmd.args(["-map", "0", "-c:v", "copy", "-c:a", "copy"]);
-    cmd.args(["-filter:a:0", &apply, "-c:a:0", "aac", "-b:a:0", "160k"]);
-    if mov {
-        cmd.args(["-movflags", "+faststart"]);
+    let attempt = |l: &mut Loudness| -> Result<bool> {
+        let mut cmd = ffmpeg();
+        cmd.args(["-hide_banner", "-loglevel", "error", "-y", "-i"]).arg(video);
+        // The mix is the first sound stream: it alone is filtered and encoded
+        // again, so separate tracks stay as recorded. The generic `-c:a copy`
+        // comes first: an option that matches a stream overrides an earlier
+        // one, specific or not.
+        cmd.args(["-map", "0", "-c:v", "copy", "-c:a", "copy"]);
+        cmd.args(["-filter:a:0", &format!("volume={:.3}dB", l.gain), "-c:a:0", "aac", "-b:a:0", "160k"]);
+        if mov {
+            cmd.args(["-movflags", "+faststart"]);
+        }
+        cmd.arg(&out);
+        run_bounded(cmd, limit, "normalizing the mix's loudness")?;
+        let m = measure_loudness(&out, limit)?;
+        (l.now, l.peak) = (m.i, m.tp);
+        Ok(m.tp <= PEAK_DBTP)
+    };
+    let mut done = false;
+    for _ in 0..PEAK_TRIES {
+        match attempt(&mut l) {
+            Ok(true) => {
+                done = true;
+                break;
+            }
+            // Over by this much: take it off, and a little more, since the
+            // encoder's overshoot moves with the level too.
+            Ok(false) => {
+                l.gain -= l.peak - PEAK_DBTP + 0.1;
+                l.peak_limited = true;
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&out);
+                return Err(e);
+            }
+        }
     }
-    cmd.arg(&out);
-    if let Err(e) = run_bounded(cmd, limit, "normalizing the mix's loudness") {
+    if !done {
         let _ = std::fs::remove_file(&out);
-        return Err(e);
+        bail!("the encoded mix's true peak stayed over {PEAK_DBTP} dBTP ({:.1}) after {PEAK_TRIES} tries", l.peak);
     }
     std::fs::rename(&out, video).context("replacing the recording with the normalized one")?;
     Ok(Some(l))
@@ -1414,7 +1442,38 @@ mod tests {
         assert!(l.gain > 1.0 && !l.peak_limited, "raised, with headroom ({l:?})");
         let after = swing();
         assert!((after - before).abs() < 0.5, "the swing kept ({before:.1} -> {after:.1} dB)");
-        assert!((measure_loudness(&video, Duration::from_secs(30)).unwrap().i - l.now()).abs() < 0.5, "at the loudness it said ({l:?})");
+        assert!((measure_loudness(&video, Duration::from_secs(30)).unwrap().i - l.now).abs() < 0.1, "at the loudness it said ({l:?})");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Clicks over a quiet tone: capped at -1 dBTP before encoding, AAC
+    /// brings them out at about -0.2. The encoded mix is measured, and the
+    /// gain lowered until it is under the limit.
+    #[test]
+    fn loudness_keeps_the_encoded_peak_under_the_limit() {
+        let _ffmpeg = FFMPEG.lock().unwrap_or_else(|e| e.into_inner());
+        if Command::new("ffmpeg").arg("-version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_err() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("clipt-loud-peak-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let video = dir.join("out.mkv");
+        let made = Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "lavfi", "-i", "color=c=gray:s=64x64:d=8"])
+            .args(["-f", "lavfi", "-i", "aevalsrc=if(lt(mod(n\\,4800)\\,3)\\,0.6\\,0)+0.02*sin(2*PI*440*t):s=48000:d=8"])
+            .args(["-map", "0:v", "-map", "1:a", "-ac", "2", "-c:v", "rawvideo", "-c:a", "pcm_s16le"])
+            .arg(&video)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let before = measure_loudness(&video, Duration::from_secs(30)).unwrap();
+        let l = loudness(&video, Duration::from_secs(8)).unwrap().unwrap();
+        let after = measure_loudness(&video, Duration::from_secs(30)).unwrap();
+        assert!(l.peak_limited && l.now < -20.0, "the clicks hold it short of -14 ({l:?})");
+        assert!(after.tp <= PEAK_DBTP, "the encoded peak is under the limit ({:.2} dBTP; {l:?})", after.tp);
+        // Less gain than the pre-encode cap allowed: AAC's overshoot came off.
+        assert!(l.gain < PEAK_DBTP - before.tp, "the gain was lowered for the encoder ({l:?}, peak before {:.2})", before.tp);
+        assert!((after.i - l.now).abs() < 0.1 && (after.tp - l.peak).abs() < 0.1, "it reports what it made ({l:?})");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1456,14 +1515,15 @@ mod tests {
     #[test]
     fn loudness_gain_is_fixed_and_peak_limited() {
         let g = |i, tp| loudness_gain(&Measured { i, tp });
+        let plan = |l: Option<Loudness>| l.map(|l| (l.gain, l.peak_limited, l.now, l.peak));
         // Quiet with headroom: raised all the way.
-        assert_eq!(g(-27.0, -15.0), Some(Loudness { was: -27.0, gain: 13.0, peak_limited: false }));
+        assert_eq!(plan(g(-27.0, -15.0)), Some((13.0, false, -14.0, -2.0)));
         // Too loud: lowered, whatever the peak.
-        assert_eq!(g(-8.0, 0.5), Some(Loudness { was: -8.0, gain: -6.0, peak_limited: false }));
+        assert_eq!(plan(g(-8.0, 0.5)), Some((-6.0, false, -14.0, -5.5)));
         // Quiet but peaky (a wide range: speech with a door slam): raised
         // only until the peak reaches -1 dBTP, short of -14 LUFS.
         let l = g(-24.0, -5.0).unwrap();
-        assert_eq!((l.gain, l.peak_limited, l.now()), (4.0, true, -20.0));
+        assert_eq!((l.gain, l.peak_limited, l.now, l.peak), (4.0, true, -20.0, -1.0));
         // Near the target, peak over the limit: lowered for the peak.
         let l = g(-14.2, -0.4).unwrap();
         assert!((l.gain + 0.6).abs() < 1e-9 && l.peak_limited, "{l:?}");

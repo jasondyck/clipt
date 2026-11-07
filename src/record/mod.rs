@@ -572,8 +572,8 @@ fn write_loop(
     if loudness && sources > 0 {
         match encode::loudness(path, Duration::from_millis(end)) {
             Ok(Some(l)) if l.peak_limited => {
-                eprintln!("clipt: the mix {:+.1} dB to {:.1} LUFS (was {:.1}); its peaks keep it short of -14", l.gain, l.now(), l.was);
-                summary.push_str(&format!(", {:.0} LUFS", l.now()));
+                eprintln!("clipt: the mix {:+.1} dB to {:.1} LUFS (was {:.1}); its peaks keep it short of -14", l.gain, l.now, l.was);
+                summary.push_str(&format!(", {:.0} LUFS", l.now));
             }
             Ok(Some(l)) => {
                 eprintln!("clipt: the mix normalized to -14 LUFS ({:+.1} dB, was {:.1} LUFS)", l.gain, l.was);
