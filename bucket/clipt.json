@@ -1,5 +1,5 @@
 {
-    "version": "0.10.0",
+    "version": "0.11.0",
     "description": "Screenshots and screen recordings: select, annotate, copy or save",
     "homepage": "https://github.com/jasondyck/clipt",
     "license": "MIT|Apache-2.0",
@@ -9,9 +9,9 @@
     },
     "architecture": {
         "64bit": {
-            "url": "https://github.com/jasondyck/clipt/releases/download/v0.10.0/clipt-v0.10.0-x86_64-windows.zip",
-            "hash": "56452d7dd6eb6dcf518b6472576481958f2491704edae944128ffb0afc668e86",
-            "extract_dir": "clipt-v0.10.0-x86_64-windows"
+            "url": "https://github.com/jasondyck/clipt/releases/download/v0.11.0/clipt-v0.11.0-x86_64-windows.zip",
+            "hash": "5e96692b1db0ba00aded154772fb585f7a3bda099646558759d3518a59e67f08",
+            "extract_dir": "clipt-v0.11.0-x86_64-windows"
         }
     },
     "bin": "clipt.exe",
