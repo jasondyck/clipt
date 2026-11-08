@@ -6,6 +6,8 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-08
+
 ### Added
 - `clipt record --audio-loudness` (or `record_audio_loudness`) normalizes
   the finished recording's mix to -14 LUFS, -1 dBTP true peak, the
