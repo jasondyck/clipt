@@ -213,7 +213,7 @@ jobs:
           awk -v v="$v" '/^## \[/{p = index($0, "[" v "]") > 0; next} p' CHANGELOG.md > notes.md
           sha256sum clipt-*.tar.gz clipt-*-macos-app.zip clipt-*-windows.zip clipt*.deb clipt*.rpm > SHA256SUMS
           case "$TAG" in *-*) echo "PRERELEASE=true" >> "$GITHUB_ENV" ;; *) echo "PRERELEASE=false" >> "$GITHUB_ENV" ;; esac
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           name: clipt ${{ needs.prepare.outputs.tag }}
