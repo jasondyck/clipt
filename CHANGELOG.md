@@ -6,6 +6,10 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Headless Criterion benchmarks for capture pixel conversion, image transforms
+  and PNG encoding/decoding with deterministic 1080p and 4K fixtures.
+
 ## [0.11.0] - 2026-11-08
 
 ### Added
