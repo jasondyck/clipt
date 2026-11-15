@@ -40,6 +40,18 @@ by the same scripted input (needs Docker).
 
 ## Benchmarks
 
+The headless Criterion suite measures capture pixel conversion, image transforms
+and PNG encoding/decoding on deterministic 1080p and 4K fixtures. See
+[coverage and baseline notes](docs/benchmarks.md) for timing boundaries and limits.
+
+```
+cargo bench --locked --bench image -- --noplot --save-baseline initial
+cargo bench --locked --bench image -- --noplot --baseline initial
+cargo bench --locked --bench image -- 'png/encode/ui_rgb' --noplot
+```
+
+The older manual editor and real-image PNG probes remain available:
+
 ```
 cargo test --release bench_4k -- --ignored --nocapture
 CLIPT_BENCH_PNGS=a.png,b.png cargo test --release bench_png -- --ignored --nocapture
