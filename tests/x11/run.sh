@@ -56,7 +56,8 @@ BBOX=$(/clipt list | grep -v backends | awk '{split($2,a,/[x+]/); r=a[3]+a[1]; b
 /clipt full -o /tmp/full.png; ref ${BBOX}+0+0 /tmp/ref.png
 check "full is the monitors' bounding box ($BBOX, got $(size /tmp/full.png))" '[ "$(size /tmp/full.png)" = "$BBOX" ]'
 for geo in $(/clipt list | grep -v backends | awk '{print $2}'); do
-  d=$(magick compare -metric AE <(magick /tmp/full.png -crop $geo +repage png:-) <(magick /tmp/ref.png -crop $geo +repage png:-) null: 2>&1 | cut -d" " -f1)
+  magick /tmp/full.png -crop $geo +repage /tmp/cmp-a.png; magick /tmp/ref.png -crop $geo +repage /tmp/cmp-b.png
+  d=$(magick compare -metric AE /tmp/cmp-a.png /tmp/cmp-b.png null: 2>&1 | cut -d" " -f1)
   check "full matches import inside monitor $geo (AE=$d)" '[ "$d" = 0 ]'
 done
 for o in $(/clipt list | grep -v backends | cut -f1); do
@@ -84,7 +85,8 @@ check "it lasts about 3 s (${d:-none})" 'awk "BEGIN{exit !(\"$d\"+0 > 2.3 && \"$
 W1=${G1%%x*}; H1=${G1#*x}; H1=${H1%%+*}
 check "it's $O1 at its size ($(even $W1 $H1), got $(vsize /tmp/rec.mp4))" '[ "$(vsize /tmp/rec.mp4)" = "$(even $W1 $H1)" ]'
 ffmpeg -v error -y -i /tmp/rec.mp4 -frames:v 1 /tmp/rec-first.png
-d=$(magick compare -fuzz 12% -metric AE /tmp/rec-first.png <(magick /tmp/rec-ref.png -alpha off png:-) null: 2>&1 | cut -d" " -f1)
+magick /tmp/rec-ref.png -alpha off /tmp/cmp-ref.png
+d=$(magick compare -fuzz 12% -metric AE /tmp/rec-first.png /tmp/cmp-ref.png null: 2>&1 | cut -d" " -f1)
 check "the first frame matches import (AE=$d)" '[ "${d%.*}" -lt $((W1 * H1 / 50)) ]'
 ffmpeg -v error -y -sseof -0.2 -i /tmp/rec.mp4 -frames:v 1 /tmp/rec-last.png
 p=$(px /tmp/rec-last.png "$((W1 / 2)),$((H1 / 2))")
