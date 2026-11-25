@@ -55,7 +55,8 @@ for b in ext wlr; do
   check "full -b $b size matches grim ($(size /tmp/grim.png))" '[ "$(size /tmp/full-$b.png)" = "$(size /tmp/grim.png)" ]'
   # Mixed-DPI stitching upscales the 1x output: filters differ slightly, and
   # grim leaves semi-transparent edge pixels there, so compare colour only.
-  d=$(magick compare -fuzz 8% -metric AE <(magick /tmp/full-$b.png -alpha off png:-) <(magick /tmp/grim.png -alpha off png:-) null: 2>&1 | cut -d" " -f1)
+  magick /tmp/full-$b.png -alpha off /tmp/cmp-a.png; magick /tmp/grim.png -alpha off /tmp/cmp-b.png
+  d=$(magick compare -fuzz 8% -metric AE /tmp/cmp-a.png /tmp/cmp-b.png null: 2>&1 | cut -d" " -f1)
   check "full -b $b pixels match grim (AE=$d at 8% fuzz)" '[ "${d%.*}" -lt 100 ]'
   [ -d /out ] && cp /tmp/full-$b.png /out/clipt-$b.png && cp /tmp/grim.png /out/grim.png
   CLIPT_DEBUG=1 /clipt full -b $b -o /dev/null 2>&1 | grep -q "captured with ${b^}" && ok "-b $b really used $b" || bad "-b $b used another protocol"
@@ -83,7 +84,8 @@ for b in ext wlr; do
   check "record -b $b lasts about 3 s (${d:-none})" 'awk "BEGIN{exit !(\"$d\"+0 > 2.5 && \"$d\"+0 < 3.5)}"'
   check "record -b $b is the output's native size ($(even $NW $NH), got $(vsize /tmp/rec-$b.mp4))" '[ "$(vsize /tmp/rec-$b.mp4)" = "$(even $NW $NH)" ]'
   ffmpeg -v error -y -i /tmp/rec-$b.mp4 -frames:v 1 /tmp/rec-first.png   # VFR: frame 1 lasts until the change
-  d=$(magick compare -fuzz 12% -metric AE /tmp/rec-first.png <(magick /tmp/rec-ref.png -alpha off png:-) null: 2>&1 | cut -d" " -f1)
+  magick /tmp/rec-ref.png -alpha off /tmp/cmp-ref.png
+  d=$(magick compare -fuzz 12% -metric AE /tmp/rec-first.png /tmp/cmp-ref.png null: 2>&1 | cut -d" " -f1)
   check "record -b $b: first frame matches grim (AE=$d of $((NW*NH)) at 12% fuzz)" '[ "${d%.*}" -lt $((NW*NH/50)) ]'
   frame /tmp/rec-$b.mp4 -0.2 /tmp/rec-last.png
   p=$(px /tmp/rec-last.png "$((NW/2)),$((NH/2))")
@@ -182,7 +184,8 @@ drag 100 100 400 300
 act "key Return"; sleep 0.8
 wl-paste -t image/png > /tmp/sel.png 2>/dev/null
 check "selection copied at native size (want $(logical 300 200), got $(size /tmp/sel.png))" '[ "$(size /tmp/sel.png)" = "$(logical 300 200)" ]'
-d=$(magick compare -metric AE /tmp/sel.png <(grim -g "100,100 300x200" -) null: 2>&1 | cut -d" " -f1)
+grim -g "100,100 300x200" /tmp/cmp-b.png
+d=$(magick compare -metric AE /tmp/sel.png /tmp/cmp-b.png null: 2>&1 | cut -d" " -f1)
 check "copied pixels match grim of the same region (AE=$d)" '[ "${d%.*}" -lt 100 ]'
 pid=$(pgrep -f "^/clipt gui" | head -1)
 [ -n "$pid" ] && echo "  gui clipboard daemon RSS: $(grep VmRSS /proc/$pid/status | awk '{print $2}') kB"
@@ -256,7 +259,8 @@ act "key Return"; sleep 2
 check "Enter in the overlay starts recording" '[ -s $XDG_RUNTIME_DIR/clipt-record.pid ]'
 /clipt record --stop 2>/dev/null; wait $rp
 check "the selection was recorded at native size ($(even $(logical 300 200 | tr x " ")), got $(vsize /tmp/rec-ov.mp4))" '[ "$(vsize /tmp/rec-ov.mp4)" = "$(even $(logical 300 200 | tr x " "))" ]'
-d=$(magick compare -fuzz 12% -metric AE <(ffmpeg -v error -i /tmp/rec-ov.mp4 -frames:v 1 -vf "crop=$(logical 300 200 | tr x :):0:0" -f image2pipe -vcodec png -) <(grim -g "100,100 300x200" -) null: 2>&1 | cut -d" " -f1)
+ffmpeg -v error -y -i /tmp/rec-ov.mp4 -frames:v 1 -vf "crop=$(logical 300 200 | tr x :):0:0" -update 1 /tmp/cmp-a.png; grim -g "100,100 300x200" /tmp/cmp-b.png
+d=$(magick compare -fuzz 12% -metric AE /tmp/cmp-a.png /tmp/cmp-b.png null: 2>&1 | cut -d" " -f1)
 check "the recording shows the desktop, not the overlay (AE=$d)" '[ "${d%.*}" -lt 2000 ]'
 /clipt record -o /tmp/rec-esc.mp4 2>/dev/null & rp=$!; sleep 1
 act "key Escape"; wait $rp
@@ -353,7 +357,8 @@ if [ "$LAYOUT" = triple ]; then
   act "key Return"; sleep 0.8
   wl-paste -t image/png > /tmp/t2.png 2>/dev/null
   check "drag on the 1.25x output copies 500x375 (got $(size /tmp/t2.png))" '[ "$(size /tmp/t2.png)" = 500x375 ]'
-  d=$(magick compare -metric AE /tmp/t2.png <(grim -g "2100,400 400x300" -) null: 2>&1 | cut -d" " -f1)
+  grim -g "2100,400 400x300" /tmp/cmp-b.png
+  d=$(magick compare -metric AE /tmp/t2.png /tmp/cmp-b.png null: 2>&1 | cut -d" " -f1)
   check "pixels match grim for that region (AE=$d)" '[ "${d%.*}" -lt 100 ]'
 
   # HEADLESS-3 is portrait: logical 1024x1280 at y 1080

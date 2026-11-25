@@ -58,7 +58,8 @@ check "it lasts about 3 s (${d:-none})" 'awk "BEGIN{exit !(\"$d\"+0 > 2.0 && \"$
 want=1280x720
 check "it's the first monitor at native size ($want, got $(vsize /tmp/rec.mp4))" '[ "$(vsize /tmp/rec.mp4)" = "$want" ]'
 ffmpeg -v error -y -i /tmp/rec.mp4 -frames:v 1 /tmp/rec-first.png
-d=$(magick compare -fuzz 12% -metric AE /tmp/rec-first.png <(magick /tmp/rec-ref.png -alpha off png:-) null: 2>&1 | cut -d" " -f1)
+magick /tmp/rec-ref.png -alpha off /tmp/cmp-ref.png
+d=$(magick compare -fuzz 12% -metric AE /tmp/rec-first.png /tmp/cmp-ref.png null: 2>&1 | cut -d" " -f1)
 check "the first frame matches a screenshot (AE=$d)" '[ "${d%.*}" -lt 20000 ]'
 if [ -n "${tw:-}" ]; then
   ffmpeg -v error -y -sseof -0.2 -i /tmp/rec.mp4 -frames:v 1 /tmp/rec-last.png
@@ -137,7 +138,8 @@ if [ "$LAYOUT" = dual ]; then
   clipt screen Meta-0 -o /tmp/d0.png; clipt screen Meta-1 -o /tmp/d1.png
   check "1x monitor at its native 1280x720 (got $(size /tmp/d0.png))" '[ "$(size /tmp/d0.png)" = 1280x720 ]'
   check "2x monitor at its native 1920x1080 (got $(size /tmp/d1.png))" '[ "$(size /tmp/d1.png)" = 1920x1080 ]'
-  d=$(magick compare -metric AE <(magick /tmp/df.png -crop 1920x1080+2560+0 png:-) /tmp/d1.png null: 2>&1 | cut -d" " -f1)
+  magick /tmp/df.png -crop 1920x1080+2560+0 /tmp/cmp-a.png
+  d=$(magick compare -metric AE /tmp/cmp-a.png /tmp/d1.png null: 2>&1 | cut -d" " -f1)
   check "2x slice is pixel-identical to its part of the full image (AE=$d)" '[ "${d%.*}" -lt 100 ]'
 fi
 
