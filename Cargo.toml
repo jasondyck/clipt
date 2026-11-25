@@ -100,6 +100,13 @@ strip = true
 panic = "abort"
 opt-level = 3
 
+[dev-dependencies]
+criterion = { version = "0.7.0", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "image"
+harness = false
+
 # For examples/vinput.rs and testwin.rs, the Linux end-to-end tests' input
 # driver and test window (x11grab.rs needs only x11rb).
 [target.'cfg(all(unix, not(target_os = "macos")))'.dev-dependencies]
