@@ -101,7 +101,7 @@ panic = "abort"
 opt-level = 3
 
 [dev-dependencies]
-criterion = { version = "0.7.0", default-features = false, features = ["cargo_bench_support"] }
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 
 [[bench]]
 name = "image"
