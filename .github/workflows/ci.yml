@@ -224,7 +224,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - uses: cachix/install-nix-action@v31
+      - uses: cachix/install-nix-action@v32
       # Without the check phase, which compiled everything again to run the
       # tests the test job already runs (more than two minutes). `nix build
       # .#clipt` for users still runs them.
